@@ -45,6 +45,14 @@ Seed účty:
 - `chef@local` / `chef123`
 - `warehouse@local` / `wh123`
 
+## UI (web)
+
+- Mobile-first layout: desktop sidebar, mobile top bar + bottom nav.
+- Lidské názvy stavů: Rozpracováno / Připraveno / Předáno skladu / Vydáno / Uzavřeno.
+- Sklad (Inventář): vždy zobrazuje **Volné** + detailně **Celkem** a **Rezervováno** (počítá server).
+- Detail akce: krokový panel + role-based akce (přidání položek, potvrzení techniky, export PDF).
+- Skladník (mobil): `/warehouse` ukazuje jen akce „Předáno skladu“ a „Vydáno“ a umožní potvrdit vydání / uzavřít akci.
+
 ## API examples (curl)
 
 ### Login

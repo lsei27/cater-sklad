@@ -1,103 +1,174 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getCurrentUser } from "../lib/api";
+import { Card, CardContent, CardHeader } from "../components/ui/Card";
+import Input from "../components/ui/Input";
+import Select from "../components/ui/Select";
+import Button from "../components/ui/Button";
+import Badge from "../components/ui/Badge";
+import Skeleton from "../components/ui/Skeleton";
+import toast from "react-hot-toast";
+import { Layers3, Plus } from "lucide-react";
 
 export default function AdminCategoriesPage() {
   const role = getCurrentUser()?.role ?? "";
   const [parents, setParents] = useState<any[]>([]);
-  const [parentName, setParentName] = useState("");
-  const [childParentId, setChildParentId] = useState("");
-  const [childName, setChildName] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [typeName, setTypeName] = useState("");
+  const [parentId, setParentId] = useState("");
+  const [categoryName, setCategoryName] = useState("");
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
-    const res = await api<{ parents: any[] }>("/categories/tree");
-    setParents(res.parents);
+    setLoading(true);
+    try {
+      const res = await api<{ parents: any[] }>("/categories/tree");
+      setParents(res.parents);
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Nepodařilo se načíst kategorie.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
+    if (role !== "admin") return;
     load().catch(() => {});
-  }, []);
+  }, [role]);
 
-  if (role !== "admin") return <div className="rounded border bg-white p-4 text-sm">Pouze admin.</div>;
+  const typeOptions = useMemo(() => parents.map((p) => ({ id: p.id, name: p.name })), [parents]);
+
+  if (role !== "admin") {
+    return (
+      <Card>
+        <CardContent>
+          <div className="text-sm text-slate-700">Správa kategorií je dostupná pouze pro administrátora.</div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Kategorie</h1>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded border bg-white p-4">
-          <div className="mb-2 font-medium">Přidat parent</div>
-          <form
-            className="flex gap-2"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setError(null);
-              try {
-                await api("/admin/categories", { method: "POST", body: JSON.stringify({ name: parentName, parent_id: null }) });
-                setParentName("");
-                await load();
-              } catch (e: any) {
-                setError(e?.error?.message ?? "Failed");
-              }
-            }}
-          >
-            <input className="flex-1 rounded border px-3 py-2 text-sm" value={parentName} onChange={(e) => setParentName(e.target.value)} placeholder="Např. Technika" />
-            <button className="rounded bg-slate-900 px-3 py-2 text-sm text-white">Uložit</button>
-          </form>
-        </div>
-        <div className="rounded border bg-white p-4">
-          <div className="mb-2 font-medium">Přidat subcategory</div>
-          <form
-            className="grid gap-2 md:grid-cols-3"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setError(null);
-              try {
-                await api("/admin/categories", {
-                  method: "POST",
-                  body: JSON.stringify({ name: childName, parent_id: childParentId || null })
-                });
-                setChildName("");
-                await load();
-              } catch (e: any) {
-                setError(e?.error?.message ?? "Failed");
-              }
-            }}
-          >
-            <select className="rounded border px-3 py-2 text-sm" value={childParentId} onChange={(e) => setChildParentId(e.target.value)}>
-              <option value="">— parent —</option>
-              {parents.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <input className="md:col-span-2 rounded border px-3 py-2 text-sm" value={childName} onChange={(e) => setChildName(e.target.value)} placeholder="Např. Audio" />
-            <div className="md:col-span-3">
-              <button className="rounded bg-slate-900 px-3 py-2 text-sm text-white" disabled={!childParentId || !childName}>
-                Uložit
-              </button>
-            </div>
-          </form>
-        </div>
+      <div>
+        <h1 className="text-xl font-semibold">Kategorie</h1>
+        <div className="text-sm text-slate-600">Typy (např. Technika) a jejich podkategorie (např. Audio).</div>
       </div>
-      {error ? <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
 
-      <div className="rounded border bg-white p-4">
-        <div className="mb-2 font-medium">Tree</div>
-        <div className="space-y-3">
-          {parents.map((p) => (
-            <div key={p.id}>
-              <div className="font-medium">{p.name}</div>
-              <div className="mt-1 grid gap-1 pl-4 text-sm text-slate-700">
-                {(p.children ?? []).map((c: any) => (
-                  <div key={c.id}>- {c.name}</div>
-                ))}
-              </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Plus className="h-4 w-4" /> Nový typ
             </div>
-          ))}
-        </div>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="flex gap-2"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await api("/admin/categories", { method: "POST", body: JSON.stringify({ name: typeName, parent_id: null }) });
+                  setTypeName("");
+                  toast.success("Typ vytvořen");
+                  await load();
+                } catch (e: any) {
+                  toast.error(e?.error?.message ?? "Nepodařilo se vytvořit typ.");
+                }
+              }}
+            >
+              <Input value={typeName} onChange={(e) => setTypeName(e.target.value)} placeholder="Např. Technika" />
+              <Button disabled={!typeName.trim()}>Uložit</Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Plus className="h-4 w-4" /> Nová kategorie
+            </div>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="grid gap-2 md:grid-cols-3"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await api("/admin/categories", {
+                    method: "POST",
+                    body: JSON.stringify({ name: categoryName, parent_id: parentId || null })
+                  });
+                  setCategoryName("");
+                  toast.success("Kategorie vytvořena");
+                  await load();
+                } catch (e: any) {
+                  toast.error(e?.error?.message ?? "Nepodařilo se vytvořit kategorii.");
+                }
+              }}
+            >
+              <label className="text-sm">
+                Typ
+                <Select className="mt-1" value={parentId} onChange={(e) => setParentId(e.target.value)}>
+                  <option value="">Vyber typ…</option>
+                  {typeOptions.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="text-sm md:col-span-2">
+                Název kategorie
+                <Input className="mt-1" value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="Např. Audio" />
+              </label>
+              <div className="md:col-span-3">
+                <Button full disabled={!parentId || !categoryName.trim()}>
+                  Uložit
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Layers3 className="h-4 w-4" /> Přehled
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, idx) => (
+                <div key={idx} className="rounded-2xl border border-slate-200 p-3">
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="mt-2 h-3 w-2/3" />
+                </div>
+              ))}
+            </div>
+          ) : parents.length === 0 ? (
+            <div className="text-sm text-slate-600">Zatím žádné kategorie.</div>
+          ) : (
+            <div className="space-y-3">
+              {parents.map((p) => (
+                <div key={p.id} className="rounded-2xl border border-slate-200 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold">{p.name}</div>
+                    <Badge tone="neutral">{(p.children ?? []).length} kategorií</Badge>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(p.children ?? []).map((c: any) => (
+                      <Badge key={c.id} tone="neutral">
+                        {c.name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
-
