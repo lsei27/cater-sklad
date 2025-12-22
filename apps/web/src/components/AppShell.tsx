@@ -2,28 +2,9 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo } from "react";
 import { getCurrentUser, getToken, setCurrentUser, setToken } from "../lib/api";
 import { cn } from "../lib/ui";
-import { CalendarDays, Home, Package, Settings, LogOut } from "lucide-react";
-import Button from "./ui/Button";
-import toast, { Toaster } from "react-hot-toast";
+import { Icons } from "../lib/icons";
 import { roleLabel } from "../lib/viewModel";
-
-function NavItem(props: { icon: any; label: string; to: string; active: boolean; mobile?: boolean }) {
-  const nav = useNavigate();
-  const Icon = props.icon;
-  return (
-    <button
-      onClick={() => nav(props.to)}
-      className={cn(
-        "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium",
-        props.active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100",
-        props.mobile && "flex-1 flex-col gap-1 py-2"
-      )}
-    >
-      <Icon className={cn(props.mobile ? "h-5 w-5" : "h-4 w-4")} />
-      <span className={cn(props.mobile ? "text-[11px]" : "")}>{props.label}</span>
-    </button>
-  );
-}
+import toast, { Toaster } from "react-hot-toast";
 
 export default function AppShell() {
   const nav = useNavigate();
@@ -37,85 +18,149 @@ export default function AppShell() {
 
   const role = user?.role ?? "";
   const eventsHref = role === "warehouse" ? "/warehouse" : "/events";
-  const stockHref = role === "warehouse" || role === "admin" ? "/inventory" : "/inventory";
+  const stockHref = "/inventory";
   const isSettingsAllowed = role === "admin";
 
-  const items = useMemo(() => {
-    const base = [
-      { icon: CalendarDays, label: "Akce", to: eventsHref },
-      { icon: Package, label: "Sklad", to: stockHref }
-    ];
-    if (isSettingsAllowed) base.push({ icon: Settings, label: "Nastavení", to: "/settings" });
-    return base;
-  }, [eventsHref, stockHref, isSettingsAllowed]);
+  const handleLogout = () => {
+    setToken(null);
+    setCurrentUser(null);
+    toast.success("Odhlášeno");
+    nav("/login");
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       <Toaster position="top-right" />
 
-      <div className="mx-auto flex max-w-6xl gap-4 px-4 pb-20 pt-4 md:pb-6">
-        <aside className="hidden w-60 shrink-0 md:block">
-          <div className="sticky top-4 space-y-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-sm font-semibold">Cater sklad</div>
-              {user ? <div className="mt-1 text-xs text-slate-600">{user.email} • {roleLabel(user.role)}</div> : null}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-600 p-2 rounded-lg text-white">
+              <Icons.Box />
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-2">
-              {items.map((it) => (
-                <NavItem key={it.to} icon={it.icon} label={it.label} to={it.to} active={loc.pathname.startsWith(it.to)} />
-              ))}
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-2">
-              <button
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-                onClick={() => {
-                  setToken(null);
-                  setCurrentUser(null);
-                  toast.success("Odhlášeno");
-                  nav("/login");
-                }}
-              >
-                <LogOut className="h-4 w-4" />
-                Odhlásit
-              </button>
-            </div>
-          </div>
-        </aside>
-
-        <div className="min-w-0 flex-1">
-          <header className="mb-4 flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 md:hidden">
             <div>
-              <div className="text-sm font-semibold">Cater sklad</div>
-              {user ? <div className="text-[11px] text-slate-600">{roleLabel(user.role)}</div> : null}
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none cursor-pointer" onClick={() => nav("/")}>
+                Cater sklad
+              </h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700`}>
+                  <div className={`w-1.5 h-1.5 rounded-full bg-green-500`}></div>
+                  Online
+                </div>
+              </div>
             </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setToken(null);
-                setCurrentUser(null);
-                toast.success("Odhlášeno");
-                nav("/login");
-              }}
+
+            {/* Desktop Navigation */}
+            <nav className="hidden md:flex items-center gap-1 ml-6">
+              <button
+                onClick={() => nav(eventsHref)}
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                  loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                )}
+              >
+                <Icons.Calendar />
+                Akce
+              </button>
+              <button
+                onClick={() => nav(stockHref)}
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                  loc.pathname.startsWith("/inventory")
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                )}
+              >
+                <Icons.Box />
+                Sklad
+              </button>
+              {isSettingsAllowed && (
+                <button
+                  onClick={() => nav("/settings")}
+                  className={cn(
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                    loc.pathname.startsWith("/settings")
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  )}
+                >
+                  {/* We can use Icons.Edit as a placeholder for Settings or add a Settings icon later if needed. Using Edit for now as it's generic enough or just text. 
+                             Actually, let's use Icons.User for now or just text. */}
+                  <span>Nastavení</span>
+                </button>
+              )}
+            </nav>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {user && (
+              <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-100">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+                  {user.email.substring(0, 2).toUpperCase()}
+                </div>
+                <div className="hidden md:block">
+                  <div className="text-sm font-medium text-gray-900 leading-none">{user.email}</div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase mt-1">
+                    {roleLabel(user.role)}
+                  </div>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={handleLogout}
+              className="p-2 text-gray-500 hover:text-red-600 transition-colors"
+              title="Odhlásit se"
             >
-              <LogOut className="h-4 w-4" />
-              Odhlásit
-            </Button>
-          </header>
-
-          <main>
-            <Outlet />
-          </main>
+              <Icons.Logout />
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
-      <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 backdrop-blur md:hidden">
-        <div className="mx-auto flex max-w-6xl px-2 py-1">
-          {items.map((it) => (
-            <NavItem key={it.to} icon={it.icon} label={it.label} to={it.to} active={loc.pathname.startsWith(it.to)} mobile />
-          ))}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+        <Outlet />
+      </main>
+
+      {/* Mobile Navigation Bar */}
+      <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-gray-200 bg-white md:hidden pb-safe">
+        <div className="flex justify-around items-center h-16">
+          <button
+            onClick={() => nav(eventsHref)}
+            className={cn(
+              "flex flex-col items-center justify-center w-full h-full space-y-1",
+              (loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")) ? "text-indigo-600" : "text-gray-500"
+            )}
+          >
+            <Icons.Calendar />
+            <span className="text-[10px] font-medium">Akce</span>
+          </button>
+          <button
+            onClick={() => nav(stockHref)}
+            className={cn(
+              "flex flex-col items-center justify-center w-full h-full space-y-1",
+              loc.pathname.startsWith("/inventory") ? "text-indigo-600" : "text-gray-500"
+            )}
+          >
+            <Icons.Box />
+            <span className="text-[10px] font-medium">Sklad</span>
+          </button>
+          {isSettingsAllowed && (
+            <button
+              onClick={() => nav("/settings")}
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-full space-y-1",
+                loc.pathname.startsWith("/settings") ? "text-indigo-600" : "text-gray-500"
+              )}
+            >
+              <span className="text-lg">⚙</span>
+              <span className="text-[10px] font-medium">Nastavení</span>
+            </button>
+          )}
         </div>
       </nav>
     </div>
   );
 }
+

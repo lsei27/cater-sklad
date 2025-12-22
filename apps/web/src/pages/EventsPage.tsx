@@ -9,7 +9,7 @@ import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
 import { statusLabel } from "../lib/viewModel";
-import { CalendarPlus, MapPin } from "lucide-react";
+import { Icons } from "../lib/icons";
 
 type EventRow = {
   id: string;
@@ -60,82 +60,95 @@ export default function EventsPage() {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Akce</h1>
-          <div className="text-sm text-slate-600">Plánování a předání do skladu.</div>
+          <h1 className="text-2xl font-bold text-gray-900">Akce</h1>
+          <p className="text-gray-500 mt-1">Plánování a předání do skladu.</p>
         </div>
-        {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={load} /> : null}
+
+        <div className="flex gap-2">
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+              <Icons.Search />
+            </div>
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Hledat..."
+              className="pl-10"
+            />
+          </div>
+          {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={load} /> : null}
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="text-sm font-semibold">Vyhledávání</div>
-        </CardHeader>
-        <CardContent>
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název nebo místo…" />
-        </CardContent>
-      </Card>
-
       {error ? (
-        <Card>
-          <CardContent>
-            <div className="text-sm text-red-700">{error}</div>
+        <Card className="bg-red-50 border-red-100">
+          <CardContent className="text-red-700 p-4">
+            <div className="flex gap-2">
+              <Icons.Alert />
+              {error}
+            </div>
           </CardContent>
         </Card>
       ) : null}
 
       {loading ? (
-        <div className="space-y-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, idx) => (
-            <Card key={idx}>
-              <CardContent>
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="mt-2 h-3 w-1/3" />
-                <Skeleton className="mt-4 h-3 w-1/2" />
+            <Card key={idx} className="h-40">
+              <CardContent className="p-5">
+                <Skeleton className="h-6 w-2/3 mb-4" />
+                <Skeleton className="h-4 w-1/2 mb-2" />
+                <Skeleton className="h-4 w-1/3" />
               </CardContent>
             </Card>
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <Card>
-          <CardContent>
-            <div className="text-sm text-slate-600">Žádné akce.</div>
-          </CardContent>
-        </Card>
+        <div className="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">
+          {search ? 'Žádná akce neodpovídá vyhledávání.' : 'Zatím žádné naplánované akce.'}
+        </div>
       ) : (
-        <div className="space-y-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((e) => (
-            <Link key={e.id} to={`/events/${e.id}`} className="block">
-              <Card className="hover:border-slate-300">
-                <CardContent>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold">{e.name}</div>
-                      <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
-                        <MapPin className="h-4 w-4" />
-                        <span className="truncate">{e.location}</span>
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {new Date(e.deliveryDatetime).toLocaleString()} → {new Date(e.pickupDatetime).toLocaleString()}
-                      </div>
+            <Link key={e.id} to={`/events/${e.id}`} className="block group">
+              <Card className="h-full hover:shadow-md transition-shadow border-gray-200 group-hover:border-indigo-300">
+                <CardContent className="p-5 flex flex-col h-full">
+                  <div className="flex justify-between items-start mb-3">
+                    <Badge
+                      tone={
+                        e.status === "SENT_TO_WAREHOUSE"
+                          ? "ok"
+                          : e.status === "ISSUED"
+                            ? "warn"
+                            : e.status === "CANCELLED" || e.status === "CLOSED"
+                              ? "neutral"
+                              : "neutral"
+                      }
+                    >
+                      {statusLabel(e.status)}
+                    </Badge>
+                    {e.exportNeedsRevision ? (
+                      <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                        <Icons.Alert /> Revize
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+
+                  <div className="text-sm text-gray-500 space-y-2 mt-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-gray-400"><Icons.MapPin /></div>
+                      <span className="truncate text-gray-700">{e.location}</span>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <Badge
-                        tone={
-                          e.status === "SENT_TO_WAREHOUSE"
-                            ? "ok"
-                            : e.status === "ISSUED"
-                              ? "warn"
-                              : e.status === "CANCELLED" || e.status === "CLOSED"
-                                ? "neutral"
-                                : "neutral"
-                        }
-                      >
-                        {statusLabel(e.status)}
-                      </Badge>
-                      {e.exportNeedsRevision ? <div className="mt-1 text-[11px] text-amber-700">nutná revize exportu</div> : null}
+                    <div className="flex items-center gap-2">
+                      <div className="text-gray-400"><Icons.Calendar /></div>
+                      <span className="text-xs">
+                        {new Date(e.deliveryDatetime).toLocaleDateString()}
+                      </span>
                     </div>
                   </div>
                 </CardContent>
@@ -153,7 +166,7 @@ function CreateEventButton(props: { onCreated: () => void }) {
   if (!open) {
     return (
       <Button onClick={() => setOpen(true)}>
-        <CalendarPlus className="h-4 w-4" /> Nová akce
+        <Icons.Plus /> Nová akce
       </Button>
     );
   }
