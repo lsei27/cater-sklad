@@ -25,6 +25,13 @@ const EmailSchema = z
   .max(255)
   .regex(/^[^\s@]+@[^\s@]+(\.[^\s@]+)?$/, "Invalid email");
 
+const ImageUrlSchema = z.preprocess(
+  (v) => (v === "" ? null : v),
+  z
+    .union([z.string().url(), z.string().regex(/^\/storage\/[^\s]+$/, "Invalid image path")])
+    .nullable()
+);
+
 async function getOrCreateCategory(params: {
   tx: any;
   parentId: string | null;
@@ -106,21 +113,21 @@ export async function adminRoutes(app: FastifyInstance) {
     return { items };
   });
 
-  app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
+	  app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
-    const body = z
-      .object({
-        name: z.string().min(1),
-        category_id: z.string().uuid(),
-        unit: z.string().min(1).default("ks"),
-        image_url: z.string().url().nullable().optional(),
-        active: z.boolean().optional(),
-        return_delay_days: z.number().int().min(0).optional(),
-        sku: z.string().min(1).nullable().optional(),
-        notes: z.string().nullable().optional()
-      })
-      .parse(request.body);
+	    const body = z
+	      .object({
+	        name: z.string().min(1),
+	        category_id: z.string().uuid(),
+	        unit: z.string().min(1).default("ks"),
+	        image_url: ImageUrlSchema.optional(),
+	        active: z.boolean().optional(),
+	        return_delay_days: z.number().int().min(0).optional(),
+	        sku: z.string().min(1).nullable().optional(),
+	        notes: z.string().nullable().optional()
+	      })
+	      .parse(request.body);
     const item = await app.prisma.inventoryItem.create({
       data: {
         name: body.name,
@@ -140,22 +147,22 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ item });
   });
 
-  app.patch("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+	  app.patch("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
-    const body = z
-      .object({
-        name: z.string().min(1).optional(),
-        category_id: z.string().uuid().optional(),
-        unit: z.string().min(1).optional(),
-        image_url: z.string().url().nullable().optional(),
-        active: z.boolean().optional(),
-        return_delay_days: z.number().int().min(0).optional(),
-        sku: z.string().min(1).nullable().optional(),
-        notes: z.string().nullable().optional()
-      })
-      .parse(request.body);
+	    const body = z
+	      .object({
+	        name: z.string().min(1).optional(),
+	        category_id: z.string().uuid().optional(),
+	        unit: z.string().min(1).optional(),
+	        image_url: ImageUrlSchema.optional(),
+	        active: z.boolean().optional(),
+	        return_delay_days: z.number().int().min(0).optional(),
+	        sku: z.string().min(1).nullable().optional(),
+	        notes: z.string().nullable().optional()
+	      })
+	      .parse(request.body);
     const item = await app.prisma.inventoryItem.update({
       where: { id: params.id },
       data: {
