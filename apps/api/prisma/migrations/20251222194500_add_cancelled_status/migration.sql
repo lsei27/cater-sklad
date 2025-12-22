@@ -1,0 +1,5 @@
+DO $$ BEGIN
+  ALTER TYPE "EventStatus" ADD VALUE 'CANCELLED';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+

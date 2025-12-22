@@ -73,13 +73,13 @@ blocked AS (
   FROM event_reservations r
   JOIN events e2 ON e2.id = r.event_id
   JOIN items i ON i.id = r.inventory_item_id
-  CROSS JOIN params p
-  WHERE r.inventory_item_id = ANY(${itemIds}::uuid[])
-    AND e2.status <> 'CLOSED'
-    AND (
-      r.state = 'confirmed'
-      OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())
-    )
+	  CROSS JOIN params p
+	  WHERE r.inventory_item_id = ANY(${itemIds}::uuid[])
+	    AND e2.status NOT IN ('CLOSED','CANCELLED')
+	    AND (
+	      r.state = 'confirmed'
+	      OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())
+	    )
     AND (
       e2.delivery_datetime < (p.t_end + (i.return_delay_days || ' days')::interval)
       AND p.t_start < (e2.pickup_datetime + (i.return_delay_days || ' days')::interval)

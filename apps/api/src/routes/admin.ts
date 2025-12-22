@@ -5,6 +5,10 @@ import { requireRole } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal } from "../services/availability.js";
 import { sseBus } from "../lib/sse.js";
+import path from "node:path";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import crypto from "node:crypto";
 
 function parseBool(v: unknown) {
   if (v === undefined || v === null || v === "") return undefined;
@@ -169,6 +173,64 @@ export async function adminRoutes(app: FastifyInstance) {
       data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "update", diffJson: body }
     });
     return reply.send({ item });
+  });
+
+  app.delete("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const actor = request.user!;
+    requireRole(actor.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const result = await app.prisma.$transaction(async (tx) => {
+      const [ledgerCount, resCount, issueCount, returnCount] = await Promise.all([
+        tx.inventoryLedger.count({ where: { inventoryItemId: params.id } }),
+        tx.eventReservation.count({ where: { inventoryItemId: params.id } }),
+        tx.eventIssue.count({ where: { inventoryItemId: params.id } }),
+        tx.eventReturn.count({ where: { inventoryItemId: params.id } })
+      ]);
+      const hasHistory = ledgerCount + resCount + issueCount + returnCount > 0;
+      if (hasHistory) {
+        const item = await tx.inventoryItem.update({ where: { id: params.id }, data: { active: false } });
+        await tx.auditLog.create({
+          data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "deactivate", diffJson: { reason: "has_history" } }
+        });
+        return { mode: "deactivated" as const, itemId: item.id };
+      }
+
+      const deleted = await tx.inventoryItem.delete({ where: { id: params.id } });
+      await tx.auditLog.create({
+        data: { actorUserId: actor.id, entityType: "inventory_item", entityId: deleted.id, action: "delete" }
+      });
+      return { mode: "deleted" as const, itemId: deleted.id };
+    });
+
+    sseBus.emit({ type: "ledger_changed", inventoryItemId: params.id });
+    return reply.send(result);
+  });
+
+  app.post("/admin/items/:id/image", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const actor = request.user!;
+    requireRole(actor.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const file = await (request as any).file?.();
+    if (!file) return httpError(reply, 400, "BAD_REQUEST", "Send multipart/form-data with field 'file'.");
+
+    if (typeof file.mimetype === "string" && !file.mimetype.startsWith("image/")) {
+      return httpError(reply, 400, "BAD_REQUEST", "Only image uploads are allowed.");
+    }
+
+    const extRaw = path.extname(String(file.filename ?? "")).toLowerCase();
+    const ext = [".png", ".jpg", ".jpeg", ".webp"].includes(extRaw) ? extRaw : ".bin";
+    const filename = `item_${params.id}_${crypto.randomUUID()}${ext}`;
+    const absPath = path.join(app.config.storageDir, filename);
+    await pipeline(file.file, createWriteStream(absPath));
+
+    const urlPath = `/storage/${filename}`;
+    const item = await app.prisma.inventoryItem.update({ where: { id: params.id }, data: { imageUrl: urlPath } });
+    await app.prisma.auditLog.create({
+      data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "image_upload", diffJson: { imageUrl: urlPath } }
+    });
+    return reply.send({ itemId: item.id, imageUrl: item.imageUrl });
   });
 
   app.post("/admin/import/csv", { preHandler: [app.authenticate] }, async (request, reply) => {

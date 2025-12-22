@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import staticPlugin from "@fastify/static";
+import multipart from "@fastify/multipart";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { env } from "./config.js";
@@ -20,13 +21,17 @@ declare module "fastify" {
 }
 
 const app = Fastify({ logger: true });
-app.decorate("config", { storageDir: env.STORAGE_DIR });
+const storageDir = path.isAbsolute(env.STORAGE_DIR)
+  ? env.STORAGE_DIR
+  : path.resolve(process.cwd(), env.STORAGE_DIR);
+app.decorate("config", { storageDir });
 
 app.addContentTypeParser("text/plain", { parseAs: "string" }, (req, body, done) => {
   done(null, body);
 });
 
 await app.register(cors, { origin: true, credentials: true });
+await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 await app.register(prismaPlugin);
 await app.register(authPlugin, { jwtSecret: env.JWT_SECRET });
 
@@ -54,7 +59,6 @@ app.setErrorHandler((err: unknown, request, reply) => {
   return reply.status(500).send({ error: { code: "INTERNAL", message: "Internal Server Error" } });
 });
 
-const storageDir = path.resolve(process.cwd(), env.STORAGE_DIR);
 await mkdir(storageDir, { recursive: true });
 await app.register(staticPlugin, { root: storageDir, prefix: "/storage/" });
 

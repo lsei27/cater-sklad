@@ -3,7 +3,8 @@ export const STATUS_LABEL: Record<string, string> = {
   READY_FOR_WAREHOUSE: "Připraveno",
   SENT_TO_WAREHOUSE: "Předáno skladu",
   ISSUED: "Vydáno",
-  CLOSED: "Uzavřeno"
+  CLOSED: "Uzavřeno",
+  CANCELLED: "Zrušeno"
 };
 
 export function statusLabel(status: string) {
@@ -33,5 +34,6 @@ export function humanError(err: any) {
     const available = err?.error?.available;
     return `Nedostatečný stav. K dispozici: ${available ?? 0}.`;
   }
+  if (code === "PDF_EXPORT_FAILED") return "Nepodařilo se vytvořit PDF. Zkus to prosím znovu.";
   return err?.error?.message ?? "Něco se nepovedlo.";
 }

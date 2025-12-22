@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, getCurrentUser } from "../lib/api";
+import { api, apiBaseUrl, apiUrl, getCurrentUser, getToken } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
 import toast from "react-hot-toast";
-import { Image as ImageIcon, Plus, Search } from "lucide-react";
+import { Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
 
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
@@ -186,6 +187,7 @@ function ItemRow(props: { item: any; onSaved: () => void }) {
   const [imageUrl, setImageUrl] = useState(props.item.imageUrl ?? "");
   const [active, setActive] = useState<boolean>(props.item.active ?? true);
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
     <Card>
@@ -201,7 +203,7 @@ function ItemRow(props: { item: any; onSaved: () => void }) {
           </div>
           <div className="shrink-0">
             {imageUrl ? (
-              <img className="h-12 w-12 rounded-xl object-cover" src={imageUrl} alt={props.item.name} />
+              <img className="h-12 w-12 rounded-xl object-cover" src={apiUrl(imageUrl)} alt={props.item.name} />
             ) : (
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
                 <ImageIcon className="h-5 w-5" />
@@ -213,13 +215,52 @@ function ItemRow(props: { item: any; onSaved: () => void }) {
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           <label className="md:col-span-2 text-sm">
             Obrázek (URL)
-            <Input className="mt-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://…" />
+            <Input className="mt-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://… nebo /storage/…" />
           </label>
           <label className="flex items-center gap-2 text-sm md:items-end">
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
             Aktivní
           </label>
-          <div className="md:col-span-3">
+
+          <label className="md:col-span-3 text-sm">
+            Nahrát obrázek
+            <div className="mt-1 flex items-center gap-2">
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  try {
+                    const token = getToken();
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    const res = await fetch(`${apiBaseUrl()}/admin/items/${props.item.id}/image`, {
+                      method: "POST",
+                      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                      body: fd
+                    });
+                    const j = await res.json().catch(() => ({}));
+                    if (!res.ok) throw j;
+                    setImageUrl(j.imageUrl ?? "");
+                    toast.success("Obrázek nahrán");
+                    props.onSaved();
+                  } catch (err: any) {
+                    toast.error(err?.error?.message ?? "Nepodařilo se nahrát obrázek.");
+                  }
+                }}
+              />
+              <Badge tone="neutral">
+                <Upload className="h-3.5 w-3.5" /> z počítače
+              </Badge>
+            </div>
+            <div className="mt-1 text-xs text-slate-600">
+              Pozn.: na Renderu se soubory ukládají do dočasného úložiště (MVP). Pro trvalé uložení je vhodné S3/R2.
+            </div>
+          </label>
+
+          <div className="md:col-span-3 flex flex-col gap-2 md:flex-row">
             <Button
               full
               variant="secondary"
@@ -242,8 +283,29 @@ function ItemRow(props: { item: any; onSaved: () => void }) {
             >
               Uložit změny
             </Button>
+            <Button full variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}>
+              <Trash2 className="h-4 w-4" /> Smazat
+            </Button>
           </div>
         </div>
+
+        <ConfirmDialog
+          open={confirmDelete}
+          onOpenChange={setConfirmDelete}
+          tone="danger"
+          title="Smazat položku?"
+          description="Pokud už byla použita v historii (výdeje/vratky/ledger), pouze ji skryjeme z katalogu."
+          confirmText="Smazat"
+          onConfirm={async () => {
+            try {
+              const res = await api<{ mode: "deleted" | "deactivated" }>(`/admin/items/${props.item.id}`, { method: "DELETE" });
+              toast.success(res.mode === "deleted" ? "Položka smazána" : "Položka skryta (neaktivní)");
+              props.onSaved();
+            } catch (e: any) {
+              toast.error(e?.error?.message ?? "Nepodařilo se smazat položku.");
+            }
+          }}
+        />
       </CardContent>
     </Card>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, getCurrentUser } from "../lib/api";
+import { api, apiUrl, getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
@@ -88,7 +88,7 @@ export default function InventoryPage() {
     try {
       const res = await api<{ events: EventRow[] }>("/events");
       const filtered = res.events
-        .filter((e) => !["ISSUED", "CLOSED"].includes(e.status))
+        .filter((e) => !["ISSUED", "CLOSED", "CANCELLED"].includes(e.status))
         .sort((a, b) => new Date(a.deliveryDatetime).getTime() - new Date(b.deliveryDatetime).getTime());
       setEvents(filtered);
     } catch (e: any) {
@@ -131,6 +131,16 @@ export default function InventoryPage() {
           <h1 className="text-xl font-semibold">Sklad</h1>
           <div className="text-sm text-slate-600">Přehled dostupnosti pro vybrané období.</div>
         </div>
+        {canEdit ? (
+          <div className="hidden gap-2 md:flex">
+            <Button variant="secondary" size="sm" onClick={() => nav("/settings/items")}>
+              Přidat položku
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => nav("/settings/categories")}>
+              Kategorie
+            </Button>
+          </div>
+        ) : null}
         <div className="flex gap-2">
           <Button
             variant={view === "tile" ? "primary" : "secondary"}
@@ -255,17 +265,17 @@ export default function InventoryPage() {
         </Card>
       ) : view === "tile" ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {items.map((i) => {
-            const tone = stockTone(i.stock.available);
-            return (
-              <Card key={i.itemId} className="overflow-hidden">
-                <div className="aspect-video w-full overflow-hidden bg-slate-100">
-                  {i.imageUrl ? (
-                    <img className="h-full w-full object-cover" src={i.imageUrl} alt={i.name} />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-xs text-slate-500">Bez obrázku</div>
-                  )}
-                </div>
+	          {items.map((i) => {
+	            const tone = stockTone(i.stock.available);
+	            return (
+	              <Card key={i.itemId} className="overflow-hidden">
+	                <div className="aspect-video w-full overflow-hidden bg-slate-100">
+	                  {i.imageUrl ? (
+	                    <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
+	                  ) : (
+	                    <div className="flex h-full items-center justify-center text-xs text-slate-500">Bez obrázku</div>
+	                  )}
+	                </div>
                 <CardContent>
                   <div className="line-clamp-2 text-sm font-semibold">{i.name}</div>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -308,13 +318,13 @@ export default function InventoryPage() {
           <div className="divide-y divide-slate-100">
             {items.map((i) => {
               const tone = stockTone(i.stock.available);
-              return (
-                <div key={i.itemId} className="px-4 py-3">
-                  <div className="md:hidden">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 overflow-hidden rounded-xl bg-slate-100">
-                        {i.imageUrl ? <img className="h-full w-full object-cover" src={i.imageUrl} alt={i.name} /> : null}
-                      </div>
+	              return (
+	                <div key={i.itemId} className="px-4 py-3">
+	                  <div className="md:hidden">
+	                    <div className="flex items-center gap-3">
+	                      <div className="h-10 w-10 overflow-hidden rounded-xl bg-slate-100">
+	                        {i.imageUrl ? <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} /> : null}
+	                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold">{i.name}</div>
                         <div className="mt-0.5 text-xs text-slate-600">
@@ -330,11 +340,11 @@ export default function InventoryPage() {
                     </div>
                   </div>
 
-                  <div className="hidden grid-cols-12 items-center gap-2 md:grid">
-                    <div className="col-span-5 flex items-center gap-3">
-                      <div className="h-10 w-10 overflow-hidden rounded-xl bg-slate-100">
-                        {i.imageUrl ? <img className="h-full w-full object-cover" src={i.imageUrl} alt={i.name} /> : null}
-                      </div>
+	                  <div className="hidden grid-cols-12 items-center gap-2 md:grid">
+	                    <div className="col-span-5 flex items-center gap-3">
+	                      <div className="h-10 w-10 overflow-hidden rounded-xl bg-slate-100">
+	                        {i.imageUrl ? <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} /> : null}
+	                      </div>
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold">{i.name}</div>
                         <div className="mt-0.5 text-xs text-slate-600">{i.unit}</div>
@@ -363,12 +373,12 @@ export default function InventoryPage() {
 	        </Card>
 	      )}
 
-	      <Modal
-	        open={pickOpen}
-	        onOpenChange={setPickOpen}
-	        title="Vybrat akci"
-	        description={pickItem ? `Přidáváš: ${pickItem.name}` : "Vyber akci pro přidání položky."}
-	      >
+        <Modal
+          open={pickOpen}
+          onOpenChange={setPickOpen}
+          title="Vybrat akci"
+          description={pickItem ? `Přidáváš: ${pickItem.name}` : "Vyber akci pro přidání položky."}
+        >
 	        <div className="space-y-3">
 	          <div className="grid gap-2 md:grid-cols-2">
 	            <label className="text-sm">
@@ -393,13 +403,13 @@ export default function InventoryPage() {
 	                </Card>
 	              ))}
 	            </div>
-	          ) : filteredEvents.length === 0 ? (
-	            <Card>
-	              <CardContent>
-	                <div className="text-sm text-slate-600">Žádné rozpracované akce.</div>
-	              </CardContent>
-	            </Card>
-	          ) : (
+          ) : filteredEvents.length === 0 ? (
+            <Card>
+              <CardContent>
+                <div className="text-sm text-slate-600">Žádné rozpracované akce.</div>
+              </CardContent>
+            </Card>
+          ) : (
 	            <div className="space-y-2">
 	              {filteredEvents.map((e) => (
 	                <button

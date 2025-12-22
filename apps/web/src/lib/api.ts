@@ -7,6 +7,13 @@ export function apiBaseUrl() {
   return API_BASE_URL;
 }
 
+export function apiUrl(pathOrUrl: string) {
+  if (!pathOrUrl) return pathOrUrl;
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const p = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${API_BASE_URL}${p}`;
+}
+
 export function getToken() {
   return localStorage.getItem("token");
 }

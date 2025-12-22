@@ -65,6 +65,40 @@ export async function eventRoutes(app: FastifyInstance) {
     return reply.send({ event });
   });
 
+  app.post("/events/:id/cancel", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    try {
+      const event = await app.prisma.$transaction(async (tx) => {
+        const [row] = await tx.$queryRaw<{ id: string; status: string }[]>`
+          SELECT id, status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
+        `;
+        if (!row) throw new Error("NOT_FOUND");
+        if (row.status === "CLOSED") throw new Error("READ_ONLY");
+        if (row.status === "ISSUED") throw new Error("ALREADY_ISSUED");
+        if (row.status === "CANCELLED") return row;
+
+        const updated = await tx.event.update({ where: { id: params.id }, data: { status: "CANCELLED", exportNeedsRevision: false } });
+        await tx.auditLog.create({
+          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "cancel", diffJson: { status: "CANCELLED" } }
+        });
+        return { id: updated.id, status: updated.status as any };
+      });
+
+      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "CANCELLED" });
+      return reply.send({ event });
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      if (msg === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (msg === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze zrušit (už je uzavřená).");
+      if (msg === "ALREADY_ISSUED") return httpError(reply, 409, "ALREADY_ISSUED", "Akci nelze zrušit (už byla vydána).");
+      request.log.error({ err: e }, "cancel failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
+    }
+  });
+
   app.get("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
     const event = await app.prisma.event.findUnique({
@@ -206,7 +240,7 @@ export async function eventRoutes(app: FastifyInstance) {
         SELECT id, status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
       `;
       if (!row) throw new Error("NOT_FOUND");
-      if (row.status === "ISSUED" || row.status === "CLOSED") throw new Error("READ_ONLY");
+      if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
       await tx.eventReservation.updateMany({
         where: { eventId: params.id },
         data: { state: "confirmed", expiresAt: null }
@@ -240,7 +274,7 @@ export async function eventRoutes(app: FastifyInstance) {
         FOR UPDATE
       `;
       if (!ev) throw new Error("NOT_FOUND");
-      if (ev.status === "ISSUED" || ev.status === "CLOSED") throw new Error("READ_ONLY");
+      if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
 
       const [v] = await tx.$queryRaw<{ next_version: number }[]>`
         SELECT COALESCE(MAX(version),0) + 1 AS next_version
@@ -313,17 +347,22 @@ export async function eventRoutes(app: FastifyInstance) {
       return { exportRow, snapshot };
     });
 
-    const storageDir = path.resolve(process.cwd(), app.config.storageDir);
-    await mkdir(storageDir, { recursive: true });
-    const pdfBytes = await buildExportPdf(created.snapshot);
-    const pdfFile = `event_${created.snapshot.event.id}_v${created.snapshot.event.version}.pdf`;
-    const pdfPath = path.join(storageDir, pdfFile);
-    await writeFile(pdfPath, pdfBytes);
-    await app.prisma.eventExport.update({ where: { id: created.exportRow.id }, data: { pdfPath: pdfFile } });
+    try {
+      const storageDir = app.config.storageDir;
+      await mkdir(storageDir, { recursive: true });
+      const pdfBytes = await buildExportPdf(created.snapshot);
+      const pdfFile = `event_${created.snapshot.event.id}_v${created.snapshot.event.version}.pdf`;
+      const pdfPath = path.join(storageDir, pdfFile);
+      await writeFile(pdfPath, pdfBytes);
+      await app.prisma.eventExport.update({ where: { id: created.exportRow.id }, data: { pdfPath: pdfFile } });
 
-    sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
-    sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
-    return reply.send({ export: { ...created.exportRow, pdfPath: pdfFile }, pdfUrl: `/storage/${pdfFile}` });
+      sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
+      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
+      return reply.send({ export: { ...created.exportRow, pdfPath: pdfFile }, pdfUrl: `/storage/${pdfFile}` });
+    } catch (err) {
+      request.log.error({ err }, "pdf export failed");
+      return httpError(reply, 500, "PDF_EXPORT_FAILED", "Nepodařilo se vytvořit PDF export.");
+    }
   });
 
   app.post("/events/:id/issue", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -350,7 +389,7 @@ export async function eventRoutes(app: FastifyInstance) {
         SELECT status::text, export_needs_revision FROM events WHERE id = ${params.id}::uuid FOR UPDATE
       `;
       if (!ev) throw new Error("NOT_FOUND");
-      if (ev.status === "CLOSED") throw new Error("READ_ONLY");
+      if (ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
       if (ev.export_needs_revision) throw new Error("NEEDS_REVISION");
 
       const latest = await tx.eventExport.findFirst({

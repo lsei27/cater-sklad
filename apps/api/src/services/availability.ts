@@ -43,7 +43,7 @@ blocked AS (
   CROSS JOIN item
   WHERE r.inventory_item_id = ${inventoryItemId}::uuid
     AND r.event_id <> ${targetEventId}::uuid
-    AND e2.status <> 'CLOSED'
+    AND e2.status NOT IN ('CLOSED','CANCELLED')
     AND (
       r.state = 'confirmed'
       OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())

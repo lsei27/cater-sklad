@@ -25,7 +25,9 @@ export async function reserveItemsTx(params: {
     FOR UPDATE
   `;
   if (!event) throw new Error("EVENT_NOT_FOUND");
-  if (event.status === "ISSUED" || event.status === "CLOSED") throw new Error("EVENT_READ_ONLY");
+  if (event.status === "ISSUED" || event.status === "CLOSED" || event.status === "CANCELLED") {
+    throw new Error("EVENT_READ_ONLY");
+  }
 
   if (actor.role === "chef") {
     const ids = items.map((i) => i.inventoryItemId);

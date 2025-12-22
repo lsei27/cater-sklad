@@ -122,7 +122,17 @@ export default function EventsPage() {
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <Badge tone={e.status === "CLOSED" ? "neutral" : e.status === "ISSUED" ? "warn" : e.status === "SENT_TO_WAREHOUSE" ? "ok" : "neutral"}>
+                      <Badge
+                        tone={
+                          e.status === "SENT_TO_WAREHOUSE"
+                            ? "ok"
+                            : e.status === "ISSUED"
+                              ? "warn"
+                              : e.status === "CANCELLED" || e.status === "CLOSED"
+                                ? "neutral"
+                                : "neutral"
+                        }
+                      >
                         {statusLabel(e.status)}
                       </Badge>
                       {e.exportNeedsRevision ? <div className="mt-1 text-[11px] text-amber-700">nutná revize exportu</div> : null}

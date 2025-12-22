@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -29,6 +30,7 @@ enum EventStatus {
   SENT_TO_WAREHOUSE
   ISSUED
   CLOSED
+  CANCELLED
 }
 
 enum ReservationState {
@@ -213,4 +215,3 @@ model AuditLog {
   @@index([entityType, entityId])
   @@map("audit_log")
 }
-

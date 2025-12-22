@@ -12,11 +12,18 @@ import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
 import { humanError, statusLabel, stockTone } from "../lib/viewModel";
 import { cn } from "../lib/ui";
-import { ArrowLeft, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
+import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 
 const STATUS_STEPS = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CLOSED"] as const;
 
 function Stepper(props: { status: string }) {
+  if (props.status === "CANCELLED") {
+    return (
+      <div className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
+        <Ban className="h-4 w-4" /> Zrušeno
+      </div>
+    );
+  }
   const idx = STATUS_STEPS.indexOf(props.status as any);
   return (
     <div className="flex flex-wrap gap-2">
@@ -48,6 +55,7 @@ export default function EventDetailPage() {
   const [addFocusItemId, setAddFocusItemId] = useState<string | undefined>(undefined);
   const [exportConfirm, setExportConfirm] = useState(false);
   const [chefConfirm, setChefConfirm] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
 
   const load = async () => {
     if (!id) return;
@@ -70,7 +78,7 @@ export default function EventDetailPage() {
     if (!event || deepLinkHandled.current) return;
     const params = new URLSearchParams(loc.search);
     if (params.get("addItems") !== "1") return;
-    if (event.status === "ISSUED" || event.status === "CLOSED") {
+    if (event.status === "ISSUED" || event.status === "CLOSED" || event.status === "CANCELLED") {
       deepLinkHandled.current = true;
       toast.error("Akce je už uzamčená (vydaná nebo uzavřená).");
       return;
@@ -114,7 +122,7 @@ export default function EventDetailPage() {
 
 	  const canEM = ["admin", "event_manager"].includes(role);
 	  const canChef = ["admin", "chef"].includes(role);
-	  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED";
+	  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
 	  const canAddItems = (canEM || canChef) && canEditEvent;
 
 	  const latestExport = event?.exports?.[0] ?? null;
@@ -217,8 +225,14 @@ export default function EventDetailPage() {
 	            ) : null}
 
             {canEM ? (
-              <Button onClick={() => setExportConfirm(true)} disabled={event.status === "ISSUED" || event.status === "CLOSED"}>
+              <Button onClick={() => setExportConfirm(true)} disabled={!canEditEvent}>
                 <FileDown className="h-4 w-4" /> Předat skladu (PDF)
+              </Button>
+            ) : null}
+
+            {canEM ? (
+              <Button variant="danger" onClick={() => setCancelConfirm(true)} disabled={!canEditEvent}>
+                <Ban className="h-4 w-4" /> Zrušit akci
               </Button>
             ) : null}
 
@@ -340,6 +354,25 @@ export default function EventDetailPage() {
           try {
             await api(`/events/${id}/confirm-chef`, { method: "POST", body: "{}" });
             toast.success("Potvrzeno");
+            await load();
+          } catch (e: any) {
+            toast.error(humanError(e));
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={cancelConfirm}
+        onOpenChange={setCancelConfirm}
+        tone="danger"
+        title="Zrušit akci?"
+        description="Zrušená akce uvolní rezervace pro jiné termíny. Historie zůstane zachovaná."
+        confirmText="Zrušit"
+        onConfirm={async () => {
+          if (!id) return;
+          try {
+            await api(`/events/${id}/cancel`, { method: "POST", body: "{}" });
+            toast.success("Akce zrušena");
             await load();
           } catch (e: any) {
             toast.error(humanError(e));

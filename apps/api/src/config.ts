@@ -1,19 +1,24 @@
 import dotenv from "dotenv";
+import path from "node:path";
 import { z } from "zod";
 
 dotenv.config();
 
-const storageDefault =
-  (process.env.NODE_ENV ?? "development") === "production"
-    ? "/tmp/cater-sklad-storage"
-    : "storage";
+function normalizeStorageDir(nodeEnv: string, storageDir: string) {
+  if (nodeEnv === "production" && !path.isAbsolute(storageDir)) return "/tmp/cater-sklad-storage";
+  return storageDir;
+}
 
 const EnvSchema = z.object({
   NODE_ENV: z.string().default("development"),
   PORT: z.coerce.number().default(3001),
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(16),
-  STORAGE_DIR: z.string().default(storageDefault)
+  STORAGE_DIR: z.string().default("storage")
 });
 
-export const env = EnvSchema.parse(process.env);
+const parsed = EnvSchema.parse(process.env);
+export const env = {
+  ...parsed,
+  STORAGE_DIR: normalizeStorageDir(parsed.NODE_ENV, parsed.STORAGE_DIR)
+};
