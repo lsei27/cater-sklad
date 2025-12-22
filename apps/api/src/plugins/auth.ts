@@ -1,17 +1,11 @@
 import fp from "fastify-plugin";
 import jwt from "@fastify/jwt";
-import type { Role, User } from "@prisma/client";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-declare module "fastify" {
-  interface FastifyRequest {
-    user?: { id: string; email: string; role: Role };
-  }
-}
-
-export default fp(async (app, opts: { jwtSecret: string }) => {
+export default fp(async (app: FastifyInstance, opts: { jwtSecret: string }) => {
   await app.register(jwt, { secret: opts.jwtSecret });
 
-  app.decorate("authenticate", async (request: any, reply: any) => {
+  app.decorate("authenticate", async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const payload = await request.jwtVerify<{ sub: string }>();
       const user = await app.prisma.user.findUnique({ where: { id: payload.sub } });
@@ -22,10 +16,3 @@ export default fp(async (app, opts: { jwtSecret: string }) => {
     }
   });
 });
-
-declare module "fastify" {
-  interface FastifyInstance {
-    authenticate: (request: any, reply: any) => Promise<void>;
-  }
-}
-

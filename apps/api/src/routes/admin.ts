@@ -14,15 +14,33 @@ function parseBool(v: unknown) {
   return undefined;
 }
 
+async function getOrCreateCategory(params: {
+  tx: any;
+  parentId: string | null;
+  name: string;
+}) {
+  const { tx, parentId, name } = params;
+  const existing = await tx.category.findFirst({ where: { parentId, name } });
+  if (existing) return existing;
+  try {
+    return await tx.category.create({ data: { parentId, name } });
+  } catch {
+    const again = await tx.category.findFirst({ where: { parentId, name } });
+    if (!again) throw new Error("CATEGORY_CREATE_FAILED");
+    return again;
+  }
+}
+
 export async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/categories", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
     const body = z.object({ name: z.string().min(1), parent_id: z.string().uuid().nullable().optional() }).parse(request.body);
-    const row = await app.prisma.category.upsert({
-      where: { parentId_name: { parentId: body.parent_id ?? null, name: body.name } },
-      update: {},
-      create: { name: body.name, parentId: body.parent_id ?? null }
+    const parentId = body.parent_id ?? null;
+    const row = await getOrCreateCategory({
+      tx: app.prisma,
+      parentId,
+      name: body.name
     });
     await app.prisma.auditLog.create({
       data: { actorUserId: actor.id, entityType: "category", entityId: row.id, action: "upsert", diffJson: body }
@@ -184,16 +202,8 @@ export async function adminRoutes(app: FastifyInstance) {
 
           if (!name || !parentName || !subName) throw new Error("Missing name/parent_category/category");
 
-          const parent = await tx.category.upsert({
-            where: { parentId_name: { parentId: null, name: parentName } },
-            update: {},
-            create: { name: parentName }
-          });
-          const child = await tx.category.upsert({
-            where: { parentId_name: { parentId: parent.id, name: subName } },
-            update: {},
-            create: { parentId: parent.id, name: subName }
-          });
+          const parent = await getOrCreateCategory({ tx, parentId: null, name: parentName });
+          const child = await getOrCreateCategory({ tx, parentId: parent.id, name: subName });
 
           const existing = sku
             ? await tx.inventoryItem.findUnique({ where: { sku } })

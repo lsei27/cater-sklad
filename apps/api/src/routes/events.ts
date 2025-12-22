@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { EventStatus } from "@prisma/client";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
@@ -21,8 +22,8 @@ export async function eventRoutes(app: FastifyInstance) {
     const user = request.user!;
     const where =
       user.role === "warehouse"
-        ? { status: { in: ["SENT_TO_WAREHOUSE", "ISSUED"] as const } }
-        : {};
+        ? { status: { in: [EventStatus.SENT_TO_WAREHOUSE, EventStatus.ISSUED] } }
+        : undefined;
     const events = await app.prisma.event.findMany({
       where,
       orderBy: { deliveryDatetime: "asc" },
@@ -358,11 +359,16 @@ export async function eventRoutes(app: FastifyInstance) {
       });
       if (!latest) throw new Error("NO_EXPORT");
       const snapshot = latest.snapshotJson as any as ExportSnapshot;
-      const defaultItems =
+      type IssueItemInput = { inventory_item_id: string; issued_quantity: number; idempotency_key?: string };
+      const defaultItems: IssueItemInput[] =
         body.items && body.items.length > 0
-          ? body.items
+          ? (body.items as IssueItemInput[])
           : snapshot.groups.flatMap((g) =>
-              g.items.map((i) => ({ inventory_item_id: i.inventoryItemId, issued_quantity: i.qty }))
+              g.items.map((i) => ({
+                inventory_item_id: i.inventoryItemId,
+                issued_quantity: i.qty,
+                idempotency_key: undefined
+              }))
             );
 
       const rows = defaultItems.map((i) => ({

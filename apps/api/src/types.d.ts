@@ -1,14 +1,9 @@
 import "fastify";
-import type { Role } from "@prisma/client";
+import type { FastifyReply, FastifyRequest } from "fastify";
 
 declare module "fastify" {
   interface FastifyInstance {
     config: { storageDir: string };
-    authenticate: (request: any, reply: any) => Promise<void>;
-  }
-
-  interface FastifyRequest {
-    user?: { id: string; email: string; role: Role };
+    authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
-
