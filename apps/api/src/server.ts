@@ -29,7 +29,7 @@ await app.register(cors, { origin: true, credentials: true });
 await app.register(prismaPlugin);
 await app.register(authPlugin, { jwtSecret: env.JWT_SECRET });
 
-app.setErrorHandler((err, request, reply) => {
+app.setErrorHandler((err: unknown, request, reply) => {
   if (err instanceof ZodError) {
     return reply.status(400).send({
       error: {
@@ -39,6 +39,16 @@ app.setErrorHandler((err, request, reply) => {
       }
     });
   }
+
+  const statusCode =
+    typeof (err as any)?.statusCode === "number" ? Number((err as any).statusCode) : 500;
+
+  if (statusCode >= 400 && statusCode < 500) {
+    const code = statusCode === 401 ? "UNAUTHENTICATED" : statusCode === 403 ? "FORBIDDEN" : "BAD_REQUEST";
+    const message = err instanceof Error ? err.message : "Request failed";
+    return reply.status(statusCode).send({ error: { code, message } });
+  }
+
   request.log.error({ err }, "unhandled error");
   return reply.status(500).send({ error: { code: "INTERNAL", message: "Internal Server Error" } });
 });
