@@ -29,7 +29,7 @@ export default function EventsPage() {
 
   useEffect(() => {
     load();
-    const off = startSSE((ev) => {
+    const off = startSSE((ev: any) => {
       if (["event_status_changed", "export_created", "reservation_changed"].includes(ev?.type)) load();
     });
     const interval = setInterval(load, 15000);

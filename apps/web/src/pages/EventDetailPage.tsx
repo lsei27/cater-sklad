@@ -22,7 +22,7 @@ export default function EventDetailPage() {
 
   useEffect(() => {
     load();
-    const off = startSSE((ev) => {
+    const off = startSSE((ev: any) => {
       if (ev?.eventId === id) load();
     });
     const interval = setInterval(load, 15000);
@@ -131,7 +131,7 @@ function ReserveInline(props: { eventId: string; onSaved: () => void }) {
 
   useEffect(() => {
     api<{ items: any[] }>("/inventory/items?active=true")
-      .then((r) => setItems(r.items))
+      .then((r: any) => setItems(r.items))
       .catch(() => setItems([]));
   }, []);
 
@@ -185,12 +185,14 @@ function ReturnCloseInline(props: { eventId: string; onSaved: () => void }) {
 
   useEffect(() => {
     api<{ event: any }>(`/events/${props.eventId}`)
-      .then((r) => {
+      .then((r: any) => {
         const res = r.event?.reservations ?? [];
         setRows(res.map((x: any) => ({ inventory_item_id: x.inventoryItemId, returned_quantity: 0, broken_quantity: 0 })));
       })
       .catch(() => {});
-    api<{ items: any[] }>("/inventory/items?active=true").then((r) => setItems(r.items)).catch(() => setItems([]));
+    api<{ items: any[] }>("/inventory/items?active=true")
+      .then((r: any) => setItems(r.items))
+      .catch(() => setItems([]));
   }, [props.eventId]);
 
   return (
@@ -213,7 +215,7 @@ function ReturnCloseInline(props: { eventId: string; onSaved: () => void }) {
       {rows.map((r, idx) => (
         <div key={r.inventory_item_id} className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <div className="text-sm">
-            {items.find((i) => i.id === r.inventory_item_id)?.name ?? r.inventory_item_id}
+            {items.find((i: any) => i.id === r.inventory_item_id)?.name ?? r.inventory_item_id}
           </div>
           <label className="text-xs">
             Returned
