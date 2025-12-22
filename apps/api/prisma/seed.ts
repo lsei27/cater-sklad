@@ -3,6 +3,19 @@ import { PrismaClient, Role, LedgerReason } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+async function getOrCreateCategory(params: { parentId: string | null; name: string }) {
+  const { parentId, name } = params;
+  const existing = await prisma.category.findFirst({ where: { parentId, name } });
+  if (existing) return existing;
+  try {
+    return await prisma.category.create({ data: { parentId, name } });
+  } catch {
+    const again = await prisma.category.findFirst({ where: { parentId, name } });
+    if (!again) throw new Error("CATEGORY_CREATE_FAILED");
+    return again;
+  }
+}
+
 async function main() {
   const password = await bcrypt.hash("admin123", 10);
   const admin = await prisma.user.upsert({
@@ -34,21 +47,13 @@ async function main() {
   const parents = ["Inventář", "Mobiliář", "Technika", "Zboží"];
   const parentRows = new Map<string, string>();
   for (const name of parents) {
-    const row = await prisma.category.upsert({
-      where: { parentId_name: { parentId: null, name } },
-      update: {},
-      create: { name }
-    });
+    const row = await getOrCreateCategory({ parentId: null, name });
     parentRows.set(name, row.id);
   }
 
   const sub = async (parent: string, name: string) => {
     const parentId = parentRows.get(parent)!;
-    return prisma.category.upsert({
-      where: { parentId_name: { parentId, name } },
-      update: {},
-      create: { parentId, name }
-    });
+    return getOrCreateCategory({ parentId, name });
   };
 
   const catSklo = await sub("Inventář", "Sklo");
