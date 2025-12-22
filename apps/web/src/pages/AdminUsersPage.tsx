@@ -8,7 +8,8 @@ import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
 import { roleLabel } from "../lib/viewModel";
-import { UserPlus, Users } from "lucide-react";
+import { Icons } from "../lib/icons";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
 
 const ROLE_OPTIONS = [
   { value: "admin", label: "Admin" },
@@ -38,7 +39,7 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
-    if (role === "admin") load().catch(() => {});
+    if (role === "admin") load().catch(() => { });
   }, [role]);
 
   if (role !== "admin") {
@@ -61,7 +62,7 @@ export default function AdminUsersPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <UserPlus className="h-4 w-4" /> Nový uživatel
+            <Icons.Plus /> Nový uživatel
           </div>
         </CardHeader>
         <CardContent>
@@ -114,7 +115,7 @@ export default function AdminUsersPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Users className="h-4 w-4" /> Seznam
+            <Icons.User /> Seznam
           </div>
         </CardHeader>
         <CardContent>
@@ -132,18 +133,57 @@ export default function AdminUsersPage() {
           ) : (
             <div className="space-y-2">
               {users.map((u) => (
-                <div key={u.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold">{u.email}</div>
-                    <div className="mt-1 text-xs text-slate-600">{roleLabel(u.role)}</div>
-                  </div>
-                  <Badge tone="neutral">{roleLabel(u.role)}</Badge>
-                </div>
+                <UserRow key={u.id} user={u} onDeleted={load} />
               ))}
             </div>
           )}
+
+
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{user.email}</div>
+          <div className="mt-1 text-xs text-slate-600">{roleLabel(user.role)}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge tone="neutral">{roleLabel(user.role)}</Badge>
+          <button
+            onClick={() => setConfirm(true)}
+            className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+            title="Smazat uživatele"
+          >
+            <Icons.Trash />
+          </button>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={confirm}
+        onOpenChange={setConfirm}
+        tone="danger"
+        title={`Smazat uživatele?`}
+        description={`Opravdu chceš smazat uživatele ${user.email}? Tato akce je nevratná.`}
+        confirmText="Smazat"
+        onConfirm={async () => {
+          try {
+            await api(`/admin/users/${user.id}`, { method: "DELETE" });
+            toast.success("Uživatel smazán");
+            onDeleted();
+          } catch (e: any) {
+            toast.error(e?.error?.message ?? "Nepodařilo se smazat uživatele.");
+          }
+        }}
+      />
+    </>
   );
 }

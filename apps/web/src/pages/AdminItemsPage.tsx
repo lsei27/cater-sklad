@@ -8,6 +8,7 @@ import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
+import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
 import { Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
 
@@ -49,7 +50,7 @@ export default function AdminItemsPage() {
 
   useEffect(() => {
     if (role !== "admin") return;
-    load().catch(() => {});
+    load().catch(() => { });
   }, [role]);
 
   if (role !== "admin") {
@@ -175,7 +176,7 @@ export default function AdminItemsPage() {
       ) : (
         <div className="space-y-2">
           {items.map((i) => (
-            <ItemRow key={i.id} item={i} onSaved={() => load({ keepLoading: true })} />
+            <ItemRow key={i.id} item={i} parents={parents} childCats={childCats} onSaved={() => load({ keepLoading: true })} />
           ))}
         </div>
       )}
@@ -183,130 +184,220 @@ export default function AdminItemsPage() {
   );
 }
 
-function ItemRow(props: { item: any; onSaved: () => void }) {
-  const [imageUrl, setImageUrl] = useState(props.item.imageUrl ?? "");
-  const [active, setActive] = useState<boolean>(props.item.active ?? true);
+function ItemRow({ item, parents, childCats, onSaved }: { item: any; parents: any[]; childCats: any[]; onSaved: () => void }) {
+  const [editOpen, setEditOpen] = useState(false);
+  const [stockOpen, setStockOpen] = useState(false);
+
+  return (
+    <>
+      <Card>
+        <CardContent>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="shrink-0">
+                {item.imageUrl ? (
+                  <img className="h-10 w-10 rounded-xl object-cover bg-slate-100" src={apiUrl(item.imageUrl)} alt={item.name} />
+                ) : (
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+                    <ImageIcon className="h-5 w-5" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">{item.name}</div>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  <span>{item.category?.parent?.name ?? "Typ"}</span>
+                  <span className="text-slate-300">•</span>
+                  <span>{item.category?.name ?? "Kategorie"}</span>
+                  {!item.active ? <span className="text-red-600 font-semibold">• Neaktivní</span> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setStockOpen(true)}>
+                Sklad
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+                Upravit
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} childCats={childCats} onSaved={onSaved} />
+      <StockModal open={stockOpen} onOpenChange={setStockOpen} item={item} onSaved={onSaved} />
+    </>
+  );
+}
+
+function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
+  const [name, setName] = useState(item.name);
+  const [categoryId, setCategoryId] = useState(item.category_id);
+  const [imageUrl, setImageUrl] = useState(item.imageUrl ?? "");
+  const [active, setActive] = useState(item.active ?? true);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
+    setName(item.name);
+    setCategoryId(item.category_id);
+    setImageUrl(item.imageUrl ?? "");
+    setActive(item.active ?? true);
+  }, [open, item]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api(`/admin/items/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name, category_id: categoryId, image_url: imageUrl ? imageUrl : null, active })
+      });
+      toast.success("Uloženo");
+      onSaved();
+      onOpenChange(false);
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Nepodařilo se uložit.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Card>
-      <CardContent>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{props.item.name}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Badge>{props.item.category?.parent?.name ?? "Typ"}</Badge>
-              <Badge tone="neutral">{props.item.category?.name ?? "Kategorie"}</Badge>
-              {!active ? <Badge tone="danger">Neaktivní</Badge> : null}
+    <Modal open={open} onOpenChange={onOpenChange} title="Upravit položku" primaryText="Uložit" onPrimary={save} primaryDisabled={saving}>
+      <div className="grid gap-4">
+        <label className="text-sm">
+          Název
+          <Input className="mt-1" value={name} onChange={e => setName(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Kategorie
+          <Select className="mt-1" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+            {childCats.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.parentName} / {c.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+
+        <label className="text-sm">
+          Obrázek (URL)
+          <div className="flex gap-2">
+            <Input className="mt-1 flex-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://…" />
+            <div className="relative mt-1">
+              <Button variant="secondary" className="relative">
+                Upload
+                <input
+                  type="file"
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const token = getToken();
+                      const fd = new FormData();
+                      fd.append("file", file);
+                      const res = await fetch(`${apiBaseUrl()}/admin/items/${item.id}/image`, {
+                        method: "POST",
+                        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                        body: fd
+                      });
+                      const j = await res.json().catch(() => ({}));
+                      if (!res.ok) throw j;
+                      setImageUrl(j.imageUrl ?? "");
+                      toast.success("Nahráno");
+                    } catch (err: any) {
+                      toast.error("Chyba nahrávání");
+                    }
+                  }}
+                />
+              </Button>
             </div>
           </div>
-          <div className="shrink-0">
-            {imageUrl ? (
-              <img className="h-12 w-12 rounded-xl object-cover" src={apiUrl(imageUrl)} alt={props.item.name} />
-            ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                <ImageIcon className="h-5 w-5" />
-              </div>
-            )}
-          </div>
+        </label>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
+          Aktivní (zobrazovat v katalogu)
+        </label>
+
+        <div className="pt-4 border-t border-slate-100">
+          <Button variant="danger" full onClick={() => setConfirmDelete(true)}>
+            <Trash2 className="h-4 w-4 mr-2" /> Smazat položku
+          </Button>
         </div>
+      </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <label className="md:col-span-2 text-sm">
-            Obrázek (URL)
-            <Input className="mt-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://… nebo /storage/…" />
-          </label>
-          <label className="flex items-center gap-2 text-sm md:items-end">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
-            Aktivní
-          </label>
-
-          <label className="md:col-span-3 text-sm">
-            Nahrát obrázek
-            <div className="mt-1 flex items-center gap-2">
-              <Input
-                type="file"
-                accept="image/*"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!file) return;
-                  try {
-                    const token = getToken();
-                    const fd = new FormData();
-                    fd.append("file", file);
-                    const res = await fetch(`${apiBaseUrl()}/admin/items/${props.item.id}/image`, {
-                      method: "POST",
-                      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                      body: fd
-                    });
-                    const j = await res.json().catch(() => ({}));
-                    if (!res.ok) throw j;
-                    setImageUrl(j.imageUrl ?? "");
-                    toast.success("Obrázek nahrán");
-                    props.onSaved();
-                  } catch (err: any) {
-                    toast.error(err?.error?.message ?? "Nepodařilo se nahrát obrázek.");
-                  }
-                }}
-              />
-              <Badge tone="neutral">
-                <Upload className="h-3.5 w-3.5" /> z počítače
-              </Badge>
-            </div>
-            <div className="mt-1 text-xs text-slate-600">
-              Pozn.: na Renderu se soubory ukládají do dočasného úložiště (MVP). Pro trvalé uložení je vhodné S3/R2.
-            </div>
-          </label>
-
-          <div className="md:col-span-3 flex flex-col gap-2 md:flex-row">
-            <Button
-              full
-              variant="secondary"
-              disabled={saving}
-              onClick={async () => {
-                setSaving(true);
-                try {
-                  await api(`/admin/items/${props.item.id}`, {
-                    method: "PATCH",
-                    body: JSON.stringify({ image_url: imageUrl ? imageUrl : null, active })
-                  });
-                  toast.success("Uloženo");
-                  props.onSaved();
-                } catch (e: any) {
-                  toast.error(e?.error?.message ?? "Nepodařilo se uložit.");
-                } finally {
-                  setSaving(false);
-                }
-              }}
-            >
-              Uložit změny
-            </Button>
-            <Button full variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}>
-              <Trash2 className="h-4 w-4" /> Smazat
-            </Button>
-          </div>
-        </div>
-
-        <ConfirmDialog
-          open={confirmDelete}
-          onOpenChange={setConfirmDelete}
-          tone="danger"
-          title="Smazat položku?"
-          description="Pokud už byla použita v historii (výdeje/vratky/ledger), pouze ji skryjeme z katalogu."
-          confirmText="Smazat"
-          onConfirm={async () => {
-            try {
-              const res = await api<{ mode: "deleted" | "deactivated" }>(`/admin/items/${props.item.id}`, { method: "DELETE" });
-              toast.success(res.mode === "deleted" ? "Položka smazána" : "Položka skryta (neaktivní)");
-              props.onSaved();
-            } catch (e: any) {
-              toast.error(e?.error?.message ?? "Nepodařilo se smazat položku.");
-            }
-          }}
-        />
-      </CardContent>
-    </Card>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        tone="danger"
+        title="Smazat položku?"
+        description="Pokud už byla použita v historii, pouze ji skryjeme."
+        confirmText="Smazat"
+        onConfirm={async () => {
+          try {
+            const res = await api<{ mode: "deleted" | "deactivated" }>(`/admin/items/${item.id}`, { method: "DELETE" });
+            toast.success(res.mode === "deleted" ? "Smazáno" : "Skryto");
+            onSaved();
+            onOpenChange(false);
+          } catch (e: any) {
+            toast.error(e?.error?.message ?? "Chyba mazání.");
+          }
+        }}
+      />
+    </Modal>
   );
+}
+
+function StockModal({ open, onOpenChange, item, onSaved }: any) {
+  const [change, setChange] = useState<string>("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const save = async () => {
+    const val = parseInt(change);
+    if (isNaN(val) || val === 0) {
+      toast.error("Zadej platnou změnu (např. 10 nebo -5)");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api(`/admin/items/${item.id}/stock`, {
+        method: "POST",
+        body: JSON.stringify({ change: val, reason })
+      });
+      toast.success("Sklad upraven");
+      onSaved();
+      onOpenChange(false);
+      setChange("");
+      setReason("");
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Nepodařilo se upravit sklad.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onOpenChange={onOpenChange} title={`Sklad: ${item.name}`} primaryText="Provést změnu" onPrimary={save} primaryDisabled={loading}>
+      <div className="grid gap-4">
+        <div className="p-3 bg-slate-50 rounded-xl text-sm text-slate-600">
+          Aktuální fyzický stav: <span className="font-bold text-slate-900">{item.totalQuantity ?? 0}</span> {item.unit ?? "ks"}
+        </div>
+        <label className="text-sm">
+          Změna (+ naskladnit, - vyskladnit/manko)
+          <Input className="mt-1" type="number" value={change} onChange={e => setChange(e.target.value)} placeholder="Např. 10" />
+        </label>
+        <label className="text-sm">
+          Důvod (nepovinné)
+          <Input className="mt-1" value={reason} onChange={e => setReason(e.target.value)} placeholder="Např. nákup, rozbití..." />
+        </label>
+      </div>
+    </Modal>
+  )
 }

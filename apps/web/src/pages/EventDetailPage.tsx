@@ -13,6 +13,7 @@ import toast from "react-hot-toast";
 import { humanError, statusLabel, stockTone } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
+import { Icons } from "../lib/icons";
 
 const STATUS_STEPS = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CLOSED"] as const;
 
@@ -56,6 +57,7 @@ export default function EventDetailPage() {
   const [exportConfirm, setExportConfirm] = useState(false);
   const [chefConfirm, setChefConfirm] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [hardDeleteConfirm, setHardDeleteConfirm] = useState(false);
 
   const load = async () => {
     if (!id) return;
@@ -117,13 +119,13 @@ export default function EventDetailPage() {
       body: JSON.stringify({ inventory_item_ids: reservationItems.map((it) => it.inventoryItemId) })
     })
       .then((r) => setStockByItemId(new Map(r.rows.map((x) => [x.inventoryItemId, x]))))
-      .catch(() => {});
+      .catch(() => { });
   }, [id, reservationItems.length]);
 
-	  const canEM = ["admin", "event_manager"].includes(role);
-	  const canChef = ["admin", "chef"].includes(role);
-	  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
-	  const canAddItems = (canEM || canChef) && canEditEvent;
+  const canEM = ["admin", "event_manager"].includes(role);
+  const canChef = ["admin", "chef"].includes(role);
+  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
+  const canAddItems = (canEM || canChef) && canEditEvent;
 
   const latestExport = event?.exports?.[0] ?? null;
   const token = getToken();
@@ -213,18 +215,18 @@ export default function EventDetailPage() {
             <Stepper status={event.status} />
           </div>
 
-	          <div className="mt-4 flex flex-wrap gap-2">
-	            {canEM || canChef ? (
-	              <Button variant="secondary" onClick={() => setAddOpen(true)} disabled={!canAddItems}>
-	                <PackagePlus className="h-4 w-4" /> Přidat položky
-	              </Button>
-	            ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {canEM || canChef ? (
+              <Button variant="secondary" onClick={() => setAddOpen(true)} disabled={!canAddItems}>
+                <PackagePlus className="h-4 w-4" /> Přidat položky
+              </Button>
+            ) : null}
 
-	            {canChef ? (
-	              <Button variant="secondary" onClick={() => setChefConfirm(true)} disabled={event.status !== "DRAFT"}>
-	                <Wand2 className="h-4 w-4" /> Potvrdit techniku
-	              </Button>
-	            ) : null}
+            {canChef ? (
+              <Button variant="secondary" onClick={() => setChefConfirm(true)} disabled={event.status !== "DRAFT"}>
+                <Wand2 className="h-4 w-4" /> Potvrdit techniku
+              </Button>
+            ) : null}
 
             {canEM ? (
               <Button onClick={() => setExportConfirm(true)} disabled={!canEditEvent}>
@@ -235,6 +237,12 @@ export default function EventDetailPage() {
             {canEM ? (
               <Button variant="danger" onClick={() => setCancelConfirm(true)} disabled={!canEditEvent}>
                 <Ban className="h-4 w-4" /> Zrušit akci
+              </Button>
+            ) : null}
+
+            {role === "admin" ? (
+              <Button variant="danger" onClick={() => setHardDeleteConfirm(true)}>
+                <Icons.Trash className="h-4 w-4" /> Smazat (Admin)
               </Button>
             ) : null}
 
@@ -388,6 +396,25 @@ export default function EventDetailPage() {
           }
         }}
       />
+
+      <ConfirmDialog
+        open={hardDeleteConfirm}
+        onOpenChange={setHardDeleteConfirm}
+        tone="danger"
+        title="Smazat akci navždy?"
+        description="POZOR: Toto nenávratně smaže celou akci a všechna data s ní spojená. Rezervace se zruší."
+        confirmText="Smazat navždy"
+        onConfirm={async () => {
+          if (!id) return;
+          try {
+            await api(`/events/${id}`, { method: "DELETE" });
+            toast.success("Akce smazána napořád");
+            nav("/events");
+          } catch (e: any) {
+            toast.error(humanError(e));
+          }
+        }}
+      />
     </div>
   );
 }
@@ -431,7 +458,7 @@ function AddItemsPanel(props: {
           if (tech) setParentId(tech.id);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [props.open]);
 
   const load = async () => {
