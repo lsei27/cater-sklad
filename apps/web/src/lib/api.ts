@@ -1,5 +1,8 @@
 export type ApiError = { error: { code: string; message: string } };
 
+const RAW_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
+const API_BASE_URL = (RAW_BASE_URL ?? "").replace(/\/+$/, "");
+
 export function getToken() {
   return localStorage.getItem("token");
 }
@@ -28,7 +31,8 @@ export function setCurrentUser(user: CurrentUser | null) {
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(url, {
+  const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+  const res = await fetch(fullUrl, {
     ...init,
     headers: {
       "Content-Type": "application/json",

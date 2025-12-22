@@ -28,6 +28,7 @@ pnpm --filter @cater-sklad/web dev
 ```
 
 Web běží na `http://localhost:3000`, API na `http://localhost:3001`.
+Pro nasazení nastav ve webu `VITE_API_BASE_URL` (např. Render URL API).
 
 Seed účty:
 - `admin@local` / `admin123`
@@ -126,4 +127,3 @@ DB integration tests (vyžaduje běžící Postgres + migrace):
 export RUN_DB_TESTS=1
 pnpm --filter @cater-sklad/api test
 ```
-

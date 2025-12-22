@@ -37,6 +37,10 @@ await app.register(inventoryRoutes);
 await app.register(adminRoutes);
 await app.register(streamRoutes);
 
+app.get("/health", async () => {
+  return { ok: true };
+});
+
 app.get("/meta/version", async () => {
   return { name: "@cater-sklad/api", version: "0.1.0", time: new Date().toISOString() };
 });
