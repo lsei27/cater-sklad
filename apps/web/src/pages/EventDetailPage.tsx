@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { api, apiBaseUrl, getCurrentUser } from "../lib/api";
+import { api, apiBaseUrl, getCurrentUser, getToken } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -125,7 +125,9 @@ export default function EventDetailPage() {
 	  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
 	  const canAddItems = (canEM || canChef) && canEditEvent;
 
-	  const latestExport = event?.exports?.[0] ?? null;
+  const latestExport = event?.exports?.[0] ?? null;
+  const token = getToken();
+  const withToken = (url: string) => (token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, { parent: string; sub: string; rows: any[] }>();
@@ -242,7 +244,7 @@ export default function EventDetailPage() {
                 onClick={() =>
                   window.open(
                     latestExport?.pdfUrl
-                      ? `${apiBaseUrl()}${latestExport.pdfUrl}`
+                      ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}`)
                       : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
                     "_blank"
                   )
@@ -342,7 +344,7 @@ export default function EventDetailPage() {
           try {
             const res = await api<{ pdfUrl: string }>(`/events/${id}/export`, { method: "POST", body: "{}" });
             toast.success("Export vytvořen");
-            window.open(`${apiBaseUrl()}${res.pdfUrl}`, "_blank");
+            window.open(withToken(`${apiBaseUrl()}${res.pdfUrl}`), "_blank");
             await load();
           } catch (e: any) {
             toast.error(humanError(e));

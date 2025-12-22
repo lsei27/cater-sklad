@@ -142,23 +142,41 @@ export async function eventRoutes(app: FastifyInstance) {
 	    return { export: { ...row, pdfUrl: `/events/${params.id}/exports/${row.version}/pdf` } };
 	  });
 
-	  app.get("/events/:id/exports/:version/pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
-	    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
-	    const row = await app.prisma.eventExport.findFirst({
-	      where: { eventId: params.id, version: params.version }
-	    });
-	    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
-	    const snapshot = row.snapshotJson as any as ExportSnapshot;
-	    try {
-	      const pdfBytes = await buildExportPdf(snapshot);
-	      reply.header("Content-Type", "application/pdf");
-	      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}.pdf"`);
-	      return reply.send(Buffer.from(pdfBytes));
-	    } catch (err) {
-	      request.log.error({ err }, "pdf render failed");
-	      return httpError(reply, 500, "PDF_RENDER_FAILED", "Nepodařilo se vygenerovat PDF.");
-	    }
-	  });
+  app.get("/events/:id/exports/:version/pdf", async (request, reply) => {
+    // Opening a PDF in a new tab can't reliably attach Authorization header, so allow `?token=...` here.
+    const query = z.object({ token: z.string().optional() }).parse(request.query);
+    const token =
+      query.token ??
+      (typeof request.headers.authorization === "string" ? request.headers.authorization.split(" ")[1] : undefined);
+    if (!token) return httpError(reply, 401, "UNAUTHENTICATED", "Missing token");
+    try {
+      const payload = app.jwt.verify<{ sub: string }>(token);
+      const user = await app.prisma.user.findUnique({ where: { id: payload.sub } });
+      if (!user) return httpError(reply, 401, "UNAUTHENTICATED", "Invalid token");
+      (request as any).user = { id: user.id, email: user.email, role: user.role };
+    } catch {
+      return httpError(reply, 401, "UNAUTHENTICATED", "Invalid token");
+    }
+
+    requireRole(request.user!.role, ["admin", "event_manager", "warehouse"]);
+
+    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+    const row = await app.prisma.eventExport.findFirst({
+      where: { eventId: params.id, version: params.version }
+    });
+    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
+    const snapshot = row.snapshotJson as any as ExportSnapshot;
+    try {
+      const pdfBytes = await buildExportPdf(snapshot);
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}.pdf"`);
+      reply.header("Cache-Control", "no-store");
+      return reply.send(Buffer.from(pdfBytes));
+    } catch (err) {
+      request.log.error({ err }, "pdf render failed");
+      return httpError(reply, 500, "PDF_RENDER_FAILED", "Nepodařilo se vygenerovat PDF.");
+    }
+  });
 
   app.get("/events/:id/availability", { preHandler: [app.authenticate] }, async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
