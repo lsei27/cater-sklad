@@ -7,8 +7,6 @@ import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 const EventCreateSchema = z.object({
   name: z.string().min(1),
@@ -102,43 +100,65 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
-    const event = await app.prisma.event.findUnique({
-      where: { id },
-      include: {
+	  app.get("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+	    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
+	    const event = await app.prisma.event.findUnique({
+	      where: { id },
+	      include: {
         reservations: {
           include: {
             item: { include: { category: { include: { parent: true } } } }
           }
         },
-        exports: { orderBy: { version: "desc" }, take: 1 }
-      }
-    });
-    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
-    return { event };
-  });
+	        exports: { orderBy: { version: "desc" }, take: 1 }
+	      }
+	    });
+	    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+	    const exports = (event.exports ?? []).map((e) => ({
+	      ...e,
+	      pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
+	    }));
+	    return { event: { ...event, exports } };
+	  });
 
-  app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
-    const exports = await app.prisma.eventExport.findMany({
-      where: { eventId: id },
-      orderBy: { version: "desc" },
-      select: { id: true, eventId: true, version: true, exportedAt: true, exportedById: true, pdfPath: true, createdAt: true }
-    });
-    return {
-      exports: exports.map((e) => ({ ...e, pdfUrl: e.pdfPath ? `/storage/${e.pdfPath}` : null }))
-    };
-  });
+	  app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
+	    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
+	    const exports = await app.prisma.eventExport.findMany({
+	      where: { eventId: id },
+	      orderBy: { version: "desc" },
+	      select: { id: true, eventId: true, version: true, exportedAt: true, exportedById: true, pdfPath: true, createdAt: true }
+	    });
+	    return {
+	      exports: exports.map((e) => ({ ...e, pdfUrl: `/events/${id}/exports/${e.version}/pdf` }))
+	    };
+	  });
 
-  app.get("/events/:id/exports/:version", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
-    const row = await app.prisma.eventExport.findFirst({
-      where: { eventId: params.id, version: params.version }
-    });
-    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
-    return { export: { ...row, pdfUrl: row.pdfPath ? `/storage/${row.pdfPath}` : null } };
-  });
+	  app.get("/events/:id/exports/:version", { preHandler: [app.authenticate] }, async (request, reply) => {
+	    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+	    const row = await app.prisma.eventExport.findFirst({
+	      where: { eventId: params.id, version: params.version }
+	    });
+	    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
+	    return { export: { ...row, pdfUrl: `/events/${params.id}/exports/${row.version}/pdf` } };
+	  });
+
+	  app.get("/events/:id/exports/:version/pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
+	    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+	    const row = await app.prisma.eventExport.findFirst({
+	      where: { eventId: params.id, version: params.version }
+	    });
+	    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
+	    const snapshot = row.snapshotJson as any as ExportSnapshot;
+	    try {
+	      const pdfBytes = await buildExportPdf(snapshot);
+	      reply.header("Content-Type", "application/pdf");
+	      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}.pdf"`);
+	      return reply.send(Buffer.from(pdfBytes));
+	    } catch (err) {
+	      request.log.error({ err }, "pdf render failed");
+	      return httpError(reply, 500, "PDF_RENDER_FAILED", "Nepodařilo se vygenerovat PDF.");
+	    }
+	  });
 
   app.get("/events/:id/availability", { preHandler: [app.authenticate] }, async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
@@ -349,22 +369,12 @@ export async function eventRoutes(app: FastifyInstance) {
       return { exportRow, snapshot };
     });
 
-    try {
-      const storageDir = app.config.storageDir;
-      await mkdir(storageDir, { recursive: true });
-      const pdfBytes = await buildExportPdf(created.snapshot);
-      const pdfFile = `event_${created.snapshot.event.id}_v${created.snapshot.event.version}.pdf`;
-      const pdfPath = path.join(storageDir, pdfFile);
-      await writeFile(pdfPath, pdfBytes);
-      await app.prisma.eventExport.update({ where: { id: created.exportRow.id }, data: { pdfPath: pdfFile } });
-
-      sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
-      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
-      return reply.send({ export: { ...created.exportRow, pdfPath: pdfFile }, pdfUrl: `/storage/${pdfFile}` });
-    } catch (err) {
-      request.log.error({ err }, "pdf export failed");
-      return httpError(reply, 500, "PDF_EXPORT_FAILED", "Nepodařilo se vytvořit PDF export.");
-    }
+    sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
+    sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
+    return reply.send({
+      export: created.exportRow,
+      pdfUrl: `/events/${params.id}/exports/${created.snapshot.event.version}/pdf`
+    });
   });
 
   app.post("/events/:id/issue", { preHandler: [app.authenticate] }, async (request, reply) => {

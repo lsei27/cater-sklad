@@ -236,10 +236,17 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
-            {latestExport?.pdfPath ? (
+            {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <Button
                 variant="secondary"
-                onClick={() => window.open(`${apiBaseUrl()}/storage/${latestExport.pdfPath}`, "_blank")}
+                onClick={() =>
+                  window.open(
+                    latestExport?.pdfUrl
+                      ? `${apiBaseUrl()}${latestExport.pdfUrl}`
+                      : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
+                    "_blank"
+                  )
+                }
               >
                 Otevřít PDF
               </Button>
