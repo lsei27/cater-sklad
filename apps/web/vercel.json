@@ -1,7 +1,9 @@
 {
+  "installCommand": "pnpm -w install --frozen-lockfile",
+  "buildCommand": "pnpm -w --filter @cater-sklad/web build",
+  "outputDirectory": "dist",
   "routes": [
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
-
