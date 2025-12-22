@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import staticPlugin from "@fastify/static";
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { env } from "./config.js";
 import prismaPlugin from "./plugins/prisma.js";
 import authPlugin from "./plugins/auth.js";
@@ -54,6 +55,7 @@ app.setErrorHandler((err: unknown, request, reply) => {
 });
 
 const storageDir = path.resolve(process.cwd(), env.STORAGE_DIR);
+await mkdir(storageDir, { recursive: true });
 await app.register(staticPlugin, { root: storageDir, prefix: "/storage/" });
 
 await app.register(authRoutes);

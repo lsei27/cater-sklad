@@ -3,6 +3,7 @@ import { sseBus } from "../lib/sse.js";
 
 export async function streamRoutes(app: FastifyInstance) {
   app.get("/stream", async (request, reply) => {
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : "*";
     const token =
       // EventSource can't set headers reliably; allow query token for SSE.
       (request.query as any)?.token ??
@@ -17,6 +18,9 @@ export async function streamRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: { code: "UNAUTHENTICATED", message: "Invalid token" } });
     }
 
+    reply.raw.setHeader("Access-Control-Allow-Origin", origin);
+    reply.raw.setHeader("Vary", "Origin");
+    reply.raw.setHeader("Access-Control-Allow-Credentials", "true");
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
     reply.raw.setHeader("Connection", "keep-alive");
