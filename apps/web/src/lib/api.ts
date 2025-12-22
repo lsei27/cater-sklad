@@ -43,13 +43,18 @@ export function setCurrentUser(user: CurrentUser | null) {
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type") && init?.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   const res = await fetch(fullUrl, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {})
-    }
+    headers
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw data as ApiError;
