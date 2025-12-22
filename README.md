@@ -30,6 +30,15 @@ pnpm --filter @cater-sklad/web dev
 Web běží na `http://localhost:3000`, API na `http://localhost:3001`.
 Pro nasazení nastav ve webu `VITE_API_BASE_URL` (např. Render URL API).
 
+## Deploy (Vercel)
+
+Doporučené nastavení pro monorepo s `workspace:*`:
+- Project root: repo root
+- Install: `pnpm --filter @cater-sklad/web... install --frozen-lockfile`
+- Build: `pnpm --filter @cater-sklad/web build`
+- Output: `apps/web/dist`
+- Env: `VITE_API_BASE_URL=https://<render-api>`
+
 Seed účty:
 - `admin@local` / `admin123`
 - `em@local` / `em123`
