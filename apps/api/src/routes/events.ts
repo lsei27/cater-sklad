@@ -279,13 +279,12 @@ export async function eventRoutes(app: FastifyInstance) {
       if (!ev) throw new Error("NOT_FOUND");
       if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
 
-      const [v] = await tx.$queryRaw<{ next_version: number }[]>`
-        SELECT COALESCE(MAX(version),0) + 1 AS next_version
-        FROM event_exports
-        WHERE event_id = ${params.id}::uuid
-        FOR UPDATE
-      `;
-      const version = Number(v?.next_version ?? 1);
+	      const [v] = await tx.$queryRaw<{ next_version: number }[]>`
+	        SELECT COALESCE(MAX(version),0) + 1 AS next_version
+	        FROM event_exports
+	        WHERE event_id = ${params.id}::uuid
+	      `;
+	      const version = Number(v?.next_version ?? 1);
 
       const reservations = await tx.eventReservation.findMany({
         where: { eventId: params.id, state: "confirmed" },
