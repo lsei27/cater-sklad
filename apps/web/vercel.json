@@ -1,6 +1,6 @@
 {
-  "installCommand": "pnpm -w install --frozen-lockfile --prod=false",
-  "buildCommand": "pnpm -w --filter @cater-sklad/web build",
+  "installCommand": "pnpm -C ../.. install --frozen-lockfile --prod=false",
+  "buildCommand": "pnpm -C ../.. --filter @cater-sklad/web build",
   "outputDirectory": "dist",
   "routes": [
     { "handle": "filesystem" },
