@@ -77,29 +77,26 @@ async function main() {
     }
   });
 
-  const ensureQty = async (inventoryItemId: string, targetQty: number) => {
-    const rows = await prisma.$queryRaw<{ physical_total: number }[]>`
-      SELECT COALESCE(SUM(delta_quantity),0)::int AS physical_total
+  const ensureInitialQtyIfNoLedger = async (inventoryItemId: string, targetQty: number) => {
+    const [{ ledger_count } = { ledger_count: 0 }] = await prisma.$queryRaw<{ ledger_count: number }[]>`
+      SELECT COUNT(*)::int AS ledger_count
       FROM inventory_ledger
       WHERE inventory_item_id = ${inventoryItemId}::uuid
     `;
-    const current = Number(rows[0]?.physical_total ?? 0);
-    const delta = targetQty - current;
-    if (delta !== 0) {
-      await prisma.inventoryLedger.create({
-        data: {
-          inventoryItemId,
-          deltaQuantity: delta,
-          reason: LedgerReason.audit_adjustment,
-          createdById: admin.id,
-          note: "Seed initial stock"
-        }
-      });
-    }
+    if (Number(ledger_count) > 0) return;
+    await prisma.inventoryLedger.create({
+      data: {
+        inventoryItemId,
+        deltaQuantity: targetQty,
+        reason: LedgerReason.audit_adjustment,
+        createdById: admin.id,
+        note: "Seed initial stock"
+      }
+    });
   };
 
-  await ensureQty(item1.id, 200);
-  await ensureQty(item2.id, 10);
+  await ensureInitialQtyIfNoLedger(item1.id, 200);
+  await ensureInitialQtyIfNoLedger(item2.id, 10);
 }
 
 main()

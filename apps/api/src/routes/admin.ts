@@ -14,6 +14,13 @@ function parseBool(v: unknown) {
   return undefined;
 }
 
+const EmailSchema = z
+  .string()
+  .trim()
+  .min(3)
+  .max(255)
+  .regex(/^[^\s@]+@[^\s@]+(\.[^\s@]+)?$/, "Invalid email");
+
 async function getOrCreateCategory(params: {
   tx: any;
   parentId: string | null;
@@ -68,7 +75,13 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/users", { preHandler: [app.authenticate] }, async (request, reply) => {
     requireRole(request.user!.role, ["admin"]);
-    const body = z.object({ email: z.string().email(), password: z.string().min(6), role: z.enum(["admin","event_manager","chef","warehouse"]) }).parse(request.body);
+    const body = z
+      .object({
+        email: EmailSchema,
+        password: z.string().min(6),
+        role: z.enum(["admin", "event_manager", "chef", "warehouse"])
+      })
+      .parse(request.body);
     const bcrypt = await import("bcrypt");
     const hash = await bcrypt.default.hash(body.password, 10);
     const user = await app.prisma.user.create({ data: { email: body.email, passwordHash: hash, role: body.role as any } });
