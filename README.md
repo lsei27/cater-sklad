@@ -34,7 +34,7 @@ Pro nasazení nastav ve webu `VITE_API_BASE_URL` (např. Render URL API).
 
 Doporučené nastavení pro monorepo s `workspace:*`:
 - Project root: repo root
-- Install: `pnpm --filter @cater-sklad/web... install --frozen-lockfile`
+- Install: `pnpm install --frozen-lockfile --prod=false`
 - Build: `pnpm --filter @cater-sklad/web build`
 - Output: `apps/web/dist`
 - Env: `VITE_API_BASE_URL=https://<render-api>`
