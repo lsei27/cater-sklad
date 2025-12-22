@@ -156,26 +156,26 @@ export async function eventRoutes(app: FastifyInstance) {
     return { event: { ...event, exports, warehouseItems } };
   });
 
-	  app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
-	    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
-	    const exports = await app.prisma.eventExport.findMany({
-	      where: { eventId: id },
-	      orderBy: { version: "desc" },
-	      select: { id: true, eventId: true, version: true, exportedAt: true, exportedById: true, pdfPath: true, createdAt: true }
-	    });
-	    return {
-	      exports: exports.map((e) => ({ ...e, pdfUrl: `/events/${id}/exports/${e.version}/pdf` }))
-	    };
-	  });
+  app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
+    const exports = await app.prisma.eventExport.findMany({
+      where: { eventId: id },
+      orderBy: { version: "desc" },
+      select: { id: true, eventId: true, version: true, exportedAt: true, exportedById: true, pdfPath: true, createdAt: true }
+    });
+    return {
+      exports: exports.map((e) => ({ ...e, pdfUrl: `/events/${id}/exports/${e.version}/pdf` }))
+    };
+  });
 
-	  app.get("/events/:id/exports/:version", { preHandler: [app.authenticate] }, async (request, reply) => {
-	    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
-	    const row = await app.prisma.eventExport.findFirst({
-	      where: { eventId: params.id, version: params.version }
-	    });
-	    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
-	    return { export: { ...row, pdfUrl: `/events/${params.id}/exports/${row.version}/pdf` } };
-	  });
+  app.get("/events/:id/exports/:version", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+    const row = await app.prisma.eventExport.findFirst({
+      where: { eventId: params.id, version: params.version }
+    });
+    if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
+    return { export: { ...row, pdfUrl: `/events/${params.id}/exports/${row.version}/pdf` } };
+  });
 
   app.get("/events/:id/exports/:version/pdf", async (request, reply) => {
     // Opening a PDF in a new tab can't reliably attach Authorization header, so allow `?token=...` here.
@@ -490,12 +490,12 @@ export async function eventRoutes(app: FastifyInstance) {
           body.items && body.items.length > 0
             ? (body.items as IssueItemInput[])
             : snapshot.groups.flatMap((g) =>
-                g.items.map((i) => ({
-                  inventory_item_id: i.inventoryItemId,
-                  issued_quantity: i.qty,
-                  idempotency_key: undefined
-                }))
-              );
+              g.items.map((i) => ({
+                inventory_item_id: i.inventoryItemId,
+                issued_quantity: i.qty,
+                idempotency_key: undefined
+              }))
+            );
 
         const itemsToIssue = defaultItems.filter((i) => i.issued_quantity > 0);
         if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
@@ -651,6 +651,39 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "ITEMS_REQUIRED") return httpError(reply, 409, "ITEMS_REQUIRED", "Pro uzavření je nutné vyplnit položky (vráceno/rozbito).");
       if (e?.message === "ITEMS_INCOMPLETE") return httpError(reply, 409, "ITEMS_INCOMPLETE", "Nechybí ti v uzavření některé položky z výdeje?");
       throw e;
+    }
+  });
+  app.delete("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    try {
+      await app.prisma.$transaction(async (tx) => {
+        const event = await tx.event.findUnique({ where: { id: params.id } });
+        if (!event) throw new Error("NOT_FOUND");
+
+        // Cascade delete is handled by Prisma schema for relations except InventoryLedger (SetNull)
+        // We might want to explicitly delete ledger entries linked to this event if we want "complete" clean up,
+        // but schema says SetNull. For "Hard Delete" of a draft/mistake, usually there are no ledger entries yet.
+        // If there are (e.g. from return breakage), they will just lose event_id.
+
+        await tx.event.delete({ where: { id: params.id } });
+        await tx.auditLog.create({
+          data: {
+            actorUserId: user.id,
+            entityType: "event",
+            entityId: params.id,
+            action: "delete_hard",
+            diffJson: { name: event.name }
+          }
+        });
+      });
+      return reply.send({ ok: true });
+    } catch (e: any) {
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
+      request.log.error({ err: e }, "delete event failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
   });
 }
