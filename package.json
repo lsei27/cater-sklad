@@ -1,0 +1,19 @@
+{
+  "name": "cater-sklad",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "migrate": "pnpm --filter @cater-sklad/api prisma migrate deploy",
+    "seed": "pnpm --filter @cater-sklad/api prisma db seed"
+  }
+}
+
