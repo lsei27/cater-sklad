@@ -55,3 +55,10 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw data as ApiError;
   return data as T;
 }
+
+export function withToken(url: string) {
+  const token = getToken();
+  if (!token) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}token=${token}`;
+}

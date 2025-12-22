@@ -102,6 +102,37 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ user: { id: user.id, email: user.email, role: user.role } });
   });
 
+  app.delete("/admin/users/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const actor = request.user!;
+    requireRole(actor.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    if (params.id === actor.id) {
+      return httpError(reply, 400, "BAD_REQUEST", "Nemůžeš smazat sám sebe.");
+    }
+
+    try {
+      await app.prisma.$transaction(async (tx) => {
+        // Check if user has related entities that prevent deletion (restrict)
+        // Or rely on foreign keys. Let's try direct delete and catch FK errors.
+        await tx.user.delete({ where: { id: params.id } });
+        await tx.auditLog.create({
+          data: { actorUserId: actor.id, entityType: "user", entityId: params.id, action: "delete" }
+        });
+      });
+      return reply.send({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2003") { // Foreign key constraint failed
+        return httpError(reply, 409, "CONFLICT", "Uživatel má navázaná data (akce, exporty, atd.) a nelze ho smazat.");
+      }
+      if (e?.code === "P2025") { // Record not found
+        return httpError(reply, 404, "NOT_FOUND", "Uživatel nenalezen.");
+      }
+      request.log.error({ err: e }, "delete user failed");
+      return httpError(reply, 500, "INTERNAL", "Interní chyba.");
+    }
+  });
+
   app.get("/admin/items", { preHandler: [app.authenticate] }, async (request) => {
     requireRole(request.user!.role, ["admin"]);
     const query = z.object({ search: z.string().optional() }).parse(request.query);
@@ -113,21 +144,21 @@ export async function adminRoutes(app: FastifyInstance) {
     return { items };
   });
 
-	  app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
-	    const body = z
-	      .object({
-	        name: z.string().min(1),
-	        category_id: z.string().uuid(),
-	        unit: z.string().min(1).default("ks"),
-	        image_url: ImageUrlSchema.optional(),
-	        active: z.boolean().optional(),
-	        return_delay_days: z.number().int().min(0).optional(),
-	        sku: z.string().min(1).nullable().optional(),
-	        notes: z.string().nullable().optional()
-	      })
-	      .parse(request.body);
+    const body = z
+      .object({
+        name: z.string().min(1),
+        category_id: z.string().uuid(),
+        unit: z.string().min(1).default("ks"),
+        image_url: ImageUrlSchema.optional(),
+        active: z.boolean().optional(),
+        return_delay_days: z.number().int().min(0).optional(),
+        sku: z.string().min(1).nullable().optional(),
+        notes: z.string().nullable().optional()
+      })
+      .parse(request.body);
     const item = await app.prisma.inventoryItem.create({
       data: {
         name: body.name,
@@ -147,22 +178,22 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ item });
   });
 
-	  app.patch("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.patch("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
-	    const body = z
-	      .object({
-	        name: z.string().min(1).optional(),
-	        category_id: z.string().uuid().optional(),
-	        unit: z.string().min(1).optional(),
-	        image_url: ImageUrlSchema.optional(),
-	        active: z.boolean().optional(),
-	        return_delay_days: z.number().int().min(0).optional(),
-	        sku: z.string().min(1).nullable().optional(),
-	        notes: z.string().nullable().optional()
-	      })
-	      .parse(request.body);
+    const body = z
+      .object({
+        name: z.string().min(1).optional(),
+        category_id: z.string().uuid().optional(),
+        unit: z.string().min(1).optional(),
+        image_url: ImageUrlSchema.optional(),
+        active: z.boolean().optional(),
+        return_delay_days: z.number().int().min(0).optional(),
+        sku: z.string().min(1).nullable().optional(),
+        notes: z.string().nullable().optional()
+      })
+      .parse(request.body);
     const item = await app.prisma.inventoryItem.update({
       where: { id: params.id },
       data: {
@@ -293,12 +324,12 @@ export async function adminRoutes(app: FastifyInstance) {
 
           const item = existing
             ? await tx.inventoryItem.update({
-                where: { id: existing.id },
-                data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku: sku ?? undefined }
-              })
+              where: { id: existing.id },
+              data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku: sku ?? undefined }
+            })
             : await tx.inventoryItem.create({
-                data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku }
-              });
+              data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku }
+            });
 
           if (existing) report.updated_items.push(item.id);
           else report.created_items.push(item.id);
