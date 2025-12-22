@@ -100,26 +100,61 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-	  app.get("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
-	    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
-	    const event = await app.prisma.event.findUnique({
-	      where: { id },
-	      include: {
+  app.get("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
+    const event = await app.prisma.event.findUnique({
+      where: { id },
+      include: {
         reservations: {
           include: {
             item: { include: { category: { include: { parent: true } } } }
           }
         },
-	        exports: { orderBy: { version: "desc" }, take: 1 }
-	      }
-	    });
-	    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
-	    const exports = (event.exports ?? []).map((e) => ({
-	      ...e,
-	      pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
-	    }));
-	    return { event: { ...event, exports } };
-	  });
+        exports: { orderBy: { version: "desc" }, take: 1 }
+      }
+    });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+    const exports = (event.exports ?? []).map((e) => ({
+      ...e,
+      pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
+    }));
+
+    let warehouseItems: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> = [];
+    const snapshot = (exports?.[0] as any)?.snapshotJson as ExportSnapshot | undefined;
+    if (snapshot?.groups?.length) {
+      warehouseItems = snapshot.groups.flatMap((g) =>
+        (g.items ?? []).map((it) => ({
+          inventoryItemId: it.inventoryItemId,
+          name: it.name,
+          unit: it.unit,
+          qty: it.qty
+        }))
+      );
+    }
+    if (warehouseItems.length === 0 && event.status === "ISSUED") {
+      const issued = await app.prisma.$queryRaw<
+        Array<{ inventory_item_id: string; issued: number; name: string; unit: string }>
+      >`
+        SELECT
+          i.inventory_item_id::text AS inventory_item_id,
+          COALESCE(SUM(i.issued_quantity),0)::int AS issued,
+          it.name AS name,
+          it.unit AS unit
+        FROM event_issues i
+        JOIN inventory_items it ON it.id = i.inventory_item_id
+        WHERE i.event_id = ${event.id}::uuid
+        GROUP BY i.inventory_item_id, it.name, it.unit
+      `;
+      warehouseItems = issued.map((r) => ({
+        inventoryItemId: r.inventory_item_id,
+        name: r.name,
+        unit: r.unit,
+        qty: Number(r.issued)
+      }));
+    }
+
+    return { event: { ...event, exports, warehouseItems } };
+  });
 
 	  app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
 	    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
@@ -305,94 +340,109 @@ export async function eventRoutes(app: FastifyInstance) {
     requireRole(user.role, ["admin", "event_manager"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
-    const created = await app.prisma.$transaction(async (tx) => {
-      const [ev] = await tx.$queryRaw<
-        { id: string; name: string; location: string; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
-      >`
-        SELECT id, name, location, delivery_datetime, pickup_datetime, status::text
-        FROM events
-        WHERE id = ${params.id}::uuid
-        FOR UPDATE
-      `;
-      if (!ev) throw new Error("NOT_FOUND");
-      if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
+    try {
+      const created = await app.prisma.$transaction(async (tx) => {
+        const [ev] = await tx.$queryRaw<
+          { id: string; name: string; location: string; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
+        >`
+          SELECT id, name, location, delivery_datetime, pickup_datetime, status::text
+          FROM events
+          WHERE id = ${params.id}::uuid
+          FOR UPDATE
+        `;
+        if (!ev) throw new Error("NOT_FOUND");
+        if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
 
-	      const [v] = await tx.$queryRaw<{ next_version: number }[]>`
-	        SELECT COALESCE(MAX(version),0) + 1 AS next_version
-	        FROM event_exports
-	        WHERE event_id = ${params.id}::uuid
-	      `;
-	      const version = Number(v?.next_version ?? 1);
-
-      const reservations = await tx.eventReservation.findMany({
-        where: { eventId: params.id, state: "confirmed" },
-        include: { item: { include: { category: { include: { parent: true } } } } },
-        orderBy: { inventoryItemId: "asc" }
-      });
-
-      const groupsMap = new Map<string, ExportSnapshot["groups"][number]>();
-      for (const r of reservations) {
-        const child = r.item.category;
-        const parentName = child.parent?.name ?? "Nezařazeno";
-        const key = `${parentName}||${child.name}`;
-        const group =
-          groupsMap.get(key) ??
-          (() => {
-            const g = { parentCategory: parentName, category: child.name, items: [] as any[] };
-            groupsMap.set(key, g);
-            return g;
-          })();
-        group.items.push({
-          inventoryItemId: r.inventoryItemId,
-          name: r.item.name,
-          unit: r.item.unit,
-          qty: r.reservedQuantity,
-          notes: r.item.notes
+        await tx.eventReservation.updateMany({
+          where: { eventId: params.id },
+          data: { state: "confirmed", expiresAt: null }
         });
-      }
 
-      const exportedAt = new Date();
-      const snapshot: ExportSnapshot = {
-        event: {
-          id: ev.id,
-          name: ev.name,
-          location: ev.location,
-          deliveryDatetime: ev.delivery_datetime.toISOString(),
-          pickupDatetime: ev.pickup_datetime.toISOString(),
-          version,
-          exportedAt: exportedAt.toISOString()
-        },
-        groups: Array.from(groupsMap.values())
-      };
+        const [v] = await tx.$queryRaw<{ next_version: number }[]>`
+          SELECT COALESCE(MAX(version),0) + 1 AS next_version
+          FROM event_exports
+          WHERE event_id = ${params.id}::uuid
+        `;
+        const version = Number(v?.next_version ?? 1);
 
-      const exportRow = await tx.eventExport.create({
-        data: {
-          eventId: params.id,
-          version,
-          exportedAt,
-          exportedById: user.id,
-          snapshotJson: snapshot
+        const reservations = await tx.eventReservation.findMany({
+          where: { eventId: params.id, state: "confirmed", reservedQuantity: { gt: 0 } },
+          include: { item: { include: { category: { include: { parent: true } } } } },
+          orderBy: { inventoryItemId: "asc" }
+        });
+        if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
+
+        const groupsMap = new Map<string, ExportSnapshot["groups"][number]>();
+        for (const r of reservations) {
+          const child = r.item.category;
+          const parentName = child.parent?.name ?? "Nezařazeno";
+          const key = `${parentName}||${child.name}`;
+          const group =
+            groupsMap.get(key) ??
+            (() => {
+              const g = { parentCategory: parentName, category: child.name, items: [] as any[] };
+              groupsMap.set(key, g);
+              return g;
+            })();
+          group.items.push({
+            inventoryItemId: r.inventoryItemId,
+            name: r.item.name,
+            unit: r.item.unit,
+            qty: r.reservedQuantity,
+            notes: r.item.notes
+          });
         }
+
+        const exportedAt = new Date();
+        const snapshot: ExportSnapshot = {
+          event: {
+            id: ev.id,
+            name: ev.name,
+            location: ev.location,
+            deliveryDatetime: ev.delivery_datetime.toISOString(),
+            pickupDatetime: ev.pickup_datetime.toISOString(),
+            version,
+            exportedAt: exportedAt.toISOString()
+          },
+          groups: Array.from(groupsMap.values())
+        };
+
+        const exportRow = await tx.eventExport.create({
+          data: {
+            eventId: params.id,
+            version,
+            exportedAt,
+            exportedById: user.id,
+            snapshotJson: snapshot
+          }
+        });
+
+        await tx.event.update({
+          where: { id: params.id },
+          data: { status: "SENT_TO_WAREHOUSE", exportNeedsRevision: false }
+        });
+
+        await tx.auditLog.create({
+          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "export_created", diffJson: { version } }
+        });
+
+        return { exportRow, snapshot };
       });
 
-      await tx.event.update({
-        where: { id: params.id },
-        data: { status: "SENT_TO_WAREHOUSE", exportNeedsRevision: false }
+      sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
+      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
+      return reply.send({
+        export: created.exportRow,
+        pdfUrl: `/events/${params.id}/exports/${created.snapshot.event.version}/pdf`
       });
-
-      await tx.auditLog.create({
-        data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "export_created", diffJson: { version } }
-      });
-
-      return { exportRow, snapshot };
-    });
-
-    sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });
-    sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "SENT_TO_WAREHOUSE" });
-    return reply.send({
-      export: created.exportRow,
-      pdfUrl: `/events/${params.id}/exports/${created.snapshot.event.version}/pdf`
-    });
+    } catch (e: any) {
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze předat (už byla vydána/uzavřena).");
+      if (e?.message === "NO_ITEMS_TO_EXPORT")
+        return httpError(reply, 409, "NO_ITEMS_TO_EXPORT", "V akci nejsou žádné položky k předání.");
+      request.log.error({ err: e }, "export failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
+    }
   });
 
   app.post("/events/:id/issue", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -414,49 +464,69 @@ export async function eventRoutes(app: FastifyInstance) {
       })
       .parse(request.body);
 
-    const result = await app.prisma.$transaction(async (tx) => {
-      const [ev] = await tx.$queryRaw<{ status: string; export_needs_revision: boolean }[]>`
-        SELECT status::text, export_needs_revision FROM events WHERE id = ${params.id}::uuid FOR UPDATE
-      `;
-      if (!ev) throw new Error("NOT_FOUND");
-      if (ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
-      if (ev.export_needs_revision) throw new Error("NEEDS_REVISION");
+    try {
+      const result = await app.prisma.$transaction(async (tx) => {
+        const [ev] = await tx.$queryRaw<{ status: string; export_needs_revision: boolean }[]>`
+          SELECT status::text, export_needs_revision FROM events WHERE id = ${params.id}::uuid FOR UPDATE
+        `;
+        if (!ev) throw new Error("NOT_FOUND");
+        if (ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
+        if (ev.status === "ISSUED") {
+          const existing = await tx.event.findUnique({ where: { id: params.id } });
+          if (!existing) throw new Error("NOT_FOUND");
+          return { event: existing };
+        }
+        if (ev.status !== "SENT_TO_WAREHOUSE") throw new Error("BAD_STATUS");
+        if (ev.export_needs_revision) throw new Error("NEEDS_REVISION");
 
-      const latest = await tx.eventExport.findFirst({
-        where: { eventId: params.id },
-        orderBy: { version: "desc" }
+        const latest = await tx.eventExport.findFirst({
+          where: { eventId: params.id },
+          orderBy: { version: "desc" }
+        });
+        if (!latest) throw new Error("NO_EXPORT");
+        const snapshot = latest.snapshotJson as any as ExportSnapshot;
+        type IssueItemInput = { inventory_item_id: string; issued_quantity: number; idempotency_key?: string };
+        const defaultItems: IssueItemInput[] =
+          body.items && body.items.length > 0
+            ? (body.items as IssueItemInput[])
+            : snapshot.groups.flatMap((g) =>
+                g.items.map((i) => ({
+                  inventory_item_id: i.inventoryItemId,
+                  issued_quantity: i.qty,
+                  idempotency_key: undefined
+                }))
+              );
+
+        const itemsToIssue = defaultItems.filter((i) => i.issued_quantity > 0);
+        if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
+
+        const rows = itemsToIssue.map((i) => ({
+          eventId: params.id,
+          inventoryItemId: i.inventory_item_id,
+          issuedQuantity: i.issued_quantity,
+          issuedById: user.id,
+          idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
+        }));
+        await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
+        const updated = await tx.event.update({ where: { id: params.id }, data: { status: "ISSUED" } });
+        await tx.auditLog.create({
+          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "issue", diffJson: { count: rows.length } }
+        });
+        return { event: updated };
       });
-      if (!latest) throw new Error("NO_EXPORT");
-      const snapshot = latest.snapshotJson as any as ExportSnapshot;
-      type IssueItemInput = { inventory_item_id: string; issued_quantity: number; idempotency_key?: string };
-      const defaultItems: IssueItemInput[] =
-        body.items && body.items.length > 0
-          ? (body.items as IssueItemInput[])
-          : snapshot.groups.flatMap((g) =>
-              g.items.map((i) => ({
-                inventory_item_id: i.inventoryItemId,
-                issued_quantity: i.qty,
-                idempotency_key: undefined
-              }))
-            );
 
-      const rows = defaultItems.map((i) => ({
-        eventId: params.id,
-        inventoryItemId: i.inventory_item_id,
-        issuedQuantity: i.issued_quantity,
-        issuedById: user.id,
-        idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
-      }));
-      await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
-      const updated = await tx.event.update({ where: { id: params.id }, data: { status: "ISSUED" } });
-      await tx.auditLog.create({
-        data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "issue", diffJson: { count: rows.length } }
-      });
-      return { event: updated };
-    });
-
-    sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "ISSUED" });
-    return reply.send(result);
+      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "ISSUED" });
+      return reply.send(result);
+    } catch (e: any) {
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze vydat (už je uzavřená/zrušená).");
+      if (e?.message === "BAD_STATUS") return httpError(reply, 409, "BAD_STATUS", "Akci lze vydat pouze ze stavu Předáno skladu.");
+      if (e?.message === "NEEDS_REVISION") return httpError(reply, 409, "NEEDS_REVISION", "Akce byla po předání změněna. Je nutný nový export.");
+      if (e?.message === "NO_EXPORT") return httpError(reply, 409, "NO_EXPORT", "Akce nemá export. Nejdřív ji předej skladu.");
+      if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Export neobsahuje žádné položky k výdeji.");
+      request.log.error({ err: e }, "issue failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
+    }
   });
 
   app.post("/events/:id/return-close", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -475,7 +545,7 @@ export async function eventRoutes(app: FastifyInstance) {
               idempotency_key: z.string().min(8).optional()
             })
           )
-          .min(1)
+          .default([])
       })
       .parse(request.body);
 
@@ -488,6 +558,19 @@ export async function eventRoutes(app: FastifyInstance) {
         if (ev.status === "CLOSED") return { alreadyClosed: true };
         if (ev.status !== "ISSUED") throw new Error("NOT_ISSUED");
 
+        const issuedItemIds = await tx.$queryRaw<Array<{ inventory_item_id: string }>>`
+          SELECT DISTINCT inventory_item_id::text AS inventory_item_id
+          FROM event_issues
+          WHERE event_id = ${params.id}::uuid
+        `;
+
+        if (issuedItemIds.length > 0) {
+          if (body.items.length === 0) throw new Error("ITEMS_REQUIRED");
+          const provided = new Set(body.items.map((i) => i.inventory_item_id));
+          const missing = issuedItemIds.map((r) => r.inventory_item_id).filter((id) => !provided.has(id));
+          if (missing.length > 0) throw new Error("ITEMS_INCOMPLETE");
+        }
+
         const rows = body.items.map((i) => ({
           eventId: params.id,
           inventoryItemId: i.inventory_item_id,
@@ -496,7 +579,9 @@ export async function eventRoutes(app: FastifyInstance) {
           returnedById: user.id,
           idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "return"}:${params.id}:${i.inventory_item_id}`
         }));
-        await tx.eventReturn.createMany({ data: rows, skipDuplicates: true });
+        if (rows.length > 0) {
+          await tx.eventReturn.createMany({ data: rows, skipDuplicates: true });
+        }
 
         const totals = await tx.$queryRaw<
           { inventory_item_id: string; issued: number; returned: number; broken: number }[]
@@ -563,6 +648,8 @@ export async function eventRoutes(app: FastifyInstance) {
     } catch (e: any) {
       if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
       if (e?.message === "NOT_ISSUED") return httpError(reply, 409, "NOT_ISSUED", "Event není ve stavu ISSUED");
+      if (e?.message === "ITEMS_REQUIRED") return httpError(reply, 409, "ITEMS_REQUIRED", "Pro uzavření je nutné vyplnit položky (vráceno/rozbito).");
+      if (e?.message === "ITEMS_INCOMPLETE") return httpError(reply, 409, "ITEMS_INCOMPLETE", "Nechybí ti v uzavření některé položky z výdeje?");
       throw e;
     }
   });

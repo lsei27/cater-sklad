@@ -15,6 +15,8 @@ type Snapshot = {
   groups: Array<{ items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
 };
 
+type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number };
+
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
   const { id } = useParams();
@@ -52,10 +54,16 @@ export default function WarehouseEventDetailPage() {
     return list;
   }, [snapshot]);
 
+  const warehouseItems: WarehouseItem[] = useMemo(() => {
+    const fromEvent = (event?.warehouseItems ?? []) as WarehouseItem[];
+    if (fromEvent.length > 0) return fromEvent;
+    return snapshotItems as WarehouseItem[];
+  }, [event?.warehouseItems, snapshotItems]);
+
   useEffect(() => {
-    if (!snapshotItems.length) return;
+    if (!warehouseItems.length) return;
     setRows(
-      snapshotItems.map((i) => ({
+      warehouseItems.map((i) => ({
         inventory_item_id: i.inventoryItemId,
         name: i.name,
         unit: i.unit,
@@ -64,15 +72,15 @@ export default function WarehouseEventDetailPage() {
         broken: 0
       }))
     );
-  }, [snapshotItems.length]);
+  }, [warehouseItems]);
 
   useEffect(() => {
-    if (!id || snapshotItems.length === 0) return;
+    if (!id || warehouseItems.length === 0) return;
     api<{ rows: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> }>(
       `/events/${id}/availability`,
       {
       method: "POST",
-      body: JSON.stringify({ inventory_item_ids: snapshotItems.map((x) => x.inventoryItemId) })
+      body: JSON.stringify({ inventory_item_ids: warehouseItems.map((x) => x.inventoryItemId) })
       }
     )
       .then((r) => {
@@ -87,7 +95,7 @@ export default function WarehouseEventDetailPage() {
         );
       })
       .catch(() => {});
-  }, [id, snapshotItems.length]);
+  }, [id, warehouseItems]);
 
   const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
@@ -119,14 +127,25 @@ export default function WarehouseEventDetailPage() {
     );
   }
 
-  const issueDisabled = event.status !== "SENT_TO_WAREHOUSE" || event.exportNeedsRevision;
-  const closeDisabled = event.status !== "ISSUED";
+  const issueDisabled = event.status !== "SENT_TO_WAREHOUSE" || event.exportNeedsRevision || warehouseItems.length === 0;
+  const closeDisabled = event.status !== "ISSUED" || rows.length === 0;
 
   return (
     <div className="space-y-4">
       <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
         Zpět na seznam
       </Button>
+
+      {event.status === "SENT_TO_WAREHOUSE" && warehouseItems.length === 0 ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent>
+            <div className="text-sm font-semibold text-amber-900">Export neobsahuje položky</div>
+            <div className="mt-1 text-sm text-amber-800">
+              V akci nejsou žádné položky k výdeji. Požádej event managera o doplnění a nové předání skladu.
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {event.exportNeedsRevision ? (
         <Card className="border-amber-200 bg-amber-50">
@@ -186,7 +205,7 @@ export default function WarehouseEventDetailPage() {
         </CardHeader>
         <CardContent>
           {rows.length === 0 ? (
-            <div className="text-sm text-slate-600">Pro tuto akci zatím není export.</div>
+            <div className="text-sm text-slate-600">Pro tuto akci nejsou žádné položky.</div>
           ) : (
             <div className="space-y-3">
               {rows.map((r, idx) => {

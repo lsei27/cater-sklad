@@ -34,6 +34,10 @@ export function humanError(err: any) {
     const available = err?.error?.available;
     return `Nedostatečný stav. K dispozici: ${available ?? 0}.`;
   }
-  if (code === "PDF_EXPORT_FAILED") return "Nepodařilo se vytvořit PDF. Zkus to prosím znovu.";
+  if (code === "NO_ITEMS_TO_EXPORT") return "V akci nejsou žádné položky k předání.";
+  if (code === "NO_ITEMS_TO_ISSUE") return "Export neobsahuje žádné položky k výdeji.";
+  if (code === "ITEMS_REQUIRED") return "Pro uzavření vyplň vráceno/rozbito u všech položek.";
+  if (code === "ITEMS_INCOMPLETE") return "Nechybí ti v uzavření některé položky?";
+  if (code === "PDF_RENDER_FAILED") return "Nepodařilo se vygenerovat PDF. Zkus to prosím znovu.";
   return err?.error?.message ?? "Něco se nepovedlo.";
 }
