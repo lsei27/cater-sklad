@@ -80,7 +80,10 @@ export async function eventRoutes(app: FastifyInstance) {
         if (row.status === "ISSUED") throw new Error("ALREADY_ISSUED");
         if (row.status === "CANCELLED") return row;
 
-        const updated = await tx.event.update({ where: { id: params.id }, data: { status: "CANCELLED", exportNeedsRevision: false } });
+        const updated = await tx.event.update({
+          where: { id: params.id },
+          data: { status: EventStatus.CANCELLED, exportNeedsRevision: false }
+        });
         await tx.auditLog.create({
           data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "cancel", diffJson: { status: "CANCELLED" } }
         });
