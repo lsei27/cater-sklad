@@ -154,7 +154,9 @@ export async function eventRoutes(app: FastifyInstance) {
             item: { include: { category: { include: { parent: true } } } }
           }
         },
-        exports: { orderBy: { version: "desc" }, take: 1 }
+        exports: { orderBy: { version: "desc" }, take: 1 },
+        returns: { include: { item: true } },
+        issues: { include: { item: true } }
       }
     });
     if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");

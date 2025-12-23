@@ -7,6 +7,16 @@ export default fp(async (app: FastifyInstance, opts: { jwtSecret: string }) => {
 
   app.decorate("authenticate", async (request: FastifyRequest, reply: FastifyReply) => {
     try {
+      // Support standard Authorization header OR query parameter (useful for window.open/PDFs)
+      const queryToken = (request.query as any)?.token;
+      if (queryToken) {
+        const payload = await app.jwt.verify<{ sub: string }>(queryToken);
+        const user = await app.prisma.user.findUnique({ where: { id: payload.sub } });
+        if (!user) return reply.status(401).send({ error: { code: "UNAUTHENTICATED", message: "Invalid token" } });
+        request.user = { id: user.id, email: user.email, role: user.role };
+        return;
+      }
+
       const payload = await request.jwtVerify<{ sub: string }>();
       const user = await app.prisma.user.findUnique({ where: { id: payload.sub } });
       if (!user) return reply.status(401).send({ error: { code: "UNAUTHENTICATED", message: "Invalid token" } });

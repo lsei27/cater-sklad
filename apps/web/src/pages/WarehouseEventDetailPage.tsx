@@ -62,17 +62,39 @@ export default function WarehouseEventDetailPage() {
 
   useEffect(() => {
     if (!warehouseItems.length) return;
+
+    // Aggregation of historical returns/issues from server
+    const serverReturns = new Map<string, { returned: number, broken: number }>();
+    if (event?.returns) {
+      for (const r of event.returns) {
+        const current = serverReturns.get(r.inventoryItemId) || { returned: 0, broken: 0 };
+        current.returned += r.returnedQuantity || 0;
+        current.broken += r.brokenQuantity || 0;
+        serverReturns.set(r.inventoryItemId, current);
+      }
+    }
+    if (event?.issues) {
+      // Missing items are recorded as issues with type "missing". 
+      // The warehouse UI check badge "Chybí" logic: Math.max(0, r.requested - r.returned - r.broken)
+      // So we don't need to add issues to "broken" unless they are specifically of type "broken".
+      // But actually, in the report we aggregated brokenQty from issues too.
+      // Let's stick to reconciliation of returned/broken from the actual return records first.
+    }
+
     setRows(
-      warehouseItems.map((i) => ({
-        inventory_item_id: i.inventoryItemId,
-        name: i.name,
-        unit: i.unit,
-        requested: i.qty,
-        returned: 0,
-        broken: 0
-      }))
+      warehouseItems.map((i) => {
+        const s = serverReturns.get(i.inventoryItemId);
+        return {
+          inventory_item_id: i.inventoryItemId,
+          name: i.name,
+          unit: i.unit,
+          requested: i.qty,
+          returned: s?.returned ?? 0,
+          broken: s?.broken ?? 0
+        };
+      })
     );
-  }, [warehouseItems]);
+  }, [warehouseItems, event?.returns]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
