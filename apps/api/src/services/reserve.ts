@@ -140,13 +140,23 @@ export async function reserveItemsTx(params: {
 
   for (const { inventoryItemId, qty } of items) {
     const existing = existingMap.get(inventoryItemId);
-    const createdById = existing?.createdById ?? actor.id; // Keep original owner or set to actor
+    const createdById = existing?.createdById ?? actor.id;
 
-    await tx.eventReservation.upsert({
-      where: { eventId_inventoryItemId: { eventId, inventoryItemId } },
-      update: { reservedQuantity: qty, state, expiresAt, createdById }, // Preserves or updates? createdById should probably stay same if existing
-      create: { eventId, inventoryItemId, reservedQuantity: qty, state, expiresAt, createdById: actor.id }
-    });
+    if (qty <= 0) {
+      // DELETE request
+      if (existing) {
+        await tx.eventReservation.delete({
+          where: { eventId_inventoryItemId: { eventId, inventoryItemId } }
+        });
+      }
+    } else {
+      // UPSERT request (add or update)
+      await tx.eventReservation.upsert({
+        where: { eventId_inventoryItemId: { eventId, inventoryItemId } },
+        update: { reservedQuantity: qty, state, expiresAt, createdById },
+        create: { eventId, inventoryItemId, reservedQuantity: qty, state, expiresAt, createdById: actor.id }
+      });
+    }
   }
 
   if (event.status === "SENT_TO_WAREHOUSE") {
