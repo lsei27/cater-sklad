@@ -11,8 +11,19 @@ import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 const EventCreateSchema = z.object({
   name: z.string().min(1),
   location: z.string().min(1),
+  address: z.string().optional().nullable(),
+  event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime(),
   pickup_datetime: z.string().datetime()
+});
+
+const EventUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  location: z.string().min(1).optional(),
+  address: z.string().optional().nullable(),
+  event_date: z.string().datetime().optional().nullable(),
+  delivery_datetime: z.string().datetime().optional(),
+  pickup_datetime: z.string().datetime().optional()
 });
 
 export async function eventRoutes(app: FastifyInstance) {
@@ -46,6 +57,8 @@ export async function eventRoutes(app: FastifyInstance) {
       data: {
         name: body.name,
         location: body.location,
+        address: body.address ?? null,
+        eventDate: body.event_date ? new Date(body.event_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
         createdById: user.id
@@ -60,6 +73,37 @@ export async function eventRoutes(app: FastifyInstance) {
         diffJson: body
       }
     });
+    return reply.send({ event });
+  });
+
+  app.patch("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = EventUpdateSchema.parse(request.body);
+
+    const existing = await app.prisma.event.findUnique({ where: { id: params.id } });
+    if (!existing) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+    if (["ISSUED", "CLOSED", "CANCELLED"].includes(existing.status)) {
+      return httpError(reply, 409, "READ_ONLY", "Akci nelze upravit.");
+    }
+
+    const event = await app.prisma.event.update({
+      where: { id: params.id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.location !== undefined ? { location: body.location } : {}),
+        ...(body.address !== undefined ? { address: body.address } : {}),
+        ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
+        ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
+        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})
+      }
+    });
+
+    await app.prisma.auditLog.create({
+      data: { actorUserId: user.id, entityType: "event", entityId: event.id, action: "update", diffJson: body }
+    });
+
     return reply.send({ event });
   });
 

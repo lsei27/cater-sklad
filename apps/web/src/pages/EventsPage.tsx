@@ -177,6 +177,8 @@ function CreateEventButton(props: { onCreated: () => void }) {
 function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("Akce");
   const [location, setLocation] = useState("Praha");
+  const [address, setAddress] = useState("");
+  const [eventDate, setEventDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
   const [delivery, setDelivery] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
   const [pickup, setPickup] = useState(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16));
   const [error, setError] = useState<string | null>(null);
@@ -199,6 +201,8 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
                 body: JSON.stringify({
                   name,
                   location,
+                  address: address || null,
+                  event_date: eventDate ? new Date(eventDate).toISOString() : null,
                   delivery_datetime: new Date(delivery).toISOString(),
                   pickup_datetime: new Date(pickup).toISOString()
                 })
@@ -218,11 +222,19 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
             <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="text-sm">
-            Místo
+            Místo konání
             <Input className="mt-1" value={location} onChange={(e) => setLocation(e.target.value)} />
           </label>
           <label className="text-sm">
-            Doručení
+            Adresa
+            <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Ulice, město" />
+          </label>
+          <label className="text-sm">
+            Datum akce
+            <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+          </label>
+          <label className="text-sm">
+            Začátek (doručení)
             <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
           </label>
           <label className="text-sm">
