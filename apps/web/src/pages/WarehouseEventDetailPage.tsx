@@ -279,6 +279,16 @@ export default function WarehouseEventDetailPage() {
               >
                 Otevřít Balení (Kuchyň)
               </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Otevřít Balení (Kompletní)
+              </Button>
             </div>
           ) : null}
         </CardContent>
