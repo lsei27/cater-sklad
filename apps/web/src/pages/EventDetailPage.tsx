@@ -129,8 +129,10 @@ export default function EventDetailPage() {
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
 
-  // EM can add in DRAFT/READY. Chef and Admin can add also in SENT_TO_WAREHOUSE.
-  const canAddItems = ((canEM && (event?.status === "DRAFT" || event?.status === "READY_FOR_WAREHOUSE")) || canChef) && canEditEvent;
+  // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
+  const canAddItems =
+    ((canEM && ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(event?.status)) || canChef) &&
+    canEditEvent;
 
   const latestExport = event?.exports?.[0] ?? null;
   const manager = managerLabel(event?.createdBy);
@@ -336,6 +338,21 @@ export default function EventDetailPage() {
 
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <>
+                {["admin", "event_manager"].includes(role) ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      window.open(
+                        latestExport?.pdfUrl
+                          ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}`)
+                          : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
+                        "_blank"
+                      )
+                    }
+                  >
+                    Otevřít Balení (Komplet)
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   onClick={() =>

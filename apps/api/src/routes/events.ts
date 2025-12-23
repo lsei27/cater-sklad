@@ -396,6 +396,25 @@ export async function eventRoutes(app: FastifyInstance) {
           items: body.items.map((i) => ({ inventoryItemId: i.inventory_item_id, qty: i.qty }))
         });
 
+        const eventRow = await tx.event.findUnique({
+          where: { id: params.id },
+          select: { status: true, chefConfirmedAt: true }
+        });
+
+        let exportResult = null;
+        if (["admin", "event_manager"].includes(user.role) && eventRow?.status === "SENT_TO_WAREHOUSE" && eventRow.chefConfirmedAt) {
+          const count = await tx.eventReservation.count({
+            where: { eventId: params.id, reservedQuantity: { gt: 0 } }
+          });
+          if (count > 0) {
+            try {
+              exportResult = await createExportTx({ tx, eventId: params.id, userId: user.id });
+            } catch (e: any) {
+              if (e.message !== "NO_ITEMS_TO_EXPORT") throw e;
+            }
+          }
+        }
+
         await tx.auditLog.create({
           data: {
             actorUserId: user.id,
@@ -405,9 +424,14 @@ export async function eventRoutes(app: FastifyInstance) {
             diffJson: { items: body.items }
           }
         });
+
+        return { exportResult };
       });
 
       sseBus.emit({ type: "reservation_changed", eventId: params.id });
+      if (result.exportResult) {
+        sseBus.emit({ type: "export_created", eventId: params.id, version: result.exportResult.snapshot.event.version });
+      }
       return reply.send({ ok: true });
     } catch (e: any) {
       if (e instanceof InsufficientStockError) {
