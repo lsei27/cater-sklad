@@ -52,7 +52,7 @@ function formatCzechTime(isoString: string | null | undefined): string {
   return `${hours}:${minutes}`;
 }
 
-export async function buildExportPdf(snapshot: ExportSnapshot) {
+export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -61,7 +61,9 @@ export async function buildExportPdf(snapshot: ExportSnapshot) {
   let { width, height } = page.getSize();
 
   // Title: Event Name
-  page.drawText(pdfText(snapshot.event.name), { x: 50, y: height - 50, size: 22, font: bold });
+  const mainTitle = snapshot.event.name;
+  const fullTitle = subtitle ? `${mainTitle} - ${subtitle}` : mainTitle;
+  page.drawText(pdfText(fullTitle), { x: 50, y: height - 50, size: 20, font: bold });
 
   // Event Date (if available)
   let yPos = height - 80;

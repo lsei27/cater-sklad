@@ -271,15 +271,28 @@ export async function eventRoutes(app: FastifyInstance) {
     requireRole(request.user!.role, ["admin", "event_manager", "warehouse"]);
 
     const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+    const queryParams = z.object({ type: z.enum(["general", "kitchen"]).optional() }).parse(request.query);
+
     const row = await app.prisma.eventExport.findFirst({
       where: { eventId: params.id, version: params.version }
     });
     if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
-    const snapshot = row.snapshotJson as any as ExportSnapshot;
+    const snapshot = JSON.parse(JSON.stringify(row.snapshotJson)) as ExportSnapshot;
+
+    let subtitle: string | undefined;
+    if (queryParams.type === "kitchen") {
+      snapshot.groups = snapshot.groups.filter((g) => g.parentCategory.toLowerCase() === "kuchyn" || g.parentCategory.toLowerCase() === "kuchyň");
+      subtitle = "Kuchyn";
+    } else if (queryParams.type === "general") {
+      snapshot.groups = snapshot.groups.filter((g) => g.parentCategory.toLowerCase() !== "kuchyn" && g.parentCategory.toLowerCase() !== "kuchyň");
+      subtitle = "Sklad";
+    }
+
     try {
-      const pdfBytes = await buildExportPdf(snapshot);
+      const pdfBytes = await buildExportPdf(snapshot, subtitle);
       reply.header("Content-Type", "application/pdf");
-      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}.pdf"`);
+      const filenameSuffix = subtitle ? `_${subtitle.toLowerCase()}` : "";
+      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}${filenameSuffix}.pdf"`);
       reply.header("Cache-Control", "no-store");
       return reply.send(Buffer.from(pdfBytes));
     } catch (err) {

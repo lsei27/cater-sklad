@@ -240,6 +240,31 @@ export default function WarehouseEventDetailPage() {
               </Button>
             </div>
           ) : null}
+
+          {snapshot?.event?.version ? (
+            <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Otevřít Balení (Sklad)
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Otevřít Balení (Kuchyň)
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       {event.status === "CLOSED" ? (

@@ -314,19 +314,34 @@ export default function EventDetailPage() {
             ) : null}
 
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  window.open(
-                    latestExport?.pdfUrl
-                      ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}`)
-                      : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
-                    "_blank"
-                  )
-                }
-              >
-                Otevřít Balení
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    window.open(
+                      latestExport?.pdfUrl
+                        ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}?type=general`)
+                        : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
+                      "_blank"
+                    )
+                  }
+                >
+                  Otevřít Balení (Sklad)
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    window.open(
+                      latestExport?.pdfUrl
+                        ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}?type=kitchen`)
+                        : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
+                      "_blank"
+                    )
+                  }
+                >
+                  Otevřít Balení (Kuchyň)
+                </Button>
+              </>
             ) : null}
           </div>
 
