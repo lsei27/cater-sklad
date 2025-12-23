@@ -194,8 +194,8 @@ export async function buildClosureReportPdf(event: any) {
     const itemIssues = issues.filter((i: any) => i.inventoryItemId === res.inventoryItemId);
 
     const returnedQty = itemReturns.reduce((sum: number, r: any) => sum + r.returnedQuantity, 0);
-    const brokenQty = itemIssues.filter((i: any) => i.type === "broken").reduce((sum: number, i: any) => sum + i.quantity, 0);
-    const missingQty = itemIssues.filter((i: any) => i.type === "missing").reduce((sum: number, i: any) => sum + i.quantity, 0);
+    const brokenQty = itemIssues.filter((i: any) => i.type === "broken").reduce((sum: number, i: any) => sum + (i.issuedQuantity || 0), 0);
+    const missingQty = itemIssues.filter((i: any) => i.type === "missing").reduce((sum: number, i: any) => sum + (i.issuedQuantity || 0), 0);
 
     const isLoss = brokenQty > 0 || missingQty > 0;
     const itemFont = isLoss ? bold : font;

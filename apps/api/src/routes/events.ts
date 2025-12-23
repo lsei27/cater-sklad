@@ -704,6 +704,16 @@ export async function eventRoutes(app: FastifyInstance) {
           const missing = Math.max(0, Number(t.issued) - Number(t.returned) - Number(t.broken));
           const broken = Math.max(0, Number(t.broken));
           if (broken > 0) {
+            await tx.eventIssue.create({
+              data: {
+                eventId: params.id,
+                inventoryItemId: t.inventory_item_id,
+                issuedQuantity: broken,
+                type: "broken",
+                issuedById: user.id,
+                idempotencyKey: `breakage:${params.id}:${t.inventory_item_id}:${Date.now()}`
+              }
+            });
             await tx.inventoryLedger.create({
               data: {
                 inventoryItemId: t.inventory_item_id,
@@ -717,6 +727,16 @@ export async function eventRoutes(app: FastifyInstance) {
             changedLedgerItemIds.push(t.inventory_item_id);
           }
           if (missing > 0) {
+            await tx.eventIssue.create({
+              data: {
+                eventId: params.id,
+                inventoryItemId: t.inventory_item_id,
+                issuedQuantity: missing,
+                type: "missing",
+                issuedById: user.id,
+                idempotencyKey: `missing:${params.id}:${t.inventory_item_id}:${Date.now()}`
+              }
+            });
             await tx.inventoryLedger.create({
               data: {
                 inventoryItemId: t.inventory_item_id,

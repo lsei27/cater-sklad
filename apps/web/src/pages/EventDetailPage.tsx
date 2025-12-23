@@ -320,14 +320,16 @@ export default function EventDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {event.issues.map((issue: any) => (
-                <div key={issue.id} className="flex items-center justify-between text-sm">
-                  <div className="text-slate-700">{issue.item?.name}</div>
-                  <div className="font-medium text-red-700">
-                    {issue.quantity} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+              {event.issues
+                ?.filter((issue: any) => (issue.issuedQuantity || 0) > 0 && issue.type !== "issued")
+                .map((issue: any) => (
+                  <div key={issue.id} className="flex items-center justify-between text-sm">
+                    <div className="text-slate-700">{issue.item?.name}</div>
+                    <div className="font-medium text-red-700">
+                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           </CardContent>
         </Card>
