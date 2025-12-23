@@ -800,7 +800,6 @@ export async function eventRoutes(app: FastifyInstance) {
     const event = await app.prisma.event.findUnique({
       where: { id: params.id },
       include: {
-        createdBy: { select: { name: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         issues: { include: { item: true } },
         returns: { include: { item: true } },
