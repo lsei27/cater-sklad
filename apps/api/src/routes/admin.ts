@@ -345,7 +345,7 @@ export async function adminRoutes(app: FastifyInstance) {
             report.errors.push({ row: idx + 1, error: e?.message ?? String(e) });
           }
         }
-      });
+      }, { timeout: 120000 });
     } catch (e: any) {
       request.log.error({ err: e }, "CSV import transaction failed");
       return httpError(reply, 500, "IMPORT_FAILED", `Import selhal: ${e?.message ?? "neznámá chyba"}`);
