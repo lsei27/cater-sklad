@@ -287,6 +287,17 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
+            {event.status === "CLOSED" ? (
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  window.open(withToken(`${apiBaseUrl()}/events/${event.id}/report-pdf?view=true`), "_blank")
+                }
+              >
+                Otevřít PDF
+              </Button>
+            ) : null}
+
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <Button
                 variant="secondary"

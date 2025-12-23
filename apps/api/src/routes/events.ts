@@ -715,16 +715,28 @@ export async function eventRoutes(app: FastifyInstance) {
         const totals = await tx.$queryRaw<
           { inventory_item_id: string; issued: number; returned: number; broken: number }[]
         >`
-          SELECT
-            i.inventory_item_id::text,
-            COALESCE(SUM(i.issued_quantity),0)::int AS issued,
-            COALESCE(SUM(r.returned_quantity),0)::int AS returned,
-            COALESCE(SUM(r.broken_quantity),0)::int AS broken
-          FROM event_issues i
-          LEFT JOIN event_returns r
-            ON r.event_id = i.event_id AND r.inventory_item_id = i.inventory_item_id
-          WHERE i.event_id = ${params.id}::uuid
-          GROUP BY i.inventory_item_id
+          SELECT 
+            ids.inventory_item_id::text,
+            COALESCE(i.issued, 0)::int as issued,
+            COALESCE(r.returned, 0)::int as returned,
+            COALESCE(r.broken, 0)::int as broken
+          FROM (
+            SELECT DISTINCT inventory_item_id FROM event_issues WHERE event_id = ${params.id}::uuid
+            UNION
+            SELECT DISTINCT inventory_item_id FROM event_returns WHERE event_id = ${params.id}::uuid
+          ) ids
+          LEFT JOIN (
+            SELECT inventory_item_id, SUM(issued_quantity) as issued
+            FROM event_issues
+            WHERE event_id = ${params.id}::uuid AND type = 'issued'
+            GROUP BY inventory_item_id
+          ) i ON i.inventory_item_id = ids.inventory_item_id
+          LEFT JOIN (
+            SELECT inventory_item_id, SUM(returned_quantity) as returned, SUM(broken_quantity) as broken
+            FROM event_returns
+            WHERE event_id = ${params.id}::uuid
+            GROUP BY inventory_item_id
+          ) r ON r.inventory_item_id = ids.inventory_item_id
         `;
 
         const changedLedgerItemIds: string[] = [];
@@ -807,6 +819,10 @@ export async function eventRoutes(app: FastifyInstance) {
     const user = request.user!;
     requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const query = z.object({
+      token: z.string().optional(),
+      view: z.string().optional()
+    }).parse(request.query);
 
     const event = await app.prisma.event.findUnique({
       where: { id: params.id },
@@ -822,9 +838,11 @@ export async function eventRoutes(app: FastifyInstance) {
     const { buildClosureReportPdf } = await import("../pdf/exportPdf.js");
     const pdfBytes = await buildClosureReportPdf(event as any);
 
+    const disposition = query.view === "true" ? "inline" : "attachment";
+
     return reply
       .header("Content-Type", "application/pdf")
-      .header("Content-Disposition", `attachment; filename="report-${event.name}.pdf"`)
+      .header("Content-Disposition", `${disposition}; filename="report-${event.name}.pdf"`)
       .send(Buffer.from(pdfBytes));
   });
 
