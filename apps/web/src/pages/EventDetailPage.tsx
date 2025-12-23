@@ -327,7 +327,7 @@ export default function EventDetailPage() {
                                   try {
                                     await api(`/events/${id}/reserve`, {
                                       method: "POST",
-                                      body: JSON.stringify({ items: [{ inventoryItemId: r.inventoryItemId, qty: 0 }] })
+                                      body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
                                     });
                                     toast.success("Odebráno");
                                     load();
