@@ -142,8 +142,8 @@ export default function EventDetailPage() {
       groups.set(key, g);
     }
     return Array.from(groups.values()).sort((a, b) => {
-      const ap = String(a.parent).toLowerCase() === "technika" ? 0 : 1;
-      const bp = String(b.parent).toLowerCase() === "technika" ? 0 : 1;
+      const ap = String(a.parent).toLowerCase() === "kuchyň" ? 0 : 1;
+      const bp = String(b.parent).toLowerCase() === "kuchyň" ? 0 : 1;
       if (ap !== bp) return ap - bp;
       return (a.parent + a.sub).localeCompare(b.parent + b.sub, "cs");
     });
@@ -218,13 +218,13 @@ export default function EventDetailPage() {
           <div className="mt-4 flex flex-wrap gap-2">
             {canEM || canChef ? (
               <Button variant="secondary" onClick={() => setAddOpen(true)} disabled={!canAddItems}>
-                <PackagePlus className="h-4 w-4" /> Přidat položky
+                <PackagePlus className="h-4 w-4" /> {role === "chef" ? "Přidat Kuchyň" : "Přidat položky"}
               </Button>
             ) : null}
 
             {canChef ? (
               <Button variant="secondary" onClick={() => setChefConfirm(true)} disabled={event.status !== "DRAFT"}>
-                <Wand2 className="h-4 w-4" /> Potvrdit techniku
+                <Wand2 className="h-4 w-4" /> Potvrdit kuchyň
               </Button>
             ) : null}
 
@@ -311,6 +311,25 @@ export default function EventDetailPage() {
                               )}
                             </div>
                             <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
+                            {canEditEvent && (role === "admin" || r.item.reservation?.createdById === getCurrentUser()?.id || (role === "chef" && canChef)) ? (
+                              <button
+                                className="ml-2 p-1 text-slate-400 hover:text-red-600"
+                                title="Odebrat"
+                                onClick={async () => {
+                                  if (!confirm("Odebrat položku?")) return;
+                                  try {
+                                    await api(`/events/${id}/reserve`, {
+                                      method: "POST",
+                                      body: JSON.stringify({ items: [{ inventoryItemId: r.inventoryItemId, qty: 0 }] })
+                                    });
+                                    toast.success("Odebráno");
+                                    load();
+                                  } catch (e: any) { toast.error(humanError(e)); }
+                                }}
+                              >
+                                <Icons.Trash className="h-4 w-4" />
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -363,7 +382,7 @@ export default function EventDetailPage() {
       <ConfirmDialog
         open={chefConfirm}
         onOpenChange={setChefConfirm}
-        title="Potvrdit techniku?"
+        title="Potvrdit kuchyň?"
         description="Tím se akce označí jako připravená pro sklad. Rozpracované rezervace se potvrdí."
         confirmText="Potvrdit"
         onConfirm={async () => {
@@ -454,7 +473,7 @@ function AddItemsPanel(props: {
       .then((r) => {
         setParents(r.parents);
         if (isChef) {
-          const tech = r.parents.find((p: any) => String(p.name).toLowerCase() === "technika");
+          const tech = r.parents.find((p: any) => String(p.name).toLowerCase() === "kuchyň");
           if (tech) setParentId(tech.id);
         }
       })

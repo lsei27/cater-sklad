@@ -50,6 +50,8 @@ model User {
   issues         EventIssue[]
   returns        EventReturn[]
   auditEntries   AuditLog[]
+  createdReservations EventReservation[]
+
 
   @@map("users")
 }
@@ -62,6 +64,7 @@ model Category {
 
   parent   Category?  @relation("category_parent", fields: [parentId], references: [id], onDelete: SetNull)
   children Category[] @relation("category_parent")
+  activeRoles RoleCategoryAccess[]
   items    InventoryItem[]
 
   @@unique([parentId, name])
@@ -143,11 +146,24 @@ model EventReservation {
   event Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
   item  InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
 
+  createdById String? @map("created_by") @db.Uuid
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
   @@unique([eventId, inventoryItemId])
   @@index([eventId, inventoryItemId], map: "idx_res_event_item")
   @@index([inventoryItemId], map: "idx_res_item")
   @@index([state, expiresAt], map: "idx_res_state_exp")
   @@map("event_reservations")
+}
+
+model RoleCategoryAccess {
+  id         String   @id @default(uuid()) @db.Uuid
+  role       Role
+  categoryId String   @map("category_id") @db.Uuid
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([role, categoryId])
+  @@map("role_category_access")
 }
 
 model EventExport {

@@ -1,4 +1,12 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import AdminRoleCategoriesPage from "./pages/AdminRoleCategoriesPage";
+
+// ...
+
+        <Route path="/settings/users" element={<AdminUsersPage />} />
+        <Route path="/settings/roles" element={<AdminRoleCategoriesPage />} />
+        <Route path="/settings/categories" element={<AdminCategoriesPage />} />
+        <Route path="/settings/items" element={<AdminItemsPage />} />
 import LoginPage from "./pages/LoginPage";
 import EventsPage from "./pages/EventsPage";
 import EventDetailPage from "./pages/EventDetailPage";

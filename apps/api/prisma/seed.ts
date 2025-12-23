@@ -44,7 +44,7 @@ async function main() {
     create: { email: "warehouse@local", passwordHash: whPassword, role: Role.warehouse }
   });
 
-  const parents = ["Inventář", "Mobiliář", "Technika", "Zboží"];
+  const parents = ["Inventář", "Mobiliář", "Kuchyň", "Zboží"];
   const parentRows = new Map<string, string>();
   for (const name of parents) {
     const row = await getOrCreateCategory({ parentId: null, name });
@@ -57,7 +57,7 @@ async function main() {
   };
 
   const catSklo = await sub("Inventář", "Sklo");
-  const catTech = await sub("Technika", "Audio");
+  const catTech = await sub("Kuchyň", "Audio");
 
   const item1 = await prisma.inventoryItem.upsert({
     where: { sku: "SKLO-001" },
@@ -102,6 +102,28 @@ async function main() {
 
   await ensureInitialQtyIfNoLedger(item1.id, 200);
   await ensureInitialQtyIfNoLedger(item2.id, 10);
+
+  // Seed Role Category Access
+  // Chef -> Kuchyň
+  const kitchenCat = parentRows.get("Kuchyň");
+  if (kitchenCat) {
+    const access = await prisma.roleCategoryAccess.findFirst({
+      where: { role: Role.chef, categoryId: kitchenCat }
+    });
+    if (!access) {
+      await prisma.roleCategoryAccess.create({
+        data: { role: Role.chef, categoryId: kitchenCat }
+      });
+    }
+  }
+
+  // Event Manager -> All (or explicit list, let's give them everything for now to match legacy behavior)
+  for (const [name, id] of parentRows.entries()) {
+      const existing = await prisma.roleCategoryAccess.findFirst({ where: { role: Role.event_manager, categoryId: id } });
+      if (!existing) {
+          await prisma.roleCategoryAccess.create({ data: { role: Role.event_manager, categoryId: id } });
+      }
+  }
 }
 
 main()

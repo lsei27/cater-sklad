@@ -31,7 +31,7 @@ export default function AdminCategoriesPage() {
 
   useEffect(() => {
     if (role !== "admin") return;
-    load().catch(() => {});
+    load().catch(() => { });
   }, [role]);
 
   const typeOptions = useMemo(() => parents.map((p) => ({ id: p.id, name: p.name })), [parents]);
@@ -75,7 +75,7 @@ export default function AdminCategoriesPage() {
                 }
               }}
             >
-              <Input value={typeName} onChange={(e) => setTypeName(e.target.value)} placeholder="Např. Technika" />
+              <Input value={typeName} onChange={(e) => setTypeName(e.target.value)} placeholder="Např. Kuchyň" />
               <Button disabled={!typeName.trim()}>Uložit</Button>
             </form>
           </CardContent>

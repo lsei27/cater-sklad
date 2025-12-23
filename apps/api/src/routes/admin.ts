@@ -361,4 +361,43 @@ export async function adminRoutes(app: FastifyInstance) {
     }
     return reply.send(report);
   });
+
+
+  app.get("/admin/role-access", { preHandler: [app.authenticate] }, async (request) => {
+    requireRole(request.user!.role, ["admin"]);
+    const access = await app.prisma.roleCategoryAccess.findMany({
+      include: { category: true }
+    });
+    return { access };
+  });
+
+  app.post("/admin/role-access", { preHandler: [app.authenticate] }, async (request, reply) => {
+    requireRole(request.user!.role, ["admin"]);
+    const body = z.object({
+      role: z.enum(["admin", "event_manager", "chef", "warehouse"]),
+      category_ids: z.array(z.string().uuid())
+    }).parse(request.body);
+
+    const result = await app.prisma.$transaction(async (tx) => {
+      // Remove existing for this role
+      await tx.roleCategoryAccess.deleteMany({ where: { role: body.role as any } });
+
+      // Create new
+      if (body.category_ids.length > 0) {
+        await tx.roleCategoryAccess.createMany({
+          data: body.category_ids.map((id) => ({
+            role: body.role as any,
+            categoryId: id
+          }))
+        });
+      }
+      return tx.roleCategoryAccess.findMany({ where: { role: body.role as any } });
+    });
+
+    await app.prisma.auditLog.create({
+      data: { actorUserId: request.user!.id, entityType: "role_access", entityId: "config", action: "update", diffJson: body }
+    });
+
+    return reply.send({ access: result });
+  });
 }
