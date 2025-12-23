@@ -13,7 +13,7 @@ export async function createExportTx(params: {
     >`
     SELECT e.id, e.name, e.location, e.address, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text, u.name as manager_name
     FROM events e
-    JOIN users u ON u.id = e.created_by_id
+    JOIN users u ON u.id = e.created_by
     WHERE e.id = ${eventId}::uuid
     FOR UPDATE
   `;
