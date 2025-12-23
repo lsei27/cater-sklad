@@ -116,8 +116,10 @@ model Event {
   id                  String      @id @default(uuid()) @db.Uuid
   name                String
   location            String
+  address             String?
   deliveryDatetime    DateTime    @map("delivery_datetime") @db.Timestamptz(6)
   pickupDatetime      DateTime    @map("pickup_datetime") @db.Timestamptz(6)
+  eventDate           DateTime?   @map("event_date") @db.Timestamptz(6)
   status              EventStatus @default(DRAFT)
   exportNeedsRevision Boolean     @default(false) @map("export_needs_revision")
   createdById         String      @map("created_by") @db.Uuid

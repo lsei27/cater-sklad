@@ -343,9 +343,9 @@ export async function eventRoutes(app: FastifyInstance) {
     try {
       const created = await app.prisma.$transaction(async (tx) => {
         const [ev] = await tx.$queryRaw<
-          { id: string; name: string; location: string; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
+          { id: string; name: string; location: string; address: string | null; event_date: Date | null; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
         >`
-          SELECT id, name, location, delivery_datetime, pickup_datetime, status::text
+          SELECT id, name, location, address, event_date, delivery_datetime, pickup_datetime, status::text
           FROM events
           WHERE id = ${params.id}::uuid
           FOR UPDATE
@@ -399,6 +399,8 @@ export async function eventRoutes(app: FastifyInstance) {
             id: ev.id,
             name: ev.name,
             location: ev.location,
+            address: ev.address ?? null,
+            eventDate: ev.event_date?.toISOString() ?? null,
             deliveryDatetime: ev.delivery_datetime.toISOString(),
             pickupDatetime: ev.pickup_datetime.toISOString(),
             version,
