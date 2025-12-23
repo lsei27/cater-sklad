@@ -9,6 +9,8 @@ import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Input from "../components/ui/Input";
 import toast from "react-hot-toast";
 import { statusLabel } from "../lib/viewModel";
+import { cn } from "../lib/ui";
+import { Icons } from "../lib/icons";
 
 type Snapshot = {
   event: { version: number };
@@ -119,6 +121,21 @@ export default function WarehouseEventDetailPage() {
       .catch(() => { });
   }, [id, warehouseItems]);
 
+  const issueData = useMemo(() => {
+    const issuedMap = new Map<string, number>();
+    const lostMap = new Map<string, number>();
+    if (event?.issues) {
+      for (const i of event.issues) {
+        if (i.type === "issued") {
+          issuedMap.set(i.inventoryItemId, (issuedMap.get(i.inventoryItemId) || 0) + (i.issuedQuantity || 0));
+        } else if (i.type === "broken" || i.type === "missing") {
+          lostMap.set(i.inventoryItemId, (lostMap.get(i.inventoryItemId) || 0) + (i.issuedQuantity || 0));
+        }
+      }
+    }
+    return { issuedMap, lostMap };
+  }, [event?.issues]);
+
   const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
     return (
@@ -225,26 +242,53 @@ export default function WarehouseEventDetailPage() {
           ) : null}
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="text-sm font-semibold">Akce</div>
-          <div className="mt-1 text-sm text-slate-600">Dvě hlavní operace pro sklad.</div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-2 md:grid-cols-2">
-            <Button full disabled={issueDisabled} onClick={() => setConfirmIssue(true)}>
-              Potvrdit vydání
-            </Button>
-            <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
-              Uzavřít akci
-            </Button>
-          </div>
-          <div className="mt-2 text-xs text-slate-600">
-            Uzavření provede odepsání rozbitého a chybějícího množství.
-          </div>
-        </CardContent>
-      </Card>
+      {event.status === "CLOSED" ? (
+        <Card className="border-red-100 bg-red-50/30">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2 text-sm font-bold text-red-800">
+              <Icons.Alert className="h-4 w-4" />
+              Přehled ztrát a poškození
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {event.issues
+                ?.filter((issue: any) => (issue.issuedQuantity || 0) > 0 && issue.type !== "issued")
+                .map((issue: any) => (
+                  <div key={issue.id} className="flex items-center justify-between text-sm">
+                    <div className="text-slate-700">{issue.item?.name}</div>
+                    <div className="font-medium text-red-700">
+                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+                    </div>
+                  </div>
+                ))}
+              {(!event.issues || event.issues.filter((i: any) => i.type !== "issued").length === 0) && (
+                <div className="text-sm text-slate-500 italic">Žádné zaznamenané ztráty.</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <div className="text-sm font-semibold">Akce</div>
+            <div className="mt-1 text-sm text-slate-600">Dvě hlavní operace pro sklad.</div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-2 md:grid-cols-2">
+              <Button full disabled={issueDisabled} onClick={() => setConfirmIssue(true)}>
+                Potvrdit vydání
+              </Button>
+              <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
+                Uzavřít akci
+              </Button>
+            </div>
+            <div className="mt-2 text-xs text-slate-600">
+              Uzavření provede odepsání rozbitého a chybějícího množství.
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -273,36 +317,53 @@ export default function WarehouseEventDetailPage() {
                       <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <label className="text-xs">
-                        Vráceno
-                        <Input
-                          className="mt-1"
-                          type="number"
-                          min={0}
-                          value={r.returned}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => {
-                            const v = Math.max(0, Number(e.target.value));
-                            setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, returned: v } : x)));
-                          }}
-                        />
-                      </label>
-                      <label className="text-xs">
-                        Rozbito
-                        <Input
-                          className="mt-1"
-                          type="number"
-                          min={0}
-                          value={r.broken}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => {
-                            const v = Math.max(0, Number(e.target.value));
-                            setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, broken: v } : x)));
-                          }}
-                        />
-                      </label>
-                    </div>
+                    {event.status === "CLOSED" || event.status === "ISSUED" ? (
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
+                        {issueData.issuedMap.has(r.inventory_item_id) ? (
+                          <div className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                            Vydáno: {issueData.issuedMap.get(r.inventory_item_id)} {r.unit}
+                          </div>
+                        ) : null}
+                        {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
+                          <div className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                            Ztráty: {issueData.lostMap.get(r.inventory_item_id)} {r.unit}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {event.status !== "CLOSED" ? (
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <label className="text-xs">
+                          Vráceno
+                          <Input
+                            className="mt-1"
+                            type="number"
+                            min={0}
+                            value={r.returned}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const v = Math.max(0, Number(e.target.value));
+                              setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, returned: v } : x)));
+                            }}
+                          />
+                        </label>
+                        <label className="text-xs">
+                          Rozbito
+                          <Input
+                            className="mt-1"
+                            type="number"
+                            min={0}
+                            value={r.broken}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const v = Math.max(0, Number(e.target.value));
+                              setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, broken: v } : x)));
+                            }}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -357,6 +418,6 @@ export default function WarehouseEventDetailPage() {
           }
         }}
       />
-    </div>
+    </div >
   );
 }

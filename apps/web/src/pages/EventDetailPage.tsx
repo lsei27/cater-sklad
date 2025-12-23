@@ -154,6 +154,21 @@ export default function EventDetailPage() {
     });
   }, [reservationItems]);
 
+  const issueData = useMemo(() => {
+    const issuedMap = new Map<string, number>();
+    const lostMap = new Map<string, number>();
+    if (event?.issues) {
+      for (const i of event.issues) {
+        if (i.type === "issued") {
+          issuedMap.set(i.inventoryItemId, (issuedMap.get(i.inventoryItemId) || 0) + (i.issuedQuantity || 0));
+        } else if (i.type === "broken" || i.type === "missing") {
+          lostMap.set(i.inventoryItemId, (lostMap.get(i.inventoryItemId) || 0) + (i.issuedQuantity || 0));
+        }
+      }
+    }
+    return { issuedMap, lostMap };
+  }, [event?.issues]);
+
   if (loading || !event) {
     return (
       <div className="space-y-3">
@@ -294,7 +309,7 @@ export default function EventDetailPage() {
                   window.open(withToken(`${apiBaseUrl()}/events/${event.id}/report-pdf?view=true`), "_blank")
                 }
               >
-                Otevřít PDF
+                Otevřít závěrečný report
               </Button>
             ) : null}
 
@@ -310,7 +325,7 @@ export default function EventDetailPage() {
                   )
                 }
               >
-                Otevřít PDF
+                Otevřít Balení
               </Button>
             ) : null}
           </div>
@@ -380,7 +395,23 @@ export default function EventDetailPage() {
                               <div className="mt-1 text-xs text-slate-600">
                                 Požadováno: <span className="font-semibold text-slate-900">{r.reservedQuantity}</span> {r.item?.unit}
                               </div>
-                              {stock ? (
+
+                              {event.status === "CLOSED" || event.status === "ISSUED" ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {issueData.issuedMap.has(r.inventoryItemId) ? (
+                                    <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                      Vydáno: {issueData.issuedMap.get(r.inventoryItemId)} {r.item?.unit}
+                                    </div>
+                                  ) : null}
+                                  {(issueData.lostMap.get(r.inventoryItemId) || 0) > 0 ? (
+                                    <div className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                                      Ztráty: {issueData.lostMap.get(r.inventoryItemId)} {r.item?.unit}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              {stock && canEditEvent ? (
                                 <div className="mt-2">
                                   <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
                                     Volné: {stock.available} {r.item?.unit}
