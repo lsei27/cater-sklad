@@ -9,6 +9,14 @@ import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 
+function safeFilename(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 const EventCreateSchema = z.object({
   name: z.string().min(1),
   location: z.string().min(1),
@@ -813,9 +821,10 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const disposition = query.view === "true" ? "inline" : "attachment";
 
+    const safeName = safeFilename(event.name) || event.id;
     return reply
       .header("Content-Type", "application/pdf")
-      .header("Content-Disposition", `${disposition}; filename="report-${event.name}.pdf"`)
+      .header("Content-Disposition", `${disposition}; filename="report-${safeName}.pdf"`)
       .send(Buffer.from(pdfBytes));
   });
 
