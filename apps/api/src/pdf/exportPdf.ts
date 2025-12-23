@@ -70,8 +70,8 @@ export async function buildExportPdf(snapshot: ExportSnapshot) {
     yPos -= 18;
   }
 
-  // Start Time (from deliveryDatetime)
-  page.drawText(pdfText(`Zacatek akce: ${formatCzechTime(snapshot.event.deliveryDatetime)}`), { x: 50, y: yPos, size: 12, font });
+  // Delivery datetime (when warehouse must deliver to venue)
+  page.drawText(pdfText(`Doruceni: ${formatCzechDate(snapshot.event.deliveryDatetime)}, ${formatCzechTime(snapshot.event.deliveryDatetime)}`), { x: 50, y: yPos, size: 12, font: bold });
   yPos -= 18;
 
   // Location
