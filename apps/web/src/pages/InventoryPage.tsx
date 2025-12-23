@@ -9,7 +9,7 @@ import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import Modal from "../components/ui/Modal";
 import { cn } from "../lib/ui";
-import { statusLabel, stockTone } from "../lib/viewModel";
+import { statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 import toast from "react-hot-toast";
 
@@ -432,7 +432,7 @@ export default function InventoryPage() {
                   <div className="p-3 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all group">
                     <div className="flex justify-between items-start mb-1">
                       <div className="font-semibold text-gray-900 group-hover:text-indigo-700">{e.name}</div>
-                      <Badge>{statusLabel(e.status)}</Badge>
+                      <Badge className={statusBadgeClass(e.status)}>{statusLabel(e.status)}</Badge>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-gray-500">
                       <Icons.MapPin /> {e.location}

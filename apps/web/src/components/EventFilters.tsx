@@ -32,7 +32,6 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
 
     const statuses = [
         { value: "DRAFT", label: "Koncept" },
-        { value: "READY_FOR_WAREHOUSE", label: "Připraveno pro sklad" },
         { value: "SENT_TO_WAREHOUSE", label: "Předáno skladu" },
         { value: "ISSUED", label: "Vydáno" },
         { value: "CLOSED", label: "Uzavřeno" },

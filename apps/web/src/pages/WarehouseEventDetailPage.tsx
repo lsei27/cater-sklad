@@ -8,7 +8,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Input from "../components/ui/Input";
 import toast from "react-hot-toast";
-import { managerLabel, statusLabel } from "../lib/viewModel";
+import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { Icons } from "../lib/icons";
 
@@ -233,7 +233,7 @@ export default function WarehouseEventDetailPage() {
               ) : null}
             </div>
             <div className="shrink-0 text-right">
-              <Badge tone={event.status === "ISSUED" ? "warn" : event.status === "SENT_TO_WAREHOUSE" ? "ok" : "neutral"}>
+              <Badge className={statusBadgeClass(event.status)}>
                 {statusLabel(event.status)}
               </Badge>
               {event.chefConfirmedAt ? (

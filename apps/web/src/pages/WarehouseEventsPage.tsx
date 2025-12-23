@@ -5,7 +5,7 @@ import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
-import { managerLabel, statusLabel } from "../lib/viewModel";
+import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 import { Icons } from "../lib/icons";
 
@@ -135,7 +135,7 @@ export default function WarehouseEventsPage() {
                   <CardContent className="p-5 flex flex-col h-full">
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex flex-col gap-1">
-                        <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"}>
+                        <Badge className={statusBadgeClass(e.status)}>
                           {statusLabel(e.status)}
                         </Badge>
                         {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
@@ -190,7 +190,7 @@ export default function WarehouseEventsPage() {
                         <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
                           {e.name}
                         </h3>
-                        <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"} className="scale-90">
+                        <Badge className={`scale-90 ${statusBadgeClass(e.status)}`}>
                           {statusLabel(e.status)}
                         </Badge>
                         {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (

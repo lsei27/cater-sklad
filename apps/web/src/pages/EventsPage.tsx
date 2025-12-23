@@ -8,7 +8,7 @@ import Input from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
-import { managerLabel, statusLabel } from "../lib/viewModel";
+import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 
@@ -163,17 +163,7 @@ export default function EventsPage() {
                   <CardContent className="p-5 flex flex-col h-full">
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex flex-col gap-1">
-                        <Badge
-                          tone={
-                            e.status === "SENT_TO_WAREHOUSE"
-                              ? "ok"
-                              : e.status === "ISSUED"
-                                ? "warn"
-                                : e.status === "CANCELLED" || e.status === "CLOSED"
-                                  ? "neutral"
-                                  : "neutral"
-                          }
-                        >
+                        <Badge className={statusBadgeClass(e.status)}>
                           {statusLabel(e.status)}
                         </Badge>
                         {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
@@ -227,18 +217,7 @@ export default function EventsPage() {
                         <h3 className="font-bold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
                           {e.name}
                         </h3>
-                        <Badge
-                          tone={
-                            e.status === "SENT_TO_WAREHOUSE"
-                              ? "ok"
-                              : e.status === "ISSUED"
-                                ? "warn"
-                                : e.status === "CANCELLED" || e.status === "CLOSED"
-                                  ? "neutral"
-                                  : "neutral"
-                          }
-                          className="scale-90"
-                        >
+                        <Badge className={`scale-90 ${statusBadgeClass(e.status)}`}>
                           {statusLabel(e.status)}
                         </Badge>
                         {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (

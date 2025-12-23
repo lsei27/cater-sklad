@@ -11,6 +11,25 @@ export function statusLabel(status: string) {
   return STATUS_LABEL[status] ?? status;
 }
 
+export function statusBadgeClass(status: string) {
+  switch (status) {
+    case "DRAFT":
+      return "bg-slate-100 text-slate-700";
+    case "READY_FOR_WAREHOUSE":
+      return "bg-sky-100 text-sky-700";
+    case "SENT_TO_WAREHOUSE":
+      return "bg-emerald-100 text-emerald-700";
+    case "ISSUED":
+      return "bg-amber-100 text-amber-800";
+    case "CLOSED":
+      return "bg-blue-100 text-blue-700";
+    case "CANCELLED":
+      return "bg-red-100 text-red-700";
+    default:
+      return "bg-slate-100 text-slate-700";
+  }
+}
+
 export const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   event_manager: "Event manager",

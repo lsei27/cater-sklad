@@ -10,7 +10,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
-import { humanError, managerLabel, statusLabel, stockTone } from "../lib/viewModel";
+import { humanError, managerLabel, statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
@@ -248,7 +248,7 @@ export default function EventDetailPage() {
               ) : null}
             </div>
             <div className="shrink-0 text-right">
-              <Badge>{statusLabel(event.status)}</Badge>
+              <Badge className={statusBadgeClass(event.status)}>{statusLabel(event.status)}</Badge>
               {event.chefConfirmedAt ? (
                 <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-green-700">
                   <Icons.Check className="h-3 w-3" /> Kuchyň potvrzena
