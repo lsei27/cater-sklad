@@ -516,6 +516,7 @@ export default function EventDetailPage() {
         }}
         eventId={event.id}
         role={role}
+        existingItems={reservationItems}
         initialSearch={addInitialSearch}
         focusItemId={addFocusItemId}
         onDone={async () => {
@@ -636,6 +637,7 @@ function AddItemsPanel(props: {
   onOpenChange: (v: boolean) => void;
   eventId: string;
   role: string;
+  existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any }>;
   onDone: () => void;
   initialSearch?: string;
   focusItemId?: string;
@@ -767,109 +769,154 @@ function AddItemsPanel(props: {
       onPrimary={save}
       primaryDisabled={loading}
     >
-      <div className="grid gap-3 md:grid-cols-3">
-        <label className="md:col-span-3 text-sm">
-          Hledat
-          <Input className="mt-1" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název…" />
-        </label>
-        <label className="text-sm">
-          Typ
-          <Select
-            className="mt-1"
-            value={parentId}
-            onChange={(e) => {
-              setParentId(e.target.value);
-              setCategoryId("");
-            }}
-            disabled={isChef}
-          >
-            <option value="">Vše</option>
-            {parents.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="text-sm">
-          Kategorie
-          <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId}>
-            <option value="">Vše</option>
-            {subcats.map((c: any) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <div className="flex items-end">
-          <Button variant="secondary" full onClick={load}>
-            Obnovit
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-4 space-y-2">
-        {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 6 }).map((_, idx) => (
-              <div key={idx} className="rounded-2xl border border-slate-200 p-3">
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="mt-2 h-3 w-1/2" />
-              </div>
-            ))}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="md:col-span-3 text-sm">
+              Hledat
+              <Input className="mt-1" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název…" />
+            </label>
+            <label className="text-sm">
+              Typ
+              <Select
+                className="mt-1"
+                value={parentId}
+                onChange={(e) => {
+                  setParentId(e.target.value);
+                  setCategoryId("");
+                }}
+                disabled={isChef}
+              >
+                <option value="">Vše</option>
+                {parents.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="text-sm">
+              Kategorie
+              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId}>
+                <option value="">Vše</option>
+                {subcats.map((c: any) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <div className="flex items-end">
+              <Button variant="secondary" full onClick={load}>
+                Obnovit
+              </Button>
+            </div>
           </div>
-        ) : items.length === 0 ? (
-          <div className="text-sm text-slate-600">Žádné položky pro zvolené filtry.</div>
-        ) : (
-          items.map((i: any) => {
-            const a = availability.get(i.id);
-            const available = a?.available ?? 0;
-            const unit = i.unit ?? "ks";
-            const tone = stockTone(available);
-            return (
-              <div key={i.id} className="rounded-2xl border border-slate-200 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold">{i.name}</div>
-                    <div className="mt-1 text-xs text-slate-600">
-                      {i.category?.parent?.name ?? ""} / {i.category?.name}
-                    </div>
-                    <div className="mt-2">
-                      <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
-                        K dispozici pro tuto akci: {available} {unit}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-600">
-                        Celkem: {a?.physicalTotal ?? 0} · Rezervováno: {a?.blockedTotal ?? 0}
-                      </div>
-                      {available === 0 ? (
-                        <div className="mt-1 text-xs text-slate-500">Momentálně nedostupné (rezervováno na jiné akce).</div>
-                      ) : null}
-                    </div>
+
+          <div className="space-y-2">
+            {loading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <div key={idx} className="rounded-2xl border border-slate-200 p-3">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="mt-2 h-3 w-1/2" />
                   </div>
-                  <div className="w-28">
-                    <label className="text-xs">
-                      Množství
-                      <Input
-                        className="mt-1"
-                        type="number"
-                        min={0}
-                        max={available}
-                        disabled={available === 0}
-                        value={qty[i.id] ?? 0}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => {
-                          const v = Math.max(0, Math.min(available, Number(e.target.value)));
-                          setQty((prev) => ({ ...prev, [i.id]: v }));
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
+                ))}
               </div>
-            );
-          })
-        )}
+            ) : items.length === 0 ? (
+              <div className="text-sm text-slate-600">Žádné položky pro zvolené filtry.</div>
+            ) : (
+              items.map((i: any) => {
+                const a = availability.get(i.id);
+                const available = a?.available ?? 0;
+                const unit = i.unit ?? "ks";
+                const tone = stockTone(available);
+                return (
+                  <div key={i.id} className="rounded-2xl border border-slate-200 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold">{i.name}</div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          {i.category?.parent?.name ?? ""} / {i.category?.name}
+                        </div>
+                        <div className="mt-2">
+                          <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
+                            K dispozici pro tuto akci: {available} {unit}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600">
+                            Celkem: {a?.physicalTotal ?? 0} · Rezervováno: {a?.blockedTotal ?? 0}
+                          </div>
+                          {available === 0 ? (
+                            <div className="mt-1 text-xs text-slate-500">Momentálně nedostupné (rezervováno na jiné akce).</div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="w-28">
+                        <label className="text-xs">
+                          Množství
+                          <Input
+                            className="mt-1"
+                            type="number"
+                            min={0}
+                            max={available}
+                            disabled={available === 0}
+                            value={qty[i.id] ?? 0}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(available, Number(e.target.value)));
+                              setQty((prev) => ({ ...prev, [i.id]: v }));
+                            }}
+                          />
+                        </label>
+                        <Button
+                          size="sm"
+                          className="mt-2 w-full"
+                          onClick={() => {
+                            if (available === 0) return;
+                            setQty((prev) => {
+                              const next = Math.min(available, (prev[i.id] ?? 0) + 1);
+                              return { ...prev, [i.id]: next };
+                            });
+                          }}
+                          disabled={available === 0}
+                        >
+                          <Icons.Plus className="h-3 w-3" /> Přidat
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+          <div className="text-sm font-semibold text-slate-900">Položky v akci</div>
+          <div className="mt-1 text-xs text-slate-600">
+            Aktuálně přidané položky ({props.existingItems.filter((r) => Number(r.reservedQuantity) > 0).length})
+          </div>
+          <div className="mt-3 space-y-2 max-h-[55vh] overflow-auto pr-1">
+            {props.existingItems.filter((r) => Number(r.reservedQuantity) > 0).length === 0 ? (
+              <div className="text-xs text-slate-500">Zatím žádné položky.</div>
+            ) : (
+              props.existingItems
+                .filter((r) => Number(r.reservedQuantity) > 0)
+                .sort((a, b) => (a.item?.name ?? "").localeCompare(b.item?.name ?? "", "cs"))
+                .map((r) => (
+                  <div key={r.inventoryItemId} className="rounded-xl border border-slate-200 bg-white p-2">
+                    <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-slate-700">
+                      {Number(r.reservedQuantity)} {r.item?.unit ?? "ks"}
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
       </div>
     </Modal>
   );
