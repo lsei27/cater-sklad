@@ -21,6 +21,7 @@ const ROLE_OPTIONS = [
 export default function AdminUsersPage() {
   const role = getCurrentUser()?.role ?? "";
   const [users, setUsers] = useState<any[]>([]);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [userRole, setUserRole] = useState<(typeof ROLE_OPTIONS)[number]["value"]>("event_manager");
@@ -67,14 +68,15 @@ export default function AdminUsersPage() {
         </CardHeader>
         <CardContent>
           <form
-            className="grid gap-3 md:grid-cols-3"
+            className="grid gap-3 md:grid-cols-4"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
                 await api("/admin/users", {
                   method: "POST",
-                  body: JSON.stringify({ email, password, role: userRole })
+                  body: JSON.stringify({ name: name.trim() || undefined, email, password, role: userRole })
                 });
+                setName("");
                 setEmail("");
                 setPassword("");
                 toast.success("Uživatel vytvořen");
@@ -84,6 +86,10 @@ export default function AdminUsersPage() {
               }
             }}
           >
+            <label className="text-sm">
+              Jméno
+              <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="např. Jan Novák" />
+            </label>
             <label className="text-sm">
               Email
               <Input className="mt-1" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="např. kuchar@firma.cz" />
@@ -103,7 +109,7 @@ export default function AdminUsersPage() {
               <Input className="mt-1" value={password} type="password" onChange={(e) => setPassword(e.target.value)} placeholder="min. 6 znaků" />
             </label>
 
-            <div className="md:col-span-3">
+            <div className="md:col-span-4">
               <Button full disabled={!email.trim() || password.length < 6}>
                 Vytvořit
               </Button>
@@ -152,8 +158,8 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
     <>
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{user.email}</div>
-          <div className="mt-1 text-xs text-slate-600">{roleLabel(user.role)}</div>
+          <div className="truncate text-sm font-semibold">{user.name || user.email}</div>
+          <div className="mt-1 text-xs text-slate-600">{user.name ? user.email : roleLabel(user.role)}</div>
         </div>
         <div className="flex items-center gap-2">
           <Badge tone="neutral">{roleLabel(user.role)}</Badge>

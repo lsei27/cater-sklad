@@ -8,7 +8,7 @@ import Input from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
-import { statusLabel } from "../lib/viewModel";
+import { managerLabel, statusLabel } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 
@@ -21,7 +21,7 @@ type EventRow = {
   status: string;
   exportNeedsRevision: boolean;
   chefConfirmedAt: string | null;
-  createdBy?: { name: string };
+  createdBy?: { id?: string; name?: string | null; email?: string };
 };
 
 export default function EventsPage() {
@@ -155,29 +155,110 @@ export default function EventsPage() {
         </div>
       ) : viewMode === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((e) => (
-            <Link key={e.id} to={`/events/${e.id}`} className="block group">
-              <Card className="h-full hover:shadow-md transition-shadow border-gray-200 group-hover:border-indigo-300">
-                <CardContent className="p-5 flex flex-col h-full">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex flex-col gap-1">
-                      <Badge
-                        tone={
-                          e.status === "SENT_TO_WAREHOUSE"
-                            ? "ok"
-                            : e.status === "ISSUED"
-                              ? "warn"
-                              : e.status === "CANCELLED" || e.status === "CLOSED"
-                                ? "neutral"
-                                : "neutral"
-                        }
-                      >
-                        {statusLabel(e.status)}
-                      </Badge>
-                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+          {filtered.map((e) => {
+            const manager = managerLabel(e.createdBy);
+            return (
+              <Link key={e.id} to={`/events/${e.id}`} className="block group">
+                <Card className="h-full hover:shadow-md transition-shadow border-gray-200 group-hover:border-indigo-300">
+                  <CardContent className="p-5 flex flex-col h-full">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex flex-col gap-1">
+                        <Badge
+                          tone={
+                            e.status === "SENT_TO_WAREHOUSE"
+                              ? "ok"
+                              : e.status === "ISSUED"
+                                ? "warn"
+                                : e.status === "CANCELLED" || e.status === "CLOSED"
+                                  ? "neutral"
+                                  : "neutral"
+                          }
+                        >
+                          {statusLabel(e.status)}
+                        </Badge>
+                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                          </span>
+                        ) : null}
+                      </div>
+                      {e.exportNeedsRevision ? (
                         <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                          <Icons.Alert /> Revize
                         </span>
+                      ) : null}
+                    </div>
+
+                    <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+                    {manager ? (
+                      <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
+                        Manažer: {manager}
+                      </div>
+                    ) : null}
+
+                    <div className="text-sm text-gray-500 space-y-2 mt-2">
+                      <div className="flex items-center gap-2">
+                        <div className="text-gray-400"><Icons.MapPin /></div>
+                        <span className="truncate text-gray-700">{e.location}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-gray-400"><Icons.Calendar /></div>
+                        <span className="text-xs">
+                          {new Date(e.deliveryDatetime).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((e) => {
+            const manager = managerLabel(e.createdBy);
+            return (
+              <Link key={e.id} to={`/events/${e.id}`} className="block group">
+                <Card className="hover:shadow-sm transition-shadow border-gray-200 group-hover:border-indigo-300">
+                  <CardContent className="p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className="font-bold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
+                          {e.name}
+                        </h3>
+                        <Badge
+                          tone={
+                            e.status === "SENT_TO_WAREHOUSE"
+                              ? "ok"
+                              : e.status === "ISSUED"
+                                ? "warn"
+                                : e.status === "CANCELLED" || e.status === "CLOSED"
+                                  ? "neutral"
+                                  : "neutral"
+                          }
+                          className="scale-90"
+                        >
+                          {statusLabel(e.status)}
+                        </Badge>
+                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-gray-500">
+                        <div className="flex items-center gap-1">
+                          <Icons.MapPin className="h-3 w-3" /> {e.location}
+                        </div>
+                        <div className="flex items-center gap-1 font-medium">
+                          <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleDateString()}
+                        </div>
+                      </div>
+                      {manager ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Manažer: <span className="font-medium text-slate-700">{manager}</span>
+                        </div>
                       ) : null}
                     </div>
                     {e.exportNeedsRevision ? (
@@ -185,87 +266,12 @@ export default function EventsPage() {
                         <Icons.Alert /> Revize
                       </span>
                     ) : null}
-                  </div>
-
-                  <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
-                  {e.createdBy?.name && (
-                    <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
-                      Manažer: {e.createdBy.name}
-                    </div>
-                  )}
-
-                  <div className="text-sm text-gray-500 space-y-2 mt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="text-gray-400"><Icons.MapPin /></div>
-                      <span className="truncate text-gray-700">{e.location}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-gray-400"><Icons.Calendar /></div>
-                      <span className="text-xs">
-                        {new Date(e.deliveryDatetime).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {filtered.map((e) => (
-            <Link key={e.id} to={`/events/${e.id}`} className="block group">
-              <Card className="hover:shadow-sm transition-shadow border-gray-200 group-hover:border-indigo-300">
-                <CardContent className="p-4 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-bold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
-                        {e.name}
-                      </h3>
-                      <Badge
-                        tone={
-                          e.status === "SENT_TO_WAREHOUSE"
-                            ? "ok"
-                            : e.status === "ISSUED"
-                              ? "warn"
-                              : e.status === "CANCELLED" || e.status === "CLOSED"
-                                ? "neutral"
-                                : "neutral"
-                        }
-                        className="scale-90"
-                      >
-                        {statusLabel(e.status)}
-                      </Badge>
-                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                      <div className="flex items-center gap-1">
-                        <Icons.MapPin className="h-3 w-3" /> {e.location}
-                      </div>
-                      <div className="flex items-center gap-1 font-medium">
-                        <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleDateString()}
-                      </div>
-                    </div>
-                    {e.createdBy?.name ? (
-                      <div className="mt-1 text-xs text-slate-500">
-                        Manažer: <span className="font-medium text-slate-700">{e.createdBy.name}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  {e.exportNeedsRevision ? (
-                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                      <Icons.Alert /> Revize
-                    </span>
-                  ) : null}
-                  <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                    <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

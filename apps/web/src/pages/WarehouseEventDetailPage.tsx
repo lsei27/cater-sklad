@@ -8,7 +8,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Input from "../components/ui/Input";
 import toast from "react-hot-toast";
-import { statusLabel } from "../lib/viewModel";
+import { managerLabel, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { Icons } from "../lib/icons";
 
@@ -28,6 +28,7 @@ export default function WarehouseEventDetailPage() {
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number; parentCategory?: string }>>([]);
+  const manager = managerLabel(event?.createdBy);
 
   const load = async () => {
     if (!id) return;
@@ -218,11 +219,11 @@ export default function WarehouseEventDetailPage() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold">{event.name}</div>
-              {event.createdBy?.name && (
+              {manager ? (
                 <div className="text-sm font-medium text-slate-900 mt-1">
-                  Manažer: {event.createdBy.name}
+                  Manažer: {manager}
                 </div>
-              )}
+              ) : null}
               <div className="text-sm text-slate-600">{event.location}</div>
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}

@@ -173,8 +173,9 @@ export async function buildClosureReportPdf(event: any) {
   // Title: Final Report
   page.drawText(pdfText(`Zaverecny report: ${event.name}`), { x: 50, y: height - 50, size: 20, font: bold });
 
-  if (event.createdBy?.name) {
-    page.drawText(pdfText(`Event Manager: ${event.createdBy.name}`), { x: 400, y: height - 50, size: 10, font });
+  const managerLabel = event.createdBy?.name?.trim() || event.createdBy?.id || event.createdBy?.email?.trim();
+  if (managerLabel) {
+    page.drawText(pdfText(`Event Manager: ${managerLabel}`), { x: 400, y: height - 50, size: 10, font });
   }
 
   let yPos = height - 80;

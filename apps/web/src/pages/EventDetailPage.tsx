@@ -10,7 +10,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
-import { humanError, statusLabel, stockTone } from "../lib/viewModel";
+import { humanError, managerLabel, statusLabel, stockTone } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
@@ -133,6 +133,7 @@ export default function EventDetailPage() {
   const canAddItems = ((canEM && (event?.status === "DRAFT" || event?.status === "READY_FOR_WAREHOUSE")) || canChef) && canEditEvent;
 
   const latestExport = event?.exports?.[0] ?? null;
+  const manager = managerLabel(event?.createdBy);
   const token = getToken();
   const withToken = (url: string) => (token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url);
 
@@ -231,11 +232,11 @@ export default function EventDetailPage() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold">{event.name}</div>
-              {event.createdBy?.name && (
+              {manager ? (
                 <div className="text-sm font-medium text-slate-900 mt-1">
-                  Manažer: {event.createdBy.name}
+                  Manažer: {manager}
                 </div>
-              )}
+              ) : null}
               <div className="mt-1 text-sm text-slate-600">{event.location}</div>
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}

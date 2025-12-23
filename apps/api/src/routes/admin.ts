@@ -80,7 +80,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/users", { preHandler: [app.authenticate] }, async (request) => {
     requireRole(request.user!.role, ["admin"]);
-    const users = await app.prisma.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, role: true } });
+    const users = await app.prisma.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, name: true, role: true } });
     return { users };
   });
 
@@ -89,17 +89,31 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         email: EmailSchema,
+        name: z.string().trim().min(1).optional(),
         password: z.string().min(6),
         role: z.enum(["admin", "event_manager", "chef", "warehouse"])
       })
       .parse(request.body);
     const bcrypt = await import("bcrypt");
     const hash = await bcrypt.default.hash(body.password, 10);
-    const user = await app.prisma.user.create({ data: { email: body.email, passwordHash: hash, role: body.role as any } });
-    await app.prisma.auditLog.create({
-      data: { actorUserId: request.user!.id, entityType: "user", entityId: user.id, action: "create", diffJson: { email: body.email, role: body.role } }
+    const user = await app.prisma.user.create({
+      data: {
+        email: body.email,
+        name: body.name ?? null,
+        passwordHash: hash,
+        role: body.role as any
+      }
     });
-    return reply.send({ user: { id: user.id, email: user.email, role: user.role } });
+    await app.prisma.auditLog.create({
+      data: {
+        actorUserId: request.user!.id,
+        entityType: "user",
+        entityId: user.id,
+        action: "create",
+        diffJson: { email: body.email, name: body.name, role: body.role }
+      }
+    });
+    return reply.send({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
   });
 
   app.delete("/admin/users/:id", { preHandler: [app.authenticate] }, async (request, reply) => {

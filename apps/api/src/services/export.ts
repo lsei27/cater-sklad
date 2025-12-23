@@ -9,9 +9,22 @@ export async function createExportTx(params: {
     const { tx, eventId, userId } = params;
 
     const [ev] = await tx.$queryRaw<
-        { id: string; name: string; location: string; address: string | null; event_date: Date | null; delivery_datetime: Date; pickup_datetime: Date; status: string; manager_name: string }[]
+        {
+            id: string;
+            name: string;
+            location: string;
+            address: string | null;
+            event_date: Date | null;
+            delivery_datetime: Date;
+            pickup_datetime: Date;
+            status: string;
+            manager_name: string | null;
+            manager_email: string;
+            manager_id: string;
+        }[]
     >`
-    SELECT e.id, e.name, e.location, e.address, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text, u.name as manager_name
+    SELECT e.id, e.name, e.location, e.address, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text,
+           u.name as manager_name, u.email as manager_email, u.id as manager_id
     FROM events e
     JOIN users u ON u.id = e.created_by
     WHERE e.id = ${eventId}::uuid
@@ -61,6 +74,7 @@ export async function createExportTx(params: {
     }
 
     const exportedAt = new Date();
+    const managerName = (ev.manager_name ?? "").trim() || ev.manager_id || ev.manager_email;
     const snapshot: ExportSnapshot = {
         event: {
             id: ev.id,
@@ -72,7 +86,7 @@ export async function createExportTx(params: {
             pickupDatetime: ev.pickup_datetime.toISOString(),
             version,
             exportedAt: exportedAt.toISOString(),
-            managerName: ev.manager_name
+            managerName
         },
         groups: Array.from(groupsMap.values())
     };

@@ -5,7 +5,7 @@ import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
-import { statusLabel } from "../lib/viewModel";
+import { managerLabel, statusLabel } from "../lib/viewModel";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 import { Icons } from "../lib/icons";
 
@@ -18,6 +18,7 @@ type EventRow = {
   status: string;
   exportNeedsRevision: boolean;
   chefConfirmedAt: string | null;
+  createdBy?: { id?: string; name?: string | null; email?: string };
 };
 
 export default function WarehouseEventsPage() {
@@ -126,41 +127,49 @@ export default function WarehouseEventsPage() {
         </div>
       ) : viewMode === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {events.map((e) => (
-            <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-              <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
-                <CardContent className="p-5 flex flex-col h-full">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex flex-col gap-1">
-                      <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"}>
-                        {statusLabel(e.status)}
-                      </Badge>
-                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+          {events.map((e) => {
+            const manager = managerLabel(e.createdBy);
+            return (
+              <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+                <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
+                  <CardContent className="p-5 flex flex-col h-full">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex flex-col gap-1">
+                        <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"}>
+                          {statusLabel(e.status)}
+                        </Badge>
+                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+                    {manager ? (
+                      <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
+                        Manažer: {manager}
+                      </div>
+                    ) : null}
+
+                    <div className="text-sm text-slate-500 space-y-2 mt-2">
+                      <div className="flex items-center gap-2">
+                        <div className="text-slate-400"><Icons.MapPin /></div>
+                        <span className="truncate text-slate-700">{e.location}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-slate-400"><Icons.Calendar /></div>
+                        <span className="text-xs">
+                          {new Date(e.deliveryDatetime).toLocaleString()}
                         </span>
-                      ) : null}
+                      </div>
                     </div>
-                  </div>
-
-                  <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
-
-                  <div className="text-sm text-slate-500 space-y-2 mt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="text-slate-400"><Icons.MapPin /></div>
-                      <span className="truncate text-slate-700">{e.location}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-slate-400"><Icons.Calendar /></div>
-                      <span className="text-xs">
-                        {new Date(e.deliveryDatetime).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       ) : events.length === 0 ? (
         <Card>
@@ -170,38 +179,46 @@ export default function WarehouseEventsPage() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {events.map((e) => (
-            <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-              <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
-                <CardContent className="p-4 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
-                        {e.name}
-                      </h3>
-                      <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"} className="scale-90">
-                        {statusLabel(e.status)}
-                      </Badge>
-                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                        </span>
+          {events.map((e) => {
+            const manager = managerLabel(e.createdBy);
+            return (
+              <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+                <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
+                  <CardContent className="p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
+                          {e.name}
+                        </h3>
+                        <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"} className="scale-90">
+                          {statusLabel(e.status)}
+                        </Badge>
+                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-slate-500">
+                        <div className="flex items-center gap-1">
+                          <Icons.MapPin className="h-3 w-3" /> {e.location}
+                        </div>
+                        <div className="flex items-center gap-1 font-medium">
+                          <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
+                        </div>
+                      </div>
+                      {manager ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Manažer: <span className="font-medium text-slate-700">{manager}</span>
+                        </div>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-slate-500">
-                      <div className="flex items-center gap-1">
-                        <Icons.MapPin className="h-3 w-3" /> {e.location}
-                      </div>
-                      <div className="flex items-center gap-1 font-medium">
-                        <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-                  <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                    <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

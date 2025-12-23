@@ -79,7 +79,7 @@ export async function eventRoutes(app: FastifyInstance) {
         status: true,
         exportNeedsRevision: true,
         chefConfirmedAt: true,
-        createdBy: { select: { name: true } }
+        createdBy: { select: { id: true, name: true, email: true } }
       }
     });
     return { events: (events as any[]) };
@@ -193,7 +193,7 @@ export async function eventRoutes(app: FastifyInstance) {
         exports: { orderBy: { version: "desc" }, take: 1 },
         returns: { include: { item: true } },
         issues: { include: { item: true } },
-        createdBy: { select: { name: true } }
+        createdBy: { select: { id: true, name: true, email: true } }
       }
     }) as any;
     if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
@@ -291,6 +291,19 @@ export async function eventRoutes(app: FastifyInstance) {
     });
     if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
     const snapshot = JSON.parse(JSON.stringify(row.snapshotJson)) as ExportSnapshot;
+    if (!snapshot.event.managerName) {
+      const eventManager = await app.prisma.event.findUnique({
+        where: { id: params.id },
+        select: { createdBy: { select: { id: true, name: true, email: true } } }
+      });
+      const managerLabel =
+        eventManager?.createdBy?.name?.trim() ||
+        eventManager?.createdBy?.id ||
+        eventManager?.createdBy?.email?.trim();
+      if (managerLabel) {
+        snapshot.event.managerName = managerLabel;
+      }
+    }
 
     let subtitle: string | undefined;
     if (queryParams.type === "kitchen") {
@@ -788,6 +801,7 @@ export async function eventRoutes(app: FastifyInstance) {
       where: { id: params.id },
       include: {
         createdBy: { select: { name: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
         issues: { include: { item: true } },
         returns: { include: { item: true } },
         reservations: { include: { item: true } }
