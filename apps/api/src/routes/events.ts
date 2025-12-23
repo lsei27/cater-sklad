@@ -379,6 +379,52 @@ export async function eventRoutes(app: FastifyInstance) {
     return reply.send({ event });
   });
 
+  // Export preview - returns what would be in the export WITHOUT creating a new version
+  app.get("/events/:id/export-preview", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const ev = await app.prisma.event.findUnique({
+      where: { id: params.id },
+      select: { id: true, name: true, location: true, address: true, eventDate: true, deliveryDatetime: true, pickupDatetime: true, status: true }
+    });
+    if (!ev) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+
+    const reservations = await app.prisma.eventReservation.findMany({
+      where: { eventId: params.id, reservedQuantity: { gt: 0 } },
+      include: { item: { include: { category: { include: { parent: true } } } } },
+      orderBy: { inventoryItemId: "asc" }
+    });
+
+    const groupsMap = new Map<string, { parentCategory: string; category: string; items: Array<{ name: string; qty: number; unit: string }> }>();
+    for (const r of reservations) {
+      const parentName = r.item.category.parent?.name ?? "Bez kategorie";
+      const key = `${parentName}/${r.item.category.name}`;
+      const group = groupsMap.get(key) ?? (() => {
+        const g = { parentCategory: parentName, category: r.item.category.name, items: [] as any[] };
+        groupsMap.set(key, g);
+        return g;
+      })();
+      group.items.push({ name: r.item.name, qty: r.reservedQuantity, unit: r.item.unit });
+    }
+
+    const preview = {
+      event: {
+        name: ev.name,
+        location: ev.location,
+        address: ev.address,
+        eventDate: ev.eventDate?.toISOString() ?? null,
+        deliveryDatetime: ev.deliveryDatetime.toISOString(),
+        pickupDatetime: ev.pickupDatetime.toISOString()
+      },
+      groups: Array.from(groupsMap.values()),
+      itemCount: reservations.length
+    };
+
+    return reply.send({ preview });
+  });
+
   app.post("/events/:id/export", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin", "event_manager"]);

@@ -289,62 +289,67 @@ export async function adminRoutes(app: FastifyInstance) {
     if (dryRun) return reply.send({ dry_run: true, rows: records.length });
 
     const changedItemIds = new Set<string>();
-    await app.prisma.$transaction(async (tx) => {
-      for (let idx = 0; idx < records.length; idx++) {
-        const r = records[idx]!;
-        try {
-          const name = (r.name ?? "").trim();
-          const parentName = (r.parent_category ?? "").trim();
-          const subName = (r.category ?? "").trim();
-          const quantity = Number(String(r.quantity ?? "0").trim());
-          const returnDelayDays = Number(String(r.return_delay_days ?? "0").trim());
-          const unit = (r.unit ?? "ks").trim() || "ks";
-          const sku = (r.sku ?? "").trim() || null;
-          const notes = (r.notes ?? "").trim() || null;
-          const imageUrl = (r.image_url ?? "").trim() || null;
-          const active = parseBool(r.active) ?? true;
+    try {
+      await app.prisma.$transaction(async (tx) => {
+        for (let idx = 0; idx < records.length; idx++) {
+          const r = records[idx]!;
+          try {
+            const name = (r.name ?? "").trim();
+            const parentName = (r.parent_category ?? "").trim();
+            const subName = (r.category ?? "").trim();
+            const quantity = Number(String(r.quantity ?? "0").trim());
+            const returnDelayDays = Number(String(r.return_delay_days ?? "0").trim());
+            const unit = (r.unit ?? "ks").trim() || "ks";
+            const sku = (r.sku ?? "").trim() || null;
+            const notes = (r.notes ?? "").trim() || null;
+            const imageUrl = (r.image_url ?? "").trim() || null;
+            const active = parseBool(r.active) ?? true;
 
-          if (!name || !parentName || !subName) throw new Error("Missing name/parent_category/category");
+            if (!name || !parentName || !subName) throw new Error("Missing name/parent_category/category");
 
-          const parent = await getOrCreateCategory({ tx, parentId: null, name: parentName });
-          const child = await getOrCreateCategory({ tx, parentId: parent.id, name: subName });
+            const parent = await getOrCreateCategory({ tx, parentId: null, name: parentName });
+            const child = await getOrCreateCategory({ tx, parentId: parent.id, name: subName });
 
-          const existing = sku
-            ? await tx.inventoryItem.findUnique({ where: { sku } })
-            : await tx.inventoryItem.findFirst({ where: { name, categoryId: child.id } });
+            const existing = sku
+              ? await tx.inventoryItem.findUnique({ where: { sku } })
+              : await tx.inventoryItem.findFirst({ where: { name, categoryId: child.id } });
 
-          const item = existing
-            ? await tx.inventoryItem.update({
-              where: { id: existing.id },
-              data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku: sku ?? undefined }
-            })
-            : await tx.inventoryItem.create({
-              data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku }
-            });
+            const item = existing
+              ? await tx.inventoryItem.update({
+                where: { id: existing.id },
+                data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku: sku ?? undefined }
+              })
+              : await tx.inventoryItem.create({
+                data: { name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active, sku }
+              });
 
-          if (existing) report.updated_items.push(item.id);
-          else report.created_items.push(item.id);
+            if (existing) report.updated_items.push(item.id);
+            else report.created_items.push(item.id);
 
-          const current = await getPhysicalTotal(tx, item.id);
-          const delta = quantity - current;
-          if (delta !== 0) {
-            await tx.inventoryLedger.create({
-              data: {
-                inventoryItemId: item.id,
-                deltaQuantity: delta,
-                reason: "audit_adjustment",
-                createdById: actor.id,
-                note: `CSV import set quantity=${quantity} (was ${current})`
-              }
-            });
-            report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta });
-            changedItemIds.add(item.id);
+            const current = await getPhysicalTotal(tx, item.id);
+            const delta = quantity - current;
+            if (delta !== 0) {
+              await tx.inventoryLedger.create({
+                data: {
+                  inventoryItemId: item.id,
+                  deltaQuantity: delta,
+                  reason: "audit_adjustment",
+                  createdById: actor.id,
+                  note: `CSV import set quantity=${quantity} (was ${current})`
+                }
+              });
+              report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta });
+              changedItemIds.add(item.id);
+            }
+          } catch (e: any) {
+            report.errors.push({ row: idx + 1, error: e?.message ?? String(e) });
           }
-        } catch (e: any) {
-          report.errors.push({ row: idx + 1, error: e?.message ?? String(e) });
         }
-      }
-    });
+      });
+    } catch (e: any) {
+      request.log.error({ err: e }, "CSV import transaction failed");
+      return httpError(reply, 500, "IMPORT_FAILED", `Import selhal: ${e?.message ?? "neznámá chyba"}`);
+    }
 
     report.changed_item_ids = Array.from(changedItemIds);
     for (const inventoryItemId of report.changed_item_ids) {

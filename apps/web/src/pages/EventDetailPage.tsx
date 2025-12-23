@@ -55,6 +55,8 @@ export default function EventDetailPage() {
   const [addInitialSearch, setAddInitialSearch] = useState<string | undefined>(undefined);
   const [addFocusItemId, setAddFocusItemId] = useState<string | undefined>(undefined);
   const [exportConfirm, setExportConfirm] = useState(false);
+  const [exportPreview, setExportPreview] = useState<any>(null);
+  const [exportLoading, setExportLoading] = useState(false);
   const [chefConfirm, setChefConfirm] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [hardDeleteConfirm, setHardDeleteConfirm] = useState(false);
@@ -230,8 +232,20 @@ export default function EventDetailPage() {
             ) : null}
 
             {canEM ? (
-              <Button onClick={() => setExportConfirm(true)} disabled={!canEditEvent}>
-                <FileDown className="h-4 w-4" /> Předat skladu (PDF)
+              <Button onClick={async () => {
+                if (!id) return;
+                setExportLoading(true);
+                try {
+                  const res = await api<{ preview: any }>(`/events/${id}/export-preview`);
+                  setExportPreview(res.preview);
+                  setExportConfirm(true);
+                } catch (e: any) {
+                  toast.error(humanError(e));
+                } finally {
+                  setExportLoading(false);
+                }
+              }} disabled={!canEditEvent || exportLoading}>
+                <FileDown className="h-4 w-4" /> {exportLoading ? "Načítám..." : "Předat skladu (PDF)"}
               </Button>
             ) : null}
 
@@ -367,24 +381,54 @@ export default function EventDetailPage() {
         }}
       />
 
-      <ConfirmDialog
+      <Modal
         open={exportConfirm}
-        onOpenChange={setExportConfirm}
-        title="Předat skladu (PDF)?"
-        description="Vytvoří se export a sklad uvidí tuto verzi. Pokud později něco změníš, bude potřeba nová revize."
-        confirmText="Vytvořit export"
-        onConfirm={async () => {
+        onOpenChange={(v) => { setExportConfirm(v); if (!v) setExportPreview(null); }}
+        title="Náhled exportu"
+        description="Zkontrolujte obsah před předáním do skladu."
+        primaryText="Vytvořit export"
+        onPrimary={async () => {
           if (!id) return;
           try {
             const res = await api<{ pdfUrl: string }>(`/events/${id}/export`, { method: "POST", body: "{}" });
             toast.success("Export vytvořen");
+            setExportConfirm(false);
+            setExportPreview(null);
             window.open(withToken(`${apiBaseUrl()}${res.pdfUrl}`), "_blank");
             await load();
           } catch (e: any) {
             toast.error(humanError(e));
           }
         }}
-      />
+      >
+        {exportPreview ? (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-2">
+              <div><span className="text-slate-500">Název:</span> <strong>{exportPreview.event?.name}</strong></div>
+              <div><span className="text-slate-500">Místo:</span> {exportPreview.event?.location}</div>
+              {exportPreview.event?.address && <div><span className="text-slate-500">Adresa:</span> {exportPreview.event?.address}</div>}
+              {exportPreview.event?.eventDate && <div><span className="text-slate-500">Datum akce:</span> {new Date(exportPreview.event?.eventDate).toLocaleDateString("cs-CZ")}</div>}
+              <div><span className="text-slate-500">Doručení:</span> {new Date(exportPreview.event?.deliveryDatetime).toLocaleString("cs-CZ")}</div>
+              <div><span className="text-slate-500">Svoz:</span> {new Date(exportPreview.event?.pickupDatetime).toLocaleString("cs-CZ")}</div>
+            </div>
+            <div className="border-t pt-3">
+              <div className="mb-2 font-semibold">Položky k zabalení ({exportPreview.itemCount})</div>
+              {exportPreview.groups?.map((g: any, i: number) => (
+                <div key={i} className="mb-3">
+                  <div className="text-xs font-medium text-slate-500">{g.parentCategory} / {g.category}</div>
+                  <ul className="ml-4 list-disc">
+                    {g.items?.map((item: any, j: number) => (
+                      <li key={j}>{item.name} — <strong>{item.qty} {item.unit}</strong></li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-slate-500">Načítám náhled...</div>
+        )}
+      </Modal>
 
       <ConfirmDialog
         open={chefConfirm}
