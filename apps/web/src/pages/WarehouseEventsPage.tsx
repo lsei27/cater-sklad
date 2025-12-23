@@ -3,9 +3,11 @@ import { Link } from "react-router-dom";
 import { api, getCurrentUser } from "../lib/api";
 import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
+import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
 import { statusLabel } from "../lib/viewModel";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
+import { Icons } from "../lib/icons";
 
 type EventRow = {
   id: string;
@@ -15,6 +17,7 @@ type EventRow = {
   pickupDatetime: string;
   status: string;
   exportNeedsRevision: boolean;
+  chefConfirmedAt: string | null;
 };
 
 export default function WarehouseEventsPage() {
@@ -25,6 +28,7 @@ export default function WarehouseEventsPage() {
   const [filters, setFilters] = useState<EventFiltersData>({
     year: new Date().getFullYear(),
   });
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   const load = async () => {
     setLoading(true);
@@ -68,6 +72,30 @@ export default function WarehouseEventsPage() {
         <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
       </div>
 
+      <div className="flex items-center justify-between border-b pb-4">
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant={viewMode === "grid" ? "primary" : "secondary"}
+            onClick={() => setViewMode("grid")}
+            className="flex items-center gap-1"
+          >
+            <Icons.Grid className="h-4 w-4" /> Dlaždice
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === "list" ? "primary" : "secondary"}
+            onClick={() => setViewMode("list")}
+            className="flex items-center gap-1"
+          >
+            <Icons.List className="h-4 w-4" /> Seznam
+          </Button>
+        </div>
+        <div className="text-xs text-gray-500 font-medium">
+          {events.length} {events.length === 1 ? 'akce' : events.length < 5 && events.length > 0 ? 'akce' : 'akcí'}
+        </div>
+      </div>
+
       {error ? (
         <Card>
           <CardContent>
@@ -92,6 +120,44 @@ export default function WarehouseEventsPage() {
             </Card>
           ))}
         </div>
+      ) : viewMode === "grid" ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {events.map((e) => (
+            <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+              <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
+                <CardContent className="p-5 flex flex-col h-full">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex flex-col gap-1">
+                      <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"}>
+                        {statusLabel(e.status)}
+                      </Badge>
+                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+
+                  <div className="text-sm text-slate-500 space-y-2 mt-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-slate-400"><Icons.MapPin /></div>
+                      <span className="truncate text-slate-700">{e.location}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-slate-400"><Icons.Calendar /></div>
+                      <span className="text-xs">
+                        {new Date(e.deliveryDatetime).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
       ) : events.length === 0 ? (
         <Card>
           <CardContent>
@@ -101,23 +167,33 @@ export default function WarehouseEventsPage() {
       ) : (
         <div className="space-y-2">
           {events.map((e) => (
-            <Link key={e.id} to={`/warehouse/${e.id}`} className="block">
-              <Card className="hover:border-slate-300">
-                <CardContent>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold">{e.name}</div>
-                      <div className="mt-0.5 text-sm text-slate-600">{e.location}</div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {new Date(e.deliveryDatetime).toLocaleString()} → {new Date(e.pickupDatetime).toLocaleString()}
+            <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+              <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
+                <CardContent className="p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-1">
+                      <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
+                        {e.name}
+                      </h3>
+                      <Badge tone={e.status === "ISSUED" ? "warn" : e.status === "CLOSED" ? "neutral" : "ok"} className="scale-90">
+                        {statusLabel(e.status)}
+                      </Badge>
+                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-slate-500">
+                      <div className="flex items-center gap-1">
+                        <Icons.MapPin className="h-3 w-3" /> {e.location}
+                      </div>
+                      <div className="flex items-center gap-1 font-medium">
+                        <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
                       </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <Badge tone={e.status === "ISSUED" ? "warn" : "ok"}>{statusLabel(e.status)}</Badge>
-                      {e.exportNeedsRevision ? <div className="mt-1 text-[11px] text-amber-700">nutná revize</div> : null}
-                      <div className="mt-2 text-sm font-medium text-slate-900">Otevřít</div>
-                    </div>
                   </div>
+                  <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
                 </CardContent>
               </Card>
             </Link>

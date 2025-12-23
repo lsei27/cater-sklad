@@ -20,6 +20,7 @@ type EventRow = {
   pickupDatetime: string;
   status: string;
   exportNeedsRevision: boolean;
+  chefConfirmedAt: string | null;
 };
 
 export default function EventsPage() {
@@ -30,6 +31,7 @@ export default function EventsPage() {
   const [filters, setFilters] = useState<EventFiltersData>({
     year: new Date().getFullYear(),
   });
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const role = getCurrentUser()?.role ?? "";
 
   if (role === "warehouse") return <Navigate to="/warehouse" replace />;
@@ -95,6 +97,30 @@ export default function EventsPage() {
         </div>
       </div>
 
+      <div className="flex items-center justify-between border-b pb-4">
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant={viewMode === "grid" ? "primary" : "secondary"}
+            onClick={() => setViewMode("grid")}
+            className="flex items-center gap-1"
+          >
+            <Icons.Grid className="h-4 w-4" /> Dlaždice
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === "list" ? "primary" : "secondary"}
+            onClick={() => setViewMode("list")}
+            className="flex items-center gap-1"
+          >
+            <Icons.List className="h-4 w-4" /> Seznam
+          </Button>
+        </div>
+        <div className="text-xs text-gray-500 font-medium">
+          {filtered.length} {filtered.length === 1 ? 'akce' : filtered.length < 5 && filtered.length > 0 ? 'akce' : 'akcí'}
+        </div>
+      </div>
+
       {error ? (
         <Card className="bg-red-50 border-red-100">
           <CardContent className="text-red-700 p-4">
@@ -122,26 +148,33 @@ export default function EventsPage() {
         <div className="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">
           {search ? 'Žádná akce neodpovídá vyhledávání.' : 'Zatím žádné naplánované akce.'}
         </div>
-      ) : (
+      ) : viewMode === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((e) => (
             <Link key={e.id} to={`/events/${e.id}`} className="block group">
               <Card className="h-full hover:shadow-md transition-shadow border-gray-200 group-hover:border-indigo-300">
                 <CardContent className="p-5 flex flex-col h-full">
                   <div className="flex justify-between items-start mb-3">
-                    <Badge
-                      tone={
-                        e.status === "SENT_TO_WAREHOUSE"
-                          ? "ok"
-                          : e.status === "ISSUED"
-                            ? "warn"
-                            : e.status === "CANCELLED" || e.status === "CLOSED"
-                              ? "neutral"
-                              : "neutral"
-                      }
-                    >
-                      {statusLabel(e.status)}
-                    </Badge>
+                    <div className="flex flex-col gap-1">
+                      <Badge
+                        tone={
+                          e.status === "SENT_TO_WAREHOUSE"
+                            ? "ok"
+                            : e.status === "ISSUED"
+                              ? "warn"
+                              : e.status === "CANCELLED" || e.status === "CLOSED"
+                                ? "neutral"
+                                : "neutral"
+                        }
+                      >
+                        {statusLabel(e.status)}
+                      </Badge>
+                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                        </span>
+                      ) : null}
+                    </div>
                     {e.exportNeedsRevision ? (
                       <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
                         <Icons.Alert /> Revize
@@ -163,6 +196,57 @@ export default function EventsPage() {
                       </span>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((e) => (
+            <Link key={e.id} to={`/events/${e.id}`} className="block group">
+              <Card className="hover:shadow-sm transition-shadow border-gray-200 group-hover:border-indigo-300">
+                <CardContent className="p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-1">
+                      <h3 className="font-bold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
+                        {e.name}
+                      </h3>
+                      <Badge
+                        tone={
+                          e.status === "SENT_TO_WAREHOUSE"
+                            ? "ok"
+                            : e.status === "ISSUED"
+                              ? "warn"
+                              : e.status === "CANCELLED" || e.status === "CLOSED"
+                                ? "neutral"
+                                : "neutral"
+                        }
+                        className="scale-90"
+                      >
+                        {statusLabel(e.status)}
+                      </Badge>
+                      {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                          <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <div className="flex items-center gap-1">
+                        <Icons.MapPin className="h-3 w-3" /> {e.location}
+                      </div>
+                      <div className="flex items-center gap-1 font-medium">
+                        <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleDateString()}
+                      </div>
+                    </div>
+                  </div>
+                  {e.exportNeedsRevision ? (
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                      <Icons.Alert /> Revize
+                    </span>
+                  ) : null}
+                  <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
                 </CardContent>
               </Card>
             </Link>

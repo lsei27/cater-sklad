@@ -71,7 +71,8 @@ export async function eventRoutes(app: FastifyInstance) {
         deliveryDatetime: true,
         pickupDatetime: true,
         status: true,
-        exportNeedsRevision: true
+        exportNeedsRevision: true,
+        chefConfirmedAt: true
       }
     });
     return { events };
