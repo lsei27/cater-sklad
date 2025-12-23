@@ -7,6 +7,7 @@ import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
+import { createExportTx } from "../services/export.js";
 
 const EventCreateSchema = z.object({
   name: z.string().min(1),
@@ -268,7 +269,7 @@ export async function eventRoutes(app: FastifyInstance) {
       return httpError(reply, 401, "UNAUTHENTICATED", "Invalid token");
     }
 
-    requireRole(request.user!.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(request.user!.role, ["admin", "event_manager", "chef", "warehouse"]);
 
     const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
     const queryParams = z.object({ type: z.enum(["general", "kitchen"]).optional() }).parse(request.query);
@@ -399,35 +400,54 @@ export async function eventRoutes(app: FastifyInstance) {
     requireRole(user.role, ["admin", "chef"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
-    const event = await app.prisma.$transaction(async (tx) => {
-      const row = await tx.event.findUnique({
-        where: { id: params.id },
-        select: { id: true, status: true }
-      });
-      if (!row) throw new Error("NOT_FOUND");
-      if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
+    try {
+      const result = await app.prisma.$transaction(async (tx) => {
+        const row = await tx.event.findUnique({
+          where: { id: params.id },
+          select: { id: true, status: true }
+        });
+        if (!row) throw new Error("NOT_FOUND");
+        if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
 
-      await tx.eventReservation.updateMany({
-        where: { eventId: params.id },
-        data: { state: "confirmed", expiresAt: null }
-      });
+        await tx.eventReservation.updateMany({
+          where: { eventId: params.id },
+          data: { state: "confirmed", expiresAt: null }
+        });
 
-      const updated = await tx.event.update({
-        where: { id: params.id },
-        data: {
-          chefConfirmedAt: new Date(),
-          exportNeedsRevision: true
+        const updated = await tx.event.update({
+          where: { id: params.id },
+          data: {
+            chefConfirmedAt: new Date(),
+          }
+        });
+
+        let exportResult = null;
+        if (row.status === "SENT_TO_WAREHOUSE") {
+          // Automatic export when Chef confirms in SENT_TO_WAREHOUSE status
+          try {
+            exportResult = await createExportTx({ tx, eventId: params.id, userId: user.id });
+          } catch (e: any) {
+            // If no items to export, we just ignore it for now or log
+            if (e.message !== "NO_ITEMS_TO_EXPORT") throw e;
+          }
         }
+
+        await tx.auditLog.create({
+          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "confirm_chef" }
+        });
+        return { event: updated, exportResult };
       });
 
-      await tx.auditLog.create({
-        data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "confirm_chef" }
-      });
-      return updated;
-    });
-
-    sseBus.emit({ type: "event_status_changed", eventId: params.id, status: event.status });
-    return reply.send({ event });
+      sseBus.emit({ type: "event_status_changed", eventId: params.id, status: result.event.status });
+      if (result.exportResult) {
+        sseBus.emit({ type: "export_created", eventId: params.id, version: result.exportResult.snapshot.event.version });
+      }
+      return reply.send({ event: result.event });
+    } catch (e: any) {
+      if (e.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e.message === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze potvrdit.");
+      throw e;
+    }
   });
 
   // Export preview - returns what would be in the export WITHOUT creating a new version
@@ -483,93 +503,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
     try {
       const created = await app.prisma.$transaction(async (tx) => {
-        const [ev] = await tx.$queryRaw<
-          { id: string; name: string; location: string; address: string | null; event_date: Date | null; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
-        >`
-          SELECT id, name, location, address, event_date, delivery_datetime, pickup_datetime, status::text
-          FROM events
-          WHERE id = ${params.id}::uuid
-          FOR UPDATE
-        `;
-        if (!ev) throw new Error("NOT_FOUND");
-        if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
-
-        await tx.eventReservation.updateMany({
-          where: { eventId: params.id },
-          data: { state: "confirmed", expiresAt: null }
-        });
-
-        const [v] = await tx.$queryRaw<{ next_version: number }[]>`
-          SELECT COALESCE(MAX(version),0) + 1 AS next_version
-          FROM event_exports
-          WHERE event_id = ${params.id}::uuid
-        `;
-        const version = Number(v?.next_version ?? 1);
-
-        const reservations = await tx.eventReservation.findMany({
-          where: { eventId: params.id, state: "confirmed", reservedQuantity: { gt: 0 } },
-          include: { item: { include: { category: { include: { parent: true } } } } },
-          orderBy: { inventoryItemId: "asc" }
-        });
-        if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
-
-        const groupsMap = new Map<string, ExportSnapshot["groups"][number]>();
-        for (const r of reservations) {
-          const child = r.item.category;
-          const parentName = child.parent?.name ?? "Nezařazeno";
-          const key = `${parentName}||${child.name}`;
-          const group =
-            groupsMap.get(key) ??
-            (() => {
-              const g = { parentCategory: parentName, category: child.name, items: [] as any[] };
-              groupsMap.set(key, g);
-              return g;
-            })();
-          group.items.push({
-            inventoryItemId: r.inventoryItemId,
-            name: r.item.name,
-            unit: r.item.unit,
-            qty: r.reservedQuantity,
-            notes: r.item.notes
-          });
-        }
-
-        const exportedAt = new Date();
-        const snapshot: ExportSnapshot = {
-          event: {
-            id: ev.id,
-            name: ev.name,
-            location: ev.location,
-            address: ev.address ?? null,
-            eventDate: ev.event_date?.toISOString() ?? null,
-            deliveryDatetime: ev.delivery_datetime.toISOString(),
-            pickupDatetime: ev.pickup_datetime.toISOString(),
-            version,
-            exportedAt: exportedAt.toISOString()
-          },
-          groups: Array.from(groupsMap.values())
-        };
-
-        const exportRow = await tx.eventExport.create({
-          data: {
-            eventId: params.id,
-            version,
-            exportedAt,
-            exportedById: user.id,
-            snapshotJson: snapshot
-          }
-        });
-
-        await tx.event.update({
-          where: { id: params.id },
-          data: { status: "SENT_TO_WAREHOUSE", exportNeedsRevision: false }
-        });
-
-        await tx.auditLog.create({
-          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "export_created", diffJson: { version } }
-        });
-
-        return { exportRow, snapshot };
+        return await createExportTx({ tx, eventId: params.id, userId: user.id });
       });
 
       sseBus.emit({ type: "export_created", eventId: params.id, version: created.snapshot.event.version });

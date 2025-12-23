@@ -14,10 +14,10 @@ import { Icons } from "../lib/icons";
 
 type Snapshot = {
   event: { version: number };
-  groups: Array<{ items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
+  groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
 };
 
-type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number };
+type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string };
 
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
@@ -27,7 +27,7 @@ export default function WarehouseEventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
-  const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number }>>([]);
+  const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number; parentCategory?: string }>>([]);
 
   const load = async () => {
     if (!id) return;
@@ -52,7 +52,7 @@ export default function WarehouseEventDetailPage() {
   }, [event]);
 
   const snapshotItems = useMemo(() => {
-    const list = snapshot?.groups?.flatMap((g) => g.items) ?? [];
+    const list = snapshot?.groups?.flatMap((g) => g.items.map(i => ({ ...i, parentCategory: g.parentCategory }))) ?? [];
     return list;
   }, [snapshot]);
 
@@ -92,7 +92,8 @@ export default function WarehouseEventDetailPage() {
           unit: i.unit,
           requested: i.qty,
           returned: s?.returned ?? 0,
-          broken: s?.broken ?? 0
+          broken: s?.broken ?? 0,
+          parentCategory: (i as any).parentCategory || ""
         };
       })
     );
@@ -135,6 +136,21 @@ export default function WarehouseEventDetailPage() {
     }
     return { issuedMap, lostMap };
   }, [event?.issues]);
+
+  const groupedRows = useMemo(() => {
+    const sections: Array<{ title: string; items: typeof rows }> = [
+      { title: "Event Manager", items: [] },
+      { title: "Kuchyň", items: [] }
+    ];
+    for (const r of rows) {
+      if (r.parentCategory?.toLowerCase() === "kuchyň" || r.parentCategory?.toLowerCase() === "kuchyn") {
+        sections[1].items.push(r);
+      } else {
+        sections[0].items.push(r);
+      }
+    }
+    return sections;
+  }, [rows]);
 
   const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
@@ -321,77 +337,88 @@ export default function WarehouseEventDetailPage() {
           <div className="mt-1 text-sm text-slate-600">Požadované množství je z posledního exportu.</div>
         </CardHeader>
         <CardContent>
-          {rows.length === 0 ? (
+          {groupedRows.every(s => s.items.length === 0) ? (
             <div className="text-sm text-slate-600">Pro tuto akci nejsou žádné položky.</div>
           ) : (
-            <div className="space-y-3">
-              {rows.map((r, idx) => {
-                const missing = Math.max(0, r.requested - r.returned - r.broken);
-                return (
-                  <div key={r.inventory_item_id} className="rounded-2xl border border-slate-200 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold">{r.name}</div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
-                        </div>
-                      </div>
-                      <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
-                    </div>
-
-                    {event.status === "CLOSED" || event.status === "ISSUED" ? (
-                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
-                        {issueData.issuedMap.has(r.inventory_item_id) ? (
-                          <div className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                            Vydáno: {issueData.issuedMap.get(r.inventory_item_id)} {r.unit}
-                          </div>
-                        ) : null}
-                        {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
-                          <div className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
-                            Ztráty: {issueData.lostMap.get(r.inventory_item_id)} {r.unit}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {event.status !== "CLOSED" ? (
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <label className="text-xs">
-                          Vráceno
-                          <Input
-                            className="mt-1"
-                            type="number"
-                            min={0}
-                            value={r.returned}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(e) => {
-                              const v = Math.max(0, Number(e.target.value));
-                              setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, returned: v } : x)));
-                            }}
-                          />
-                        </label>
-                        <label className="text-xs">
-                          Rozbito
-                          <Input
-                            className="mt-1"
-                            type="number"
-                            min={0}
-                            value={r.broken}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(e) => {
-                              const v = Math.max(0, Number(e.target.value));
-                              setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, broken: v } : x)));
-                            }}
-                          />
-                        </label>
-                      </div>
-                    ) : null}
+            <div className="space-y-8">
+              {groupedRows.filter(s => s.items.length > 0).map((section) => (
+                <div key={section.title}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-slate-200" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">{section.title}</h3>
+                    <div className="h-px flex-1 bg-slate-200" />
                   </div>
-                );
-              })}
+                  <div className="space-y-3">
+                    {section.items.map((r) => {
+                      const missing = Math.max(0, r.requested - r.returned - r.broken);
+                      return (
+                        <div key={r.inventory_item_id} className="rounded-2xl border border-slate-200 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold">{r.name}</div>
+                              <div className="mt-1 text-xs text-slate-600">
+                                Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600">
+                                Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
+                              </div>
+                            </div>
+                            <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
+                          </div>
+
+                          {event.status === "CLOSED" || event.status === "ISSUED" ? (
+                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
+                              {issueData.issuedMap.has(r.inventory_item_id) ? (
+                                <div className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                  Vydáno: {issueData.issuedMap.get(r.inventory_item_id)} {r.unit}
+                                </div>
+                              ) : null}
+                              {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
+                                <div className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                                  Ztráty: {issueData.lostMap.get(r.inventory_item_id)} {r.unit}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {event.status !== "CLOSED" ? (
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <label className="text-xs">
+                                Vráceno
+                                <Input
+                                  className="mt-1"
+                                  type="number"
+                                  min={0}
+                                  value={r.returned}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const v = Math.max(0, Number(e.target.value));
+                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, returned: v } : x)));
+                                  }}
+                                />
+                              </label>
+                              <label className="text-xs">
+                                Rozbito
+                                <Input
+                                  className="mt-1"
+                                  type="number"
+                                  min={0}
+                                  value={r.broken}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const v = Math.max(0, Number(e.target.value));
+                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, broken: v } : x)));
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

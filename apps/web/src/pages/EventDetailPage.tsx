@@ -137,6 +137,11 @@ export default function EventDetailPage() {
   const withToken = (url: string) => (token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url);
 
   const grouped = useMemo(() => {
+    const sections: Array<{ title: string; groups: any[] }> = [
+      { title: "Event Manager", groups: [] },
+      { title: "Kuchyň", groups: [] },
+    ];
+
     const groups = new Map<string, { parent: string; sub: string; rows: any[] }>();
     for (const r of reservationItems) {
       const parent = r.item?.category?.parent?.name ?? "Ostatní";
@@ -146,12 +151,22 @@ export default function EventDetailPage() {
       g.rows.push(r);
       groups.set(key, g);
     }
-    return Array.from(groups.values()).sort((a, b) => {
+
+    const sortedGroups = Array.from(groups.values()).sort((a, b) => {
       const ap = String(a.parent).toLowerCase() === "kuchyň" ? 0 : 1;
       const bp = String(b.parent).toLowerCase() === "kuchyň" ? 0 : 1;
       if (ap !== bp) return ap - bp;
       return (a.parent + a.sub).localeCompare(b.parent + b.sub, "cs");
     });
+
+    for (const g of sortedGroups) {
+      if (String(g.parent).toLowerCase() === "kuchyň") {
+        sections[1].groups.push(g);
+      } else {
+        sections[0].groups.push(g);
+      }
+    }
+    return sections;
   }, [reservationItems]);
 
   const issueData = useMemo(() => {
@@ -382,87 +397,98 @@ export default function EventDetailPage() {
           <div className="mt-1 text-sm text-slate-600">Seskupeno podle typu a kategorie.</div>
         </CardHeader>
         <CardContent>
-          {grouped.length === 0 ? (
+          {grouped.every(s => s.groups.length === 0) ? (
             <div className="text-sm text-slate-600">Zatím bez položek. Přidej je pro tento termín.</div>
           ) : (
-            <div className="space-y-4">
-              {grouped.map((g) => (
-                <div key={`${g.parent}/${g.sub}`}>
-                  <div className="flex items-center gap-2">
-                    <Badge>{g.parent}</Badge>
-                    <Badge tone="neutral">{g.sub}</Badge>
+            <div className="space-y-8">
+              {grouped.filter(s => s.groups.length > 0).map((section) => (
+                <div key={section.title}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-slate-200" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">{section.title}</h3>
+                    <div className="h-px flex-1 bg-slate-200" />
                   </div>
-                  <div className="mt-2 space-y-2">
-                    {g.rows.map((r: any) => {
-                      const stock = stockByItemId.get(r.inventoryItemId);
-                      const tone = stock ? stockTone(stock.available) : "neutral";
-                      const canDelete =
-                        canEditEvent &&
-                        (role === "admin" ||
-                          (role === "event_manager" && r.createdById === getCurrentUser()?.id) ||
-                          (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
-
-                      return (
-                        <div key={r.inventoryItemId} className="rounded-2xl border border-slate-200 p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold">{r.item?.name}</div>
-                              <div className="mt-1 text-xs text-slate-600">
-                                Požadováno: <span className="font-semibold text-slate-900">{r.reservedQuantity}</span> {r.item?.unit}
-                              </div>
-
-                              {event.status === "CLOSED" || event.status === "ISSUED" ? (
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                  {issueData.issuedMap.has(r.inventoryItemId) ? (
-                                    <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                                      Vydáno: {issueData.issuedMap.get(r.inventoryItemId)} {r.item?.unit}
-                                    </div>
-                                  ) : null}
-                                  {(issueData.lostMap.get(r.inventoryItemId) || 0) > 0 ? (
-                                    <div className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
-                                      Ztráty: {issueData.lostMap.get(r.inventoryItemId)} {r.item?.unit}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
-
-                              {stock && canEditEvent ? (
-                                <div className="mt-2">
-                                  <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
-                                    Volné: {stock.available} {r.item?.unit}
-                                  </div>
-                                  <div className="mt-1 text-xs text-slate-600">
-                                    Celkem: {stock.physicalTotal} · Rezervováno: {stock.blockedTotal}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="mt-2 text-xs text-slate-500">Načítám dostupnost…</div>
-                              )}
-                            </div>
-                            <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
-                            {canDelete ? (
-                              <button
-                                className="ml-2 p-1 text-slate-400 hover:text-red-600"
-                                title="Odebrat"
-                                onClick={async () => {
-                                  if (!confirm("Odebrat položku?")) return;
-                                  try {
-                                    await api(`/events/${id}/reserve`, {
-                                      method: "POST",
-                                      body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
-                                    });
-                                    toast.success("Odebráno");
-                                    load();
-                                  } catch (e: any) { toast.error(humanError(e)); }
-                                }}
-                              >
-                                <Icons.Trash className="h-4 w-4" />
-                              </button>
-                            ) : null}
-                          </div>
+                  <div className="space-y-4">
+                    {section.groups.map((g) => (
+                      <div key={`${g.parent}/${g.sub}`}>
+                        <div className="flex items-center gap-2">
+                          <Badge>{g.parent}</Badge>
+                          <Badge tone="neutral">{g.sub}</Badge>
                         </div>
-                      );
-                    })}
+                        <div className="mt-2 space-y-2">
+                          {g.rows.map((r: any) => {
+                            const stock = stockByItemId.get(r.inventoryItemId);
+                            const tone = stock ? stockTone(stock.available) : "neutral";
+                            const canDelete =
+                              canEditEvent &&
+                              (role === "admin" ||
+                                (role === "event_manager" && r.createdById === getCurrentUser()?.id) ||
+                                (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
+
+                            return (
+                              <div key={r.inventoryItemId} className="rounded-2xl border border-slate-200 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold">{r.item?.name}</div>
+                                    <div className="mt-1 text-xs text-slate-600">
+                                      Požadováno: <span className="font-semibold text-slate-900">{r.reservedQuantity}</span> {r.item?.unit}
+                                    </div>
+
+                                    {event.status === "CLOSED" || event.status === "ISSUED" ? (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {issueData.issuedMap.has(r.inventoryItemId) ? (
+                                          <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                            Vydáno: {issueData.issuedMap.get(r.inventoryItemId)} {r.item?.unit}
+                                          </div>
+                                        ) : null}
+                                        {(issueData.lostMap.get(r.inventoryItemId) || 0) > 0 ? (
+                                          <div className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                                            Ztráty: {issueData.lostMap.get(r.inventoryItemId)} {r.item?.unit}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+
+                                    {stock && canEditEvent ? (
+                                      <div className="mt-2">
+                                        <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
+                                          Volné: {stock.available} {r.item?.unit}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Celkem: {stock.physicalTotal} · Rezervováno: {stock.blockedTotal}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 text-xs text-slate-500">Načítám dostupnost…</div>
+                                    )}
+                                  </div>
+                                  <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
+                                  {canDelete ? (
+                                    <button
+                                      className="ml-2 p-1 text-slate-400 hover:text-red-600"
+                                      title="Odebrat"
+                                      onClick={async () => {
+                                        if (!confirm("Odebrat položku?")) return;
+                                        try {
+                                          await api(`/events/${id}/reserve`, {
+                                            method: "POST",
+                                            body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
+                                          });
+                                          toast.success("Odebráno");
+                                          load();
+                                        } catch (e: any) { toast.error(humanError(e)); }
+                                      }}
+                                    >
+                                      <Icons.Trash className="h-4 w-4" />
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -593,7 +619,7 @@ export default function EventDetailPage() {
           }
         }}
       />
-    </div>
+    </div >
   );
 }
 
