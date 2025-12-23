@@ -74,16 +74,13 @@ export async function reserveItemsTx(params: {
   for (const { inventoryItemId, qty } of items) {
     const existing = existingMap.get(inventoryItemId);
 
-    // Ownership check for modifications
-    if (existing) {
-      if (actor.role === "chef" && existing.createdById && existing.createdById !== actor.id) {
-        throw new Error("CANNOT_MODIFY_OTHERS_ITEMS");
-      }
-      // Assuming Event Manager can modify anything? 
-      // Requirement: "Event manager může mít možnost odebrat ze své akce, co přidal". 
-      // Implicitly allows modifying own. DOES NOT explicitly forbid modifying others for EM. 
-      // Usually EM is higher rank. I'll leave it unrestricted for EM.
-    }
+    // Ownership check for modifications:
+    // - Admin can modify anything
+    // - Chef: if they passed the category access check (line 32-61), they can modify the item
+    //   (because Kuchyň items are "their domain")
+    // - Event Manager: no restriction (higher role)
+    // So we only need to restrict if actor.role is something else in the future.
+    // For now, no ownership restriction is needed beyond category access.
 
     const a = await getAvailabilityForEventItemTx(tx, eventId, inventoryItemId);
     // If updating, add back the *current* reserved qty to available calculation?
