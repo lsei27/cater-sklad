@@ -65,12 +65,55 @@ async function main() {
       const duplicates = existing.slice(1);
       console.log(`Merging ${duplicates.length} duplicate(s) for category "${name}"`);
       for (const dup of duplicates) {
-        // Move children
-        await prisma.category.updateMany({
-          where: { parentId: dup.id },
-          data: { parentId: primary.id }
+        // 1. Move/Merge children
+        const children = await prisma.category.findMany({ where: { parentId: dup.id } });
+        for (const child of children) {
+          const target = await prisma.category.findFirst({ where: { parentId: primary.id, name: child.name } });
+          if (target) {
+            // Merge child into target subcategory
+            await prisma.inventoryItem.updateMany({
+              where: { categoryId: child.id },
+              data: { categoryId: target.id }
+            });
+            // Recursively move any sub-sub-children if they exist (though not in current schema usage)
+            await prisma.category.updateMany({
+              where: { parentId: child.id },
+              data: { parentId: target.id }
+            }).catch(() => { }); // handle unique constraints if needed, but we don't expect deep nesting here
+
+            await prisma.category.delete({ where: { id: child.id } });
+          } else {
+            // Move child to primary
+            await prisma.category.update({
+              where: { id: child.id },
+              data: { parentId: primary.id }
+            });
+          }
+        }
+
+        // 2. Move items directly under the duplicate parent
+        await prisma.inventoryItem.updateMany({
+          where: { categoryId: dup.id },
+          data: { categoryId: primary.id }
         });
-        // Delete duplicate
+
+        // 3. Move role access
+        const accesses = await prisma.roleCategoryAccess.findMany({ where: { categoryId: dup.id } });
+        for (const acc of accesses) {
+          const existingAcc = await prisma.roleCategoryAccess.findFirst({
+            where: { role: acc.role, categoryId: primary.id }
+          });
+          if (!existingAcc) {
+            await prisma.roleCategoryAccess.update({
+              where: { id: acc.id },
+              data: { categoryId: primary.id }
+            });
+          } else {
+            await prisma.roleCategoryAccess.delete({ where: { id: acc.id } });
+          }
+        }
+
+        // 4. Delete duplicate
         await prisma.category.delete({ where: { id: dup.id } });
       }
       parentRows.set(name, primary.id);
