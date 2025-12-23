@@ -44,6 +44,16 @@ async function main() {
     create: { email: "warehouse@local", passwordHash: whPassword, role: Role.warehouse }
   });
 
+  // Rename legacy "Technika" to "Kuchyň" if it exists so we don't creating duplicates and items stay valid
+  const legacyTech = await prisma.category.findFirst({ where: { parentId: null, name: "Technika" } });
+  if (legacyTech) {
+    await prisma.category.update({
+      where: { id: legacyTech.id },
+      data: { name: "Kuchyň" }
+    });
+    console.log("Renamed Technika to Kuchyň");
+  }
+
   const parents = ["Inventář", "Mobiliář", "Kuchyň", "Zboží"];
   const parentRows = new Map<string, string>();
   for (const name of parents) {
@@ -119,10 +129,10 @@ async function main() {
 
   // Event Manager -> All (or explicit list, let's give them everything for now to match legacy behavior)
   for (const [name, id] of parentRows.entries()) {
-      const existing = await prisma.roleCategoryAccess.findFirst({ where: { role: Role.event_manager, categoryId: id } });
-      if (!existing) {
-          await prisma.roleCategoryAccess.create({ data: { role: Role.event_manager, categoryId: id } });
-      }
+    const existing = await prisma.roleCategoryAccess.findFirst({ where: { role: Role.event_manager, categoryId: id } });
+    if (!existing) {
+      await prisma.roleCategoryAccess.create({ data: { role: Role.event_manager, categoryId: id } });
+    }
   }
 }
 
