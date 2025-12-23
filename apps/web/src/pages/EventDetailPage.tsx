@@ -103,6 +103,7 @@ export default function EventDetailPage() {
       inventoryItemId: r.inventoryItemId as string,
       reservedQuantity: Number(r.reservedQuantity),
       state: String(r.state),
+      createdById: r.createdById as string,
       item: r.item
     }));
     return list;
@@ -289,6 +290,12 @@ export default function EventDetailPage() {
                     {g.rows.map((r: any) => {
                       const stock = stockByItemId.get(r.inventoryItemId);
                       const tone = stock ? stockTone(stock.available) : "neutral";
+                      const canDelete =
+                        canEditEvent &&
+                        (role === "admin" ||
+                          (role === "event_manager" && r.createdById === getCurrentUser()?.id) ||
+                          (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
+
                       return (
                         <div key={r.inventoryItemId} className="rounded-2xl border border-slate-200 p-3">
                           <div className="flex items-start justify-between gap-3">
@@ -311,7 +318,7 @@ export default function EventDetailPage() {
                               )}
                             </div>
                             <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
-                            {canEditEvent && (role === "admin" || r.item.reservation?.createdById === getCurrentUser()?.id || (role === "chef" && canChef)) ? (
+                            {canDelete ? (
                               <button
                                 className="ml-2 p-1 text-slate-400 hover:text-red-600"
                                 title="Odebrat"
