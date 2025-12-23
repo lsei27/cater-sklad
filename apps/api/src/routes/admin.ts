@@ -89,7 +89,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         email: EmailSchema,
-        name: z.string().trim().min(1).optional(),
+        name: z.string().trim().min(1),
         password: z.string().min(6),
         role: z.enum(["admin", "event_manager", "chef", "warehouse"])
       })
@@ -99,7 +99,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const user = await app.prisma.user.create({
       data: {
         email: body.email,
-        name: body.name ?? null,
+        name: body.name,
         passwordHash: hash,
         role: body.role as any
       }

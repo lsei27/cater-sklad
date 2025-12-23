@@ -88,7 +88,7 @@ export default function AdminUsersPage() {
           >
             <label className="text-sm">
               Jméno
-              <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="např. Jan Novák" />
+              <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="např. Jan Novák" required />
             </label>
             <label className="text-sm">
               Email
@@ -110,7 +110,7 @@ export default function AdminUsersPage() {
             </label>
 
             <div className="md:col-span-4">
-              <Button full disabled={!email.trim() || password.length < 6}>
+              <Button full disabled={!name.trim() || !email.trim() || password.length < 6}>
                 Vytvořit
               </Button>
             </div>

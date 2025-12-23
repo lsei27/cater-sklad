@@ -21,7 +21,7 @@ async function main() {
   const admin = await prisma.user.upsert({
     where: { email: "admin@local" },
     update: {},
-    create: { email: "admin@local", passwordHash: password, role: Role.admin }
+    create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
   });
 
   const emPassword = await bcrypt.hash("em123", 10);
@@ -31,17 +31,17 @@ async function main() {
   await prisma.user.upsert({
     where: { email: "em@local" },
     update: {},
-    create: { email: "em@local", passwordHash: emPassword, role: Role.event_manager }
+    create: { email: "em@local", name: "Event manager", passwordHash: emPassword, role: Role.event_manager }
   });
   await prisma.user.upsert({
     where: { email: "chef@local" },
     update: {},
-    create: { email: "chef@local", passwordHash: chefPassword, role: Role.chef }
+    create: { email: "chef@local", name: "Kuchař", passwordHash: chefPassword, role: Role.chef }
   });
   await prisma.user.upsert({
     where: { email: "warehouse@local" },
     update: {},
-    create: { email: "warehouse@local", passwordHash: whPassword, role: Role.warehouse }
+    create: { email: "warehouse@local", name: "Sklad", passwordHash: whPassword, role: Role.warehouse }
   });
 
   // Rename legacy "Technika" to "Kuchyň" if it exists so we don't creating duplicates and items stay valid

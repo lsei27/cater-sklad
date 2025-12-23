@@ -173,7 +173,7 @@ export async function buildClosureReportPdf(event: any) {
   // Title: Final Report
   page.drawText(pdfText(`Zaverecny report: ${event.name}`), { x: 50, y: height - 50, size: 20, font: bold });
 
-  const managerLabel = event.createdBy?.name?.trim() || event.createdBy?.id || event.createdBy?.email?.trim();
+  const managerLabel = event.createdBy?.name?.trim() || event.createdBy?.email?.trim();
   if (managerLabel) {
     page.drawText(pdfText(`Event Manager: ${managerLabel}`), { x: 400, y: height - 50, size: 10, font });
   }

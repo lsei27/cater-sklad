@@ -45,7 +45,6 @@ export function humanError(err: any) {
 export function managerLabel(user?: { name?: string | null; email?: string | null; id?: string | null }) {
   if (!user) return "";
   const name = user.name?.trim();
-  const id = user.id?.trim();
   const email = user.email?.trim();
-  return name || id || email || "";
+  return name || email || "";
 }

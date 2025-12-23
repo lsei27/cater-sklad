@@ -298,7 +298,6 @@ export async function eventRoutes(app: FastifyInstance) {
       });
       const managerLabel =
         eventManager?.createdBy?.name?.trim() ||
-        eventManager?.createdBy?.id ||
         eventManager?.createdBy?.email?.trim();
       if (managerLabel) {
         snapshot.event.managerName = managerLabel;

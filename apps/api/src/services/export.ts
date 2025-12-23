@@ -74,7 +74,7 @@ export async function createExportTx(params: {
     }
 
     const exportedAt = new Date();
-    const managerName = (ev.manager_name ?? "").trim() || ev.manager_id || ev.manager_email;
+    const managerName = (ev.manager_name ?? "").trim() || ev.manager_email;
     const snapshot: ExportSnapshot = {
         event: {
             id: ev.id,
