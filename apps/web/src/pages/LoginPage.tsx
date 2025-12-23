@@ -63,7 +63,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
         <div className="text-center mb-10">
-          <div className="mx-auto w-14 h-14 bg-red-50 rounded-2xl flex items-center justify-center text-white mb-5 shadow-lg shadow-red-200 border border-red-100">
+          <div className="mx-auto w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center text-white mb-5 shadow-lg shadow-indigo-200">
             <img
               src="https://cdn.prod.website-files.com/683548bebd66499a4ba7c0e5/6847d84467a509304f4b94a7_Favicon.png"
               alt="IN CATERING sklad"
@@ -81,18 +81,18 @@ export default function LoginPage() {
                 key={u.email}
                 onClick={() => handleLogin(undefined, { email: u.email, pass: u.pass })}
                 disabled={isLoading}
-                className="w-full flex items-center p-4 border border-gray-200 rounded-xl hover:border-red-300 hover:bg-red-50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed text-left bg-white shadow-sm"
+                className="w-full flex items-center p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed text-left bg-white shadow-sm"
               >
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm mr-4 ${u.color}`}>
                   {u.name.charAt(0)}
                 </div>
                 <div className="flex-1">
-                  <div className="font-semibold text-gray-900 group-hover:text-[#e53137]">{u.name}</div>
+                  <div className="font-semibold text-gray-900 group-hover:text-indigo-700">{u.name}</div>
                   <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">
                     {u.role}
                   </div>
                 </div>
-                <div className="text-gray-300 group-hover:text-[#e53137] transition-colors">
+                <div className="text-gray-300 group-hover:text-indigo-500 transition-colors">
                   {isLoading ? '...' : '→'}
                 </div>
               </button>
@@ -101,7 +101,7 @@ export default function LoginPage() {
             <div className="pt-6 mt-6 border-t border-gray-100 text-center">
               <button
                 onClick={() => setShowManual(true)}
-                className="text-xs font-medium text-gray-400 hover:text-[#e53137] transition-colors flex items-center justify-center gap-1 mx-auto"
+                className="text-xs font-medium text-gray-400 hover:text-indigo-600 transition-colors flex items-center justify-center gap-1 mx-auto"
               >
                 <Icons.User /> Jiný uživatel
               </button>

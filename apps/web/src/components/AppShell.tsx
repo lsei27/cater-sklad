@@ -35,7 +35,7 @@ export default function AppShell() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-red-50 p-2 rounded-lg border border-red-100">
+            <div className="bg-indigo-600 p-2 rounded-lg">
               <img
                 src="https://cdn.prod.website-files.com/683548bebd66499a4ba7c0e5/6847d84467a509304f4b94a7_Favicon.png"
                 alt="IN CATERING sklad"
@@ -61,7 +61,7 @@ export default function AppShell() {
                 className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                   loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")
-                    ? "bg-red-50 text-[#e53137]"
+                    ? "bg-indigo-50 text-indigo-700"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
@@ -73,7 +73,7 @@ export default function AppShell() {
                 className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                   loc.pathname.startsWith("/inventory")
-                    ? "bg-red-50 text-[#e53137]"
+                    ? "bg-indigo-50 text-indigo-700"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
@@ -86,7 +86,7 @@ export default function AppShell() {
                   className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                   loc.pathname.startsWith("/settings")
-                    ? "bg-red-50 text-[#e53137]"
+                    ? "bg-indigo-50 text-indigo-700"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
@@ -101,7 +101,7 @@ export default function AppShell() {
           <div className="flex items-center gap-4">
             {user && (
               <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-100">
-                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-[#e53137] font-bold">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
                   {user.email.substring(0, 2).toUpperCase()}
                 </div>
                 <div className="hidden md:block">
@@ -134,7 +134,7 @@ export default function AppShell() {
             onClick={() => nav(eventsHref)}
             className={cn(
               "flex flex-col items-center justify-center w-full h-full space-y-1",
-              (loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")) ? "text-[#e53137]" : "text-gray-500"
+              (loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")) ? "text-indigo-600" : "text-gray-500"
             )}
           >
             <Icons.Calendar />
@@ -144,7 +144,7 @@ export default function AppShell() {
             onClick={() => nav(stockHref)}
             className={cn(
               "flex flex-col items-center justify-center w-full h-full space-y-1",
-              loc.pathname.startsWith("/inventory") ? "text-[#e53137]" : "text-gray-500"
+              loc.pathname.startsWith("/inventory") ? "text-indigo-600" : "text-gray-500"
             )}
           >
             <Icons.Box />
@@ -155,7 +155,7 @@ export default function AppShell() {
               onClick={() => nav("/settings")}
               className={cn(
                 "flex flex-col items-center justify-center w-full h-full space-y-1",
-                loc.pathname.startsWith("/settings") ? "text-[#e53137]" : "text-gray-500"
+                loc.pathname.startsWith("/settings") ? "text-indigo-600" : "text-gray-500"
               )}
             >
               <span className="text-lg">⚙</span>
