@@ -11,6 +11,7 @@ export type ExportSnapshot = {
     pickupDatetime: string;
     version: number;
     exportedAt: string;
+    managerName: string;
   };
   groups: Array<{
     parentCategory: string;
@@ -64,6 +65,10 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
   const mainTitle = snapshot.event.name;
   const fullTitle = subtitle ? `${mainTitle} - ${subtitle}` : mainTitle;
   page.drawText(pdfText(fullTitle), { x: 50, y: height - 50, size: 20, font: bold });
+
+  if (snapshot.event.managerName) {
+    page.drawText(pdfText(`Event Manager: ${snapshot.event.managerName}`), { x: 400, y: height - 50, size: 10, font });
+  }
 
   // Event Date (if available)
   let yPos = height - 80;
@@ -167,6 +172,10 @@ export async function buildClosureReportPdf(event: any) {
 
   // Title: Final Report
   page.drawText(pdfText(`Zaverecny report: ${event.name}`), { x: 50, y: height - 50, size: 20, font: bold });
+
+  if (event.createdBy?.name) {
+    page.drawText(pdfText(`Event Manager: ${event.createdBy.name}`), { x: 400, y: height - 50, size: 10, font });
+  }
 
   let yPos = height - 80;
   // Date and Location

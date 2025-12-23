@@ -4,6 +4,7 @@ export type EventFiltersData = {
     status?: string;
     month?: number;
     year?: number;
+    onlyMine?: boolean;
 };
 
 type Props = {
@@ -80,6 +81,18 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
                     ))}
                 </Select>
             </div>
+
+            {["admin", "event_manager"].includes(activeRole) && (
+                <label className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                    <input
+                        type="checkbox"
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        checked={filters.onlyMine || false}
+                        onChange={(e) => onChange({ ...filters, onlyMine: e.target.checked })}
+                    />
+                    <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Moje akce</span>
+                </label>
+            )}
         </div>
     );
 }

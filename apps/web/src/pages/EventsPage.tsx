@@ -21,6 +21,7 @@ type EventRow = {
   status: string;
   exportNeedsRevision: boolean;
   chefConfirmedAt: string | null;
+  createdBy?: { name: string };
 };
 
 export default function EventsPage() {
@@ -43,6 +44,10 @@ export default function EventsPage() {
       if (filters.status) params.append("status", filters.status);
       if (filters.month) params.append("month", String(filters.month));
       if (filters.year) params.append("year", String(filters.year));
+      if (filters.onlyMine) {
+        const user = getCurrentUser();
+        if (user?.id) params.append("created_by_id", user.id);
+      }
 
       const res = await api<{ events: EventRow[] }>(`/events?${params.toString()}`);
       setEvents(res.events);
@@ -183,6 +188,11 @@ export default function EventsPage() {
                   </div>
 
                   <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+                  {e.createdBy?.name && (
+                    <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
+                      Manažer: {e.createdBy.name}
+                    </div>
+                  )}
 
                   <div className="text-sm text-gray-500 space-y-2 mt-2">
                     <div className="flex items-center gap-2">
@@ -240,6 +250,11 @@ export default function EventsPage() {
                         <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleDateString()}
                       </div>
                     </div>
+                    {e.createdBy?.name ? (
+                      <div className="mt-1 text-xs text-slate-500">
+                        Manažer: <span className="font-medium text-slate-700">{e.createdBy.name}</span>
+                      </div>
+                    ) : null}
                   </div>
                   {e.exportNeedsRevision ? (
                     <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">

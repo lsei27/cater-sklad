@@ -218,6 +218,11 @@ export default function WarehouseEventDetailPage() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold">{event.name}</div>
+              {event.createdBy?.name && (
+                <div className="text-sm font-medium text-slate-900 mt-1">
+                  Manažer: {event.createdBy.name}
+                </div>
+              )}
               <div className="text-sm text-slate-600">{event.location}</div>
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}

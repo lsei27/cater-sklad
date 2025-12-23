@@ -9,11 +9,12 @@ export async function createExportTx(params: {
     const { tx, eventId, userId } = params;
 
     const [ev] = await tx.$queryRaw<
-        { id: string; name: string; location: string; address: string | null; event_date: Date | null; delivery_datetime: Date; pickup_datetime: Date; status: string }[]
+        { id: string; name: string; location: string; address: string | null; event_date: Date | null; delivery_datetime: Date; pickup_datetime: Date; status: string; manager_name: string }[]
     >`
-    SELECT id, name, location, address, event_date, delivery_datetime, pickup_datetime, status::text
-    FROM events
-    WHERE id = ${eventId}::uuid
+    SELECT e.id, e.name, e.location, e.address, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text, u.name as manager_name
+    FROM events e
+    JOIN users u ON u.id = e.created_by_id
+    WHERE e.id = ${eventId}::uuid
     FOR UPDATE
   `;
     if (!ev) throw new Error("NOT_FOUND");
@@ -70,7 +71,8 @@ export async function createExportTx(params: {
             deliveryDatetime: ev.delivery_datetime.toISOString(),
             pickupDatetime: ev.pickup_datetime.toISOString(),
             version,
-            exportedAt: exportedAt.toISOString()
+            exportedAt: exportedAt.toISOString(),
+            managerName: ev.manager_name
         },
         groups: Array.from(groupsMap.values())
     };

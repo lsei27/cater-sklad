@@ -38,6 +38,10 @@ export default function WarehouseEventsPage() {
       if (filters.status) params.append("status", filters.status);
       if (filters.month) params.append("month", String(filters.month));
       if (filters.year) params.append("year", String(filters.year));
+      if (filters.onlyMine) {
+        const user = getCurrentUser();
+        if (user?.id) params.append("created_by_id", user.id);
+      }
 
       const res = await api<{ events: EventRow[] }>(`/events?${params.toString()}`);
       setEvents(res.events);
@@ -203,4 +207,3 @@ export default function WarehouseEventsPage() {
     </div>
   );
 }
-

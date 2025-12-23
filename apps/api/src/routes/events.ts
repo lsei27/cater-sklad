@@ -34,6 +34,7 @@ export async function eventRoutes(app: FastifyInstance) {
       status: z.nativeEnum(EventStatus).optional(),
       month: z.string().regex(/^\d+$/).transform(Number).optional(),
       year: z.string().regex(/^\d+$/).transform(Number).optional(),
+      created_by_id: z.string().uuid().optional(),
     }).parse(request.query);
 
     const where: any = {};
@@ -44,6 +45,10 @@ export async function eventRoutes(app: FastifyInstance) {
 
     if (query.status) {
       where.status = query.status;
+    }
+
+    if (query.created_by_id) {
+      where.createdById = query.created_by_id;
     }
 
     if (query.month !== undefined && query.year !== undefined) {
@@ -62,7 +67,7 @@ export async function eventRoutes(app: FastifyInstance) {
       };
     }
 
-    const events = await app.prisma.event.findMany({
+    const events = await (app.prisma.event as any).findMany({
       where,
       orderBy: { deliveryDatetime: "asc" },
       select: {
@@ -73,10 +78,11 @@ export async function eventRoutes(app: FastifyInstance) {
         pickupDatetime: true,
         status: true,
         exportNeedsRevision: true,
-        chefConfirmedAt: true
+        chefConfirmedAt: true,
+        createdBy: { select: { name: true } }
       }
     });
-    return { events };
+    return { events: (events as any[]) };
   });
 
   app.post("/events", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -186,11 +192,12 @@ export async function eventRoutes(app: FastifyInstance) {
         },
         exports: { orderBy: { version: "desc" }, take: 1 },
         returns: { include: { item: true } },
-        issues: { include: { item: true } }
+        issues: { include: { item: true } },
+        createdBy: { select: { name: true } }
       }
-    });
+    }) as any;
     if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
-    const exports = (event.exports ?? []).map((e) => ({
+    const exports = (event.exports ?? []).map((e: any) => ({
       ...e,
       pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
     }));
@@ -780,6 +787,7 @@ export async function eventRoutes(app: FastifyInstance) {
     const event = await app.prisma.event.findUnique({
       where: { id: params.id },
       include: {
+        createdBy: { select: { name: true } },
         issues: { include: { item: true } },
         returns: { include: { item: true } },
         reservations: { include: { item: true } }
