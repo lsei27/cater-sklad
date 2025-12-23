@@ -195,7 +195,7 @@ export async function eventRoutes(app: FastifyInstance) {
       pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
     }));
 
-    let warehouseItems: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> = [];
+    let warehouseItems: Array<{ inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string }> = [];
     const snapshot = (exports?.[0] as any)?.snapshotJson as ExportSnapshot | undefined;
     if (snapshot?.groups?.length) {
       warehouseItems = snapshot.groups.flatMap((g) =>
@@ -203,29 +203,34 @@ export async function eventRoutes(app: FastifyInstance) {
           inventoryItemId: it.inventoryItemId,
           name: it.name,
           unit: it.unit,
-          qty: it.qty
+          qty: it.qty,
+          parentCategory: g.parentCategory
         }))
       );
     }
     if (warehouseItems.length === 0 && event.status === "ISSUED") {
       const issued = await app.prisma.$queryRaw<
-        Array<{ inventory_item_id: string; issued: number; name: string; unit: string }>
+        Array<{ inventory_item_id: string; issued: number; name: string; unit: string; parent_category: string }>
       >`
         SELECT
           i.inventory_item_id::text AS inventory_item_id,
           COALESCE(SUM(i.issued_quantity),0)::int AS issued,
           it.name AS name,
-          it.unit AS unit
+          it.unit AS unit,
+          COALESCE(cp.name, 'Nezařazeno') AS parent_category
         FROM event_issues i
         JOIN inventory_items it ON it.id = i.inventory_item_id
-        WHERE i.event_id = ${event.id}::uuid
-        GROUP BY i.inventory_item_id, it.name, it.unit
+        LEFT JOIN inventory_categories c ON c.id = it.category_id
+        LEFT JOIN inventory_categories cp ON cp.id = c.parent_id
+        WHERE i.event_id = ${event.id}::uuid AND i.type = 'issued'
+        GROUP BY i.inventory_item_id, it.name, it.unit, cp.name
       `;
       warehouseItems = issued.map((r) => ({
         inventoryItemId: r.inventory_item_id,
         name: r.name,
         unit: r.unit,
-        qty: Number(r.issued)
+        qty: Number(r.issued),
+        parentCategory: r.parent_category
       }));
     }
 

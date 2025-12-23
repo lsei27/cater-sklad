@@ -462,26 +462,28 @@ export default function EventDetailPage() {
                                       <div className="mt-2 text-xs text-slate-500">Načítám dostupnost…</div>
                                     )}
                                   </div>
-                                  <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
-                                  {canDelete ? (
-                                    <button
-                                      className="ml-2 p-1 text-slate-400 hover:text-red-600"
-                                      title="Odebrat"
-                                      onClick={async () => {
-                                        if (!confirm("Odebrat položku?")) return;
-                                        try {
-                                          await api(`/events/${id}/reserve`, {
-                                            method: "POST",
-                                            body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
-                                          });
-                                          toast.success("Odebráno");
-                                          load();
-                                        } catch (e: any) { toast.error(humanError(e)); }
-                                      }}
-                                    >
-                                      <Icons.Trash className="h-4 w-4" />
-                                    </button>
-                                  ) : null}
+                                  <div className="w-16 shrink-0 flex items-start justify-end">
+                                    <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
+                                    {canDelete ? (
+                                      <button
+                                        className="ml-2 p-1 text-slate-400 hover:text-red-600"
+                                        title="Odebrat"
+                                        onClick={async () => {
+                                          if (!confirm("Odebrat položku?")) return;
+                                          try {
+                                            await api(`/events/${id}/reserve`, {
+                                              method: "POST",
+                                              body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
+                                            });
+                                            toast.success("Odebráno");
+                                            load();
+                                          } catch (e: any) { toast.error(humanError(e)); }
+                                        }}
+                                      >
+                                        <Icons.Trash className="h-4 w-4" />
+                                      </button>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </div>
                             );

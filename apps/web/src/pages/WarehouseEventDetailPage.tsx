@@ -363,7 +363,9 @@ export default function WarehouseEventDetailPage() {
                                 Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
                               </div>
                             </div>
-                            <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
+                            <div className="w-20 shrink-0 flex justify-end">
+                              <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
+                            </div>
                           </div>
 
                           {event.status === "CLOSED" || event.status === "ISSUED" ? (
