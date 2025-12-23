@@ -54,16 +54,40 @@ async function main() {
     console.log("Renamed Technika to Kuchyň");
   }
 
+  // Deduplication/Merge logic for parent categories
   const parents = ["Inventář", "Mobiliář", "Kuchyň", "Zboží"];
   const parentRows = new Map<string, string>();
+
   for (const name of parents) {
-    const row = await getOrCreateCategory({ parentId: null, name });
-    parentRows.set(name, row.id);
+    const existing = await prisma.category.findMany({ where: { parentId: null, name }, orderBy: { createdAt: "asc" } });
+    if (existing.length > 1) {
+      const primary = existing[0]!;
+      const duplicates = existing.slice(1);
+      console.log(`Merging ${duplicates.length} duplicate(s) for category "${name}"`);
+      for (const dup of duplicates) {
+        // Move children
+        await prisma.category.updateMany({
+          where: { parentId: dup.id },
+          data: { parentId: primary.id }
+        });
+        // Delete duplicate
+        await prisma.category.delete({ where: { id: dup.id } });
+      }
+      parentRows.set(name, primary.id);
+    } else if (existing.length === 1) {
+      parentRows.set(name, existing[0]!.id);
+    } else {
+      const row = await prisma.category.create({ data: { parentId: null, name } });
+      parentRows.set(name, row.id);
+    }
   }
 
   const sub = async (parent: string, name: string) => {
     const parentId = parentRows.get(parent)!;
-    return getOrCreateCategory({ parentId, name });
+    // Check if subcat exists under this parent
+    const existing = await prisma.category.findFirst({ where: { parentId, name } });
+    if (existing) return existing;
+    return prisma.category.create({ data: { parentId, name } });
   };
 
   const catSklo = await sub("Inventář", "Sklo");

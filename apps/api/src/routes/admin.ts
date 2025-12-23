@@ -219,20 +219,11 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const result = await app.prisma.$transaction(async (tx) => {
-      const [ledgerCount, resCount, issueCount, returnCount] = await Promise.all([
-        tx.inventoryLedger.count({ where: { inventoryItemId: params.id } }),
-        tx.eventReservation.count({ where: { inventoryItemId: params.id } }),
-        tx.eventIssue.count({ where: { inventoryItemId: params.id } }),
-        tx.eventReturn.count({ where: { inventoryItemId: params.id } })
-      ]);
-      const hasHistory = ledgerCount + resCount + issueCount + returnCount > 0;
-      if (hasHistory) {
-        const item = await tx.inventoryItem.update({ where: { id: params.id }, data: { active: false } });
-        await tx.auditLog.create({
-          data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "deactivate", diffJson: { reason: "has_history" } }
-        });
-        return { mode: "deactivated" as const, itemId: item.id };
-      }
+      // Deep hard delete - remove all related records
+      await tx.inventoryLedger.deleteMany({ where: { inventoryItemId: params.id } });
+      await tx.eventReservation.deleteMany({ where: { inventoryItemId: params.id } });
+      await tx.eventIssue.deleteMany({ where: { inventoryItemId: params.id } });
+      await tx.eventReturn.deleteMany({ where: { inventoryItemId: params.id } });
 
       const deleted = await tx.inventoryItem.delete({ where: { id: params.id } });
       await tx.auditLog.create({
