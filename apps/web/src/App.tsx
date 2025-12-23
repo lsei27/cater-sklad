@@ -3,7 +3,7 @@ import LoginPage from "./pages/LoginPage";
 import EventsPage from "./pages/EventsPage";
 import EventDetailPage from "./pages/EventDetailPage";
 import InventoryPage from "./pages/InventoryPage";
-import AdminImportPage from "./pages/AdminImportPage";
+
 import AdminUsersPage from "./pages/AdminUsersPage";
 import AdminCategoriesPage from "./pages/AdminCategoriesPage";
 import AdminItemsPage from "./pages/AdminItemsPage";
@@ -25,7 +25,7 @@ export default function App() {
         <Route path="/warehouse" element={<WarehouseEventsPage />} />
         <Route path="/warehouse/:id" element={<WarehouseEventDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/settings/import" element={<AdminImportPage />} />
+
         <Route path="/settings/users" element={<AdminUsersPage />} />
         <Route path="/settings/categories" element={<AdminCategoriesPage />} />
         <Route path="/settings/items" element={<AdminItemsPage />} />

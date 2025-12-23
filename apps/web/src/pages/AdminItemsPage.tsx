@@ -26,7 +26,8 @@ export default function AdminItemsPage() {
   useEffect(() => {
     const initial = searchParams.get("search");
     if (initial) setSearch(initial);
-  }, []);
+    if (searchParams.get("import") === "true") setImportOpen(true);
+  }, [searchParams]);
 
   const childCats = useMemo(
     () => parents.flatMap((p: any) => (p.children ?? []).map((c: any) => ({ ...c, parentName: p.name }))),

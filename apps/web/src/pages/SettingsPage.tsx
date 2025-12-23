@@ -46,7 +46,7 @@ export default function SettingsPage() {
       <div className="grid gap-3 md:grid-cols-2">
         <Tile to="/settings/categories" title="Kategorie" desc="Strom typů a podkategorií." icon={Layers3} />
         <Tile to="/settings/items" title="Položky" desc="Názvy, obrázky, aktivita, jednotky." icon={Package} />
-        <Tile to="/settings/import" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
+        <Tile to="/settings/items?import=true" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
         <Tile to="/settings/users" title="Uživatelé" desc="Role a přístupy." icon={Users} />
       </div>
     </div>
