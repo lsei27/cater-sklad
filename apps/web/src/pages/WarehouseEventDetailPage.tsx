@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, getCurrentUser } from "../lib/api";
+import { api, apiBaseUrl, getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -79,8 +79,8 @@ export default function WarehouseEventDetailPage() {
     api<{ rows: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> }>(
       `/events/${id}/availability`,
       {
-      method: "POST",
-      body: JSON.stringify({ inventory_item_ids: warehouseItems.map((x) => x.inventoryItemId) })
+        method: "POST",
+        body: JSON.stringify({ inventory_item_ids: warehouseItems.map((x) => x.inventoryItemId) })
       }
     )
       .then((r) => {
@@ -94,7 +94,7 @@ export default function WarehouseEventDetailPage() {
           }))
         );
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [id, warehouseItems]);
 
   const canWarehouse = ["warehouse", "admin"].includes(role);
@@ -171,10 +171,36 @@ export default function WarehouseEventDetailPage() {
                 <div className="mt-2 text-xs text-slate-500">Export verze: v{snapshot.event.version}</div>
               ) : null}
             </div>
-            <Badge tone={event.status === "ISSUED" ? "warn" : event.status === "SENT_TO_WAREHOUSE" ? "ok" : "neutral"}>
-              {statusLabel(event.status)}
-            </Badge>
+            <div className="shrink-0 text-right">
+              <Badge tone={event.status === "ISSUED" ? "warn" : event.status === "SENT_TO_WAREHOUSE" ? "ok" : "neutral"}>
+                {statusLabel(event.status)}
+              </Badge>
+              {event.chefConfirmedAt ? (
+                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-green-700">
+                  <span>✓ Kuchyň potvrzena</span>
+                </div>
+              ) : (
+                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-amber-700">
+                  <span>⏲ Čeká na kuchyň</span>
+                </div>
+              )}
+            </div>
           </div>
+          {event.status === "CLOSED" ? (
+            <div className="mt-4 border-t pt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-100"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/report-pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Stáhnout závěrečný report (PDF)
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -233,6 +259,7 @@ export default function WarehouseEventDetailPage() {
                           type="number"
                           min={0}
                           value={r.returned}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const v = Math.max(0, Number(e.target.value));
                             setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, returned: v } : x)));
@@ -246,6 +273,7 @@ export default function WarehouseEventDetailPage() {
                           type="number"
                           min={0}
                           value={r.broken}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const v = Math.max(0, Number(e.target.value));
                             setRows((prev) => prev.map((x, j) => (j === idx ? { ...x, broken: v } : x)));

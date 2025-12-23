@@ -356,19 +356,26 @@ export async function eventRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const event = await app.prisma.$transaction(async (tx) => {
-      const [row] = await tx.$queryRaw<{ id: string; status: string }[]>`
-        SELECT id, status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
-      `;
+      const row = await tx.event.findUnique({
+        where: { id: params.id },
+        select: { id: true, status: true }
+      });
       if (!row) throw new Error("NOT_FOUND");
       if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
+
       await tx.eventReservation.updateMany({
         where: { eventId: params.id },
         data: { state: "confirmed", expiresAt: null }
       });
+
       const updated = await tx.event.update({
         where: { id: params.id },
-        data: { status: "READY_FOR_WAREHOUSE" }
+        data: {
+          chefConfirmedAt: new Date(),
+          exportNeedsRevision: true
+        }
       });
+
       await tx.auditLog.create({
         data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "confirm_chef" }
       });
@@ -745,6 +752,32 @@ export async function eventRoutes(app: FastifyInstance) {
       throw e;
     }
   });
+
+  app.get("/events/:id/report-pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const event = await app.prisma.event.findUnique({
+      where: { id: params.id },
+      include: {
+        issues: { include: { item: true } },
+        returns: { include: { item: true } },
+        reservations: { include: { item: true } }
+      }
+    });
+
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+
+    const { buildClosureReportPdf } = await import("../pdf/exportPdf.js");
+    const pdfBytes = await buildClosureReportPdf(event as any);
+
+    return reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="report-${event.name}.pdf"`)
+      .send(Buffer.from(pdfBytes));
+  });
+
   app.delete("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin"]);

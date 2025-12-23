@@ -138,3 +138,84 @@ export async function buildExportPdf(snapshot: ExportSnapshot) {
 
   return pdfDoc.save();
 }
+
+export async function buildClosureReportPdf(event: any) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  let page = pdfDoc.addPage();
+  let { width, height } = page.getSize();
+
+  // Title: Final Report
+  page.drawText(pdfText(`Zaverecny report: ${event.name}`), { x: 50, y: height - 50, size: 20, font: bold });
+
+  let yPos = height - 80;
+  // Date and Location
+  page.drawText(pdfText(`Misto: ${event.location}`), { x: 50, y: yPos, size: 12, font });
+  yPos -= 18;
+  if (event.eventDate) {
+    page.drawText(pdfText(`Datum: ${formatCzechDate(event.eventDate.toISOString())}`), { x: 50, y: yPos, size: 12, font });
+    yPos -= 18;
+  }
+  yPos -= 20;
+
+  // Header
+  page.drawText(pdfText("Prehled polozek a strat"), { x: 50, y: yPos, size: 14, font: bold });
+  yPos -= 20;
+
+  // Table Header
+  const colName = 50;
+  const colRes = 300;
+  const colRet = 360;
+  const colBro = 420;
+  const colMis = 480;
+
+  page.drawText(pdfText("Polozka"), { x: colName, y: yPos, size: 10, font: bold });
+  page.drawText(pdfText("Rez."), { x: colRes, y: yPos, size: 10, font: bold });
+  page.drawText(pdfText("Vrac."), { x: colRet, y: yPos, size: 10, font: bold });
+  page.drawText(pdfText("Rozb."), { x: colBro, y: yPos, size: 10, font: bold });
+  page.drawText(pdfText("Chybi"), { x: colMis, y: yPos, size: 10, font: bold });
+  yPos -= 4;
+  page.drawLine({ start: { x: 50, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 0.5, color: rgb(0.5, 0.5, 0.5) });
+  yPos -= 14;
+
+  const reservations = event.reservations ?? [];
+  const returns = event.returns ?? [];
+  const issues = event.issues ?? [];
+
+  for (const res of reservations) {
+    if (yPos < 60) {
+      page = pdfDoc.addPage();
+      yPos = height - 50;
+    }
+
+    const itemReturns = returns.filter((r: any) => r.inventoryItemId === res.inventoryItemId);
+    const itemIssues = issues.filter((i: any) => i.inventoryItemId === res.inventoryItemId);
+
+    const returnedQty = itemReturns.reduce((sum: number, r: any) => sum + r.returnedQuantity, 0);
+    const brokenQty = itemIssues.filter((i: any) => i.type === "broken").reduce((sum: number, i: any) => sum + i.quantity, 0);
+    const missingQty = itemIssues.filter((i: any) => i.type === "missing").reduce((sum: number, i: any) => sum + i.quantity, 0);
+
+    const isLoss = brokenQty > 0 || missingQty > 0;
+    const itemFont = isLoss ? bold : font;
+    const textColor = isLoss ? rgb(0.7, 0, 0) : rgb(0, 0, 0);
+
+    page.drawText(pdfText(res.item?.name ?? "Unknown"), { x: colName, y: yPos, size: 9, font: itemFont, color: textColor });
+    page.drawText(pdfText(res.reservedQuantity), { x: colRes, y: yPos, size: 9, font });
+    page.drawText(pdfText(returnedQty), { x: colRet, y: yPos, size: 9, font });
+    page.drawText(pdfText(brokenQty), { x: colBro, y: yPos, size: 9, font, color: brokenQty > 0 ? textColor : rgb(0, 0, 0) });
+    page.drawText(pdfText(missingQty), { x: colMis, y: yPos, size: 9, font, color: missingQty > 0 ? textColor : rgb(0, 0, 0) });
+
+    yPos -= 14;
+  }
+
+  yPos -= 20;
+  if (yPos < 60) {
+    page = pdfDoc.addPage();
+    yPos = height - 50;
+  }
+  page.drawText(pdfText("Tento report slouzi pro vyuctovani akce."), { x: 50, y: yPos, size: 10, font });
+
+  return pdfDoc.save();
+}

@@ -122,6 +122,7 @@ model Event {
   eventDate           DateTime?   @map("event_date") @db.Timestamptz(6)
   status              EventStatus @default(DRAFT)
   exportNeedsRevision Boolean     @default(false) @map("export_needs_revision")
+  chefConfirmedAt     DateTime?   @map("chef_confirmed_at") @db.Timestamptz(6)
   createdById         String      @map("created_by") @db.Uuid
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 

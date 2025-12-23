@@ -128,7 +128,9 @@ export default function EventDetailPage() {
   const canEM = ["admin", "event_manager"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
-  const canAddItems = (canEM || canChef) && canEditEvent;
+
+  // EM can add in DRAFT/READY. Chef and Admin can add also in SENT_TO_WAREHOUSE.
+  const canAddItems = ((canEM && (event?.status === "DRAFT" || event?.status === "READY_FOR_WAREHOUSE")) || canChef) && canEditEvent;
 
   const latestExport = event?.exports?.[0] ?? null;
   const token = getToken();
@@ -211,6 +213,15 @@ export default function EventDetailPage() {
             </div>
             <div className="shrink-0 text-right">
               <Badge>{statusLabel(event.status)}</Badge>
+              {event.chefConfirmedAt ? (
+                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-green-700">
+                  <Icons.Check className="h-3 w-3" /> Kuchyň potvrzena
+                </div>
+              ) : (
+                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-amber-700">
+                  <Icons.History className="h-3 w-3" /> Čeká na kuchyň
+                </div>
+              )}
             </div>
           </div>
 
@@ -226,8 +237,13 @@ export default function EventDetailPage() {
             ) : null}
 
             {canChef ? (
-              <Button variant="secondary" onClick={() => setChefConfirm(true)} disabled={event.status !== "DRAFT"}>
-                <Wand2 className="h-4 w-4" /> Potvrdit kuchyň
+              <Button
+                variant={event.chefConfirmedAt ? "ghost" : "secondary"}
+                onClick={() => setChefConfirm(true)}
+                disabled={!canEditEvent}
+              >
+                <Wand2 className="h-4 w-4" />
+                {event.chefConfirmedAt ? "Kuchyň potvrzena (znovu)" : "Potvrdit kuchyň"}
               </Button>
             ) : null}
 
@@ -261,6 +277,16 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
+            {event.status === "CLOSED" ? (
+              <Button
+                variant="secondary"
+                className="border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700"
+                onClick={() => window.open(withToken(`${apiBaseUrl()}/events/${id}/report-pdf`), "_blank")}
+              >
+                <FileDown className="h-4 w-4" /> Stáhnout závěrečný report
+              </Button>
+            ) : null}
+
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <Button
                 variant="secondary"
@@ -283,6 +309,29 @@ export default function EventDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {event.status === "CLOSED" && (event.issues?.length > 0) ? (
+        <Card className="border-red-100 bg-red-50/30">
+          <CardHeader>
+            <div className="flex items-center gap-2 text-red-800">
+              <ShieldAlert className="h-5 w-5" />
+              <div className="text-sm font-semibold">Přehled ztrát a poškození</div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {event.issues.map((issue: any) => (
+                <div key={issue.id} className="flex items-center justify-between text-sm">
+                  <div className="text-slate-700">{issue.item?.name}</div>
+                  <div className="font-medium text-red-700">
+                    {issue.quantity} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -715,6 +764,7 @@ function AddItemsPanel(props: {
                         max={available}
                         disabled={available === 0}
                         value={qty[i.id] ?? 0}
+                        onFocus={(e) => e.target.select()}
                         onChange={(e) => {
                           const v = Math.max(0, Math.min(available, Number(e.target.value)));
                           setQty((prev) => ({ ...prev, [i.id]: v }));

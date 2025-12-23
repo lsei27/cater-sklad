@@ -400,7 +400,14 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
         </div>
         <label className="text-sm">
           Změna (+ naskladnit, - vyskladnit/manko)
-          <Input className="mt-1" type="number" value={change} onChange={e => setChange(e.target.value)} placeholder="Např. 10" />
+          <Input
+            className="mt-1"
+            type="number"
+            value={change}
+            onChange={e => setChange(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            placeholder="Např. 10"
+          />
         </label>
         <label className="text-sm">
           Důvod (nepovinné)
