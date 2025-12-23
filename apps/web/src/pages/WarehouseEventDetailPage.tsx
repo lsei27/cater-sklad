@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, apiBaseUrl, getCurrentUser } from "../lib/api";
+import { api, apiBaseUrl, apiUrl, getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -27,7 +27,7 @@ export default function WarehouseEventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
-  const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number; parentCategory?: string }>>([]);
+  const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number; parentCategory?: string; imageUrl?: string | null }>>([]);
   const manager = managerLabel(event?.createdBy);
 
   const load = async () => {
@@ -63,6 +63,11 @@ export default function WarehouseEventDetailPage() {
     return snapshotItems as WarehouseItem[];
   }, [event?.warehouseItems, snapshotItems]);
 
+  const imageByItemId = useMemo(() => {
+    const entries = (event?.reservations ?? []).map((r: any) => [r.inventoryItemId, r.item?.imageUrl ?? null] as const);
+    return new Map(entries);
+  }, [event?.reservations]);
+
   useEffect(() => {
     if (!warehouseItems.length) return;
 
@@ -94,11 +99,12 @@ export default function WarehouseEventDetailPage() {
           requested: i.qty,
           returned: s?.returned ?? 0,
           broken: s?.broken ?? 0,
-          parentCategory: (i as any).parentCategory || ""
+          parentCategory: (i as any).parentCategory || "",
+          imageUrl: imageByItemId.get(i.inventoryItemId) ?? null
         };
       })
     );
-  }, [warehouseItems, event?.returns]);
+  }, [warehouseItems, event?.returns, imageByItemId]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
@@ -370,13 +376,22 @@ export default function WarehouseEventDetailPage() {
                       return (
                         <div key={r.inventory_item_id} className="rounded-2xl border border-slate-200 p-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold">{r.name}</div>
-                              <div className="mt-1 text-xs text-slate-600">
-                                Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
+                            <div className="flex min-w-0 items-start gap-3">
+                              <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
+                                {r.imageUrl ? (
+                                  <img className="h-full w-full object-cover" src={apiUrl(r.imageUrl)} alt={r.name} />
+                                ) : (
+                                  <Icons.Image className="h-5 w-5 text-slate-400" />
+                                )}
                               </div>
-                              <div className="mt-1 text-xs text-slate-600">
-                                Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold">{r.name}</div>
+                                <div className="mt-1 text-xs text-slate-600">
+                                  Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-600">
+                                  Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
+                                </div>
                               </div>
                             </div>
                             <div className="w-20 shrink-0 flex justify-end">

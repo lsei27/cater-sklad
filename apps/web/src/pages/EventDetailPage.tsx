@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { api, apiBaseUrl, getCurrentUser, getToken } from "../lib/api";
+import { api, apiBaseUrl, apiUrl, getCurrentUser, getToken } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -782,6 +782,7 @@ function AddItemsPanel(props: {
       onOpenChange={props.onOpenChange}
       title="Přidat položky"
       description="Zobrazujeme dostupnost pro termín této akce."
+      contentClassName="max-w-5xl"
       primaryText="Uložit výběr"
       onPrimary={save}
       primaryDisabled={loading}
@@ -850,7 +851,15 @@ function AddItemsPanel(props: {
                 const tone = stockTone(available);
                 return (
                   <div key={i.id} className="rounded-2xl border border-slate-200 p-3">
-                    <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
+                        {i.imageUrl ? (
+                          <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
+                        ) : (
+                          <Icons.Image className="h-5 w-5 text-slate-400" />
+                        )}
+                      </div>
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold">{i.name}</div>
                         <div className="mt-1 text-xs text-slate-600">
@@ -868,9 +877,10 @@ function AddItemsPanel(props: {
                           ) : null}
                         </div>
                       </div>
-                      <div className="w-28">
-                        <label className="text-xs">
-                          Množství
+                    </div>
+                    <div className="w-28">
+                      <label className="text-xs">
+                        Množství
                           <Input
                             className="mt-1"
                             type="number"
@@ -922,12 +932,23 @@ function AddItemsPanel(props: {
                 .sort((a, b) => (a.item?.name ?? "").localeCompare(b.item?.name ?? "", "cs"))
                 .map((r) => (
                   <div key={r.inventoryItemId} className="rounded-xl border border-slate-200 bg-white p-2">
-                    <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
-                    <div className="mt-1 text-[11px] text-slate-500">
-                      {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
-                    </div>
-                    <div className="mt-1 text-xs font-semibold text-slate-700">
-                      {Number(r.reservedQuantity)} {r.item?.unit ?? "ks"}
+                    <div className="flex items-start gap-2">
+                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 flex items-center justify-center">
+                        {r.item?.imageUrl ? (
+                          <img className="h-full w-full object-cover" src={apiUrl(r.item.imageUrl)} alt={r.item?.name ?? "Položka"} />
+                        ) : (
+                          <Icons.Image className="h-4 w-4 text-slate-400" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-slate-700">
+                          {Number(r.reservedQuantity)} {r.item?.unit ?? "ks"}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))

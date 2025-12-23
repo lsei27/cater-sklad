@@ -9,6 +9,7 @@ export default function Modal(props: {
   onOpenChange: (v: boolean) => void;
   title: string;
   description?: string;
+  contentClassName?: string;
   children: ReactNode;
   footer?: ReactNode;
   secondaryText?: string;
@@ -23,7 +24,8 @@ export default function Modal(props: {
         <Dialog.Overlay className="fixed inset-0 bg-slate-900/40" />
         <Dialog.Content
           className={cn(
-            "fixed left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl"
+            "fixed left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl",
+            props.contentClassName
           )}
         >
           <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
@@ -64,4 +66,3 @@ export default function Modal(props: {
     </Dialog.Root>
   );
 }
-
