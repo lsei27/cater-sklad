@@ -10,6 +10,7 @@ import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
 import { statusLabel } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
+import EventFilters, { EventFiltersData } from "../components/EventFilters";
 
 type EventRow = {
   id: string;
@@ -26,6 +27,9 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<EventFiltersData>({
+    year: new Date().getFullYear(),
+  });
   const role = getCurrentUser()?.role ?? "";
 
   if (role === "warehouse") return <Navigate to="/warehouse" replace />;
@@ -33,7 +37,12 @@ export default function EventsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await api<{ events: EventRow[] }>("/events");
+      const params = new URLSearchParams();
+      if (filters.status) params.append("status", filters.status);
+      if (filters.month) params.append("month", String(filters.month));
+      if (filters.year) params.append("year", String(filters.year));
+
+      const res = await api<{ events: EventRow[] }>(`/events?${params.toString()}`);
       setEvents(res.events);
     } catch (e: any) {
       setError(e?.error?.message ?? "Failed");
@@ -51,7 +60,7 @@ export default function EventsPage() {
       off();
       clearInterval(interval);
     };
-  }, []);
+  }, [filters]);
 
   const filtered = events.filter((e) => {
     if (!search.trim()) return true;
@@ -67,19 +76,22 @@ export default function EventsPage() {
           <p className="text-gray-500 mt-1">Plánování a předání do skladu.</p>
         </div>
 
-        <div className="flex gap-2">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-              <Icons.Search />
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1 sm:flex-initial">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <Icons.Search />
+              </div>
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Hledat..."
+                className="pl-10 h-10"
+              />
             </div>
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Hledat..."
-              className="pl-10"
-            />
+            {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={load} /> : null}
           </div>
-          {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={load} /> : null}
+          <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
         </div>
       </div>
 

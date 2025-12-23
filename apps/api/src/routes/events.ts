@@ -29,10 +29,38 @@ const EventUpdateSchema = z.object({
 export async function eventRoutes(app: FastifyInstance) {
   app.get("/events", { preHandler: [app.authenticate] }, async (request) => {
     const user = request.user!;
-    const where =
-      user.role === "warehouse"
-        ? { status: { in: [EventStatus.SENT_TO_WAREHOUSE, EventStatus.ISSUED] } }
-        : undefined;
+    const query = z.object({
+      status: z.nativeEnum(EventStatus).optional(),
+      month: z.string().regex(/^\d+$/).transform(Number).optional(),
+      year: z.string().regex(/^\d+$/).transform(Number).optional(),
+    }).parse(request.query);
+
+    const where: any = {};
+
+    if (user.role === "warehouse") {
+      where.status = { in: [EventStatus.SENT_TO_WAREHOUSE, EventStatus.ISSUED, EventStatus.CLOSED] };
+    }
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.month !== undefined && query.year !== undefined) {
+      const startDate = new Date(Date.UTC(query.year, query.month - 1, 1));
+      const endDate = new Date(Date.UTC(query.year, query.month, 1));
+      where.deliveryDatetime = {
+        gte: startDate,
+        lt: endDate,
+      };
+    } else if (query.year !== undefined) {
+      const startDate = new Date(Date.UTC(query.year, 0, 1));
+      const endDate = new Date(Date.UTC(query.year + 1, 0, 1));
+      where.deliveryDatetime = {
+        gte: startDate,
+        lt: endDate,
+      };
+    }
+
     const events = await app.prisma.event.findMany({
       where,
       orderBy: { deliveryDatetime: "asc" },

@@ -5,6 +5,7 @@ import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import { statusLabel } from "../lib/viewModel";
+import EventFilters, { EventFiltersData } from "../components/EventFilters";
 
 type EventRow = {
   id: string;
@@ -21,14 +22,21 @@ export default function WarehouseEventsPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<EventFiltersData>({
+    year: new Date().getFullYear(),
+  });
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api<{ events: EventRow[] }>("/events");
-      const filtered = res.events.filter((e) => ["SENT_TO_WAREHOUSE", "ISSUED"].includes(e.status));
-      setEvents(filtered);
+      const params = new URLSearchParams();
+      if (filters.status) params.append("status", filters.status);
+      if (filters.month) params.append("month", String(filters.month));
+      if (filters.year) params.append("year", String(filters.year));
+
+      const res = await api<{ events: EventRow[] }>(`/events?${params.toString()}`);
+      setEvents(res.events);
     } catch (e: any) {
       setError(e?.error?.message ?? "Nepodařilo se načíst akce.");
     } finally {
@@ -38,7 +46,7 @@ export default function WarehouseEventsPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [filters]);
 
   if (!["warehouse", "admin"].includes(role)) {
     return (
@@ -52,9 +60,12 @@ export default function WarehouseEventsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Sklad</h1>
-        <div className="text-sm text-slate-600">Akce připravené k výdeji nebo uzavření.</div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Sklad</h1>
+          <div className="text-sm text-slate-600">Akce připravené k výdeji nebo uzavření.</div>
+        </div>
+        <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
       </div>
 
       {error ? (
