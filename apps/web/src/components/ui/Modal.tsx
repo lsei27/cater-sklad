@@ -11,6 +11,8 @@ export default function Modal(props: {
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  secondaryText?: string;
+  onSecondary?: () => void;
   primaryText?: string;
   onPrimary?: () => Promise<void> | void;
   primaryDisabled?: boolean;
@@ -41,9 +43,15 @@ export default function Modal(props: {
           <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-3">
             {props.footer ?? <div />}
             <div className="flex gap-2">
-              <Dialog.Close asChild>
-                <Button variant="secondary">Zavřít</Button>
-              </Dialog.Close>
+              {props.onSecondary ? (
+                <Button variant="secondary" onClick={props.onSecondary}>
+                  {props.secondaryText ?? "Zrušit"}
+                </Button>
+              ) : (
+                <Dialog.Close asChild>
+                  <Button variant="secondary">Zavřít</Button>
+                </Dialog.Close>
+              )}
               {props.onPrimary ? (
                 <Button disabled={props.primaryDisabled} onClick={props.onPrimary}>
                   {props.primaryText ?? "Uložit"}

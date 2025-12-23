@@ -21,6 +21,7 @@ export default function AdminItemsPage() {
   const [newName, setNewName] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     const initial = searchParams.get("search");
@@ -72,8 +73,13 @@ export default function AdminItemsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Plus className="h-4 w-4" /> Nová položka
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Plus className="h-4 w-4" /> Nová položka
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4 mr-2" /> Import CSV
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -180,6 +186,7 @@ export default function AdminItemsPage() {
           ))}
         </div>
       )}
+      <ImportModal open={importOpen} onOpenChange={setImportOpen} onSaved={() => load()} />
     </div>
   );
 }
@@ -383,6 +390,7 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
     }
   }
 
+
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={`Sklad: ${item.name}`} primaryText="Provést změnu" onPrimary={save} primaryDisabled={loading}>
       <div className="grid gap-4">
@@ -401,3 +409,142 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
     </Modal>
   )
 }
+
+function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenChange: (v: boolean) => void, onSaved: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const f = e.dataTransfer.files[0];
+      if (f.name.endsWith(".csv")) {
+        setFile(f);
+        setResult(null);
+      } else {
+        toast.error("Prosím nahrajte soubor .csv");
+      }
+    }
+  };
+
+  const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+      setResult(null);
+    }
+  };
+
+  const upload = async () => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const text = await file.text();
+      const res = await api<any>("/admin/import/csv", {
+        method: "POST",
+        body: text,
+        headers: { "Content-Type": "text/plain" }
+      });
+      setResult(res);
+      toast.success("Import dokončen");
+      onSaved();
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Chyba importu");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadTemplate = () => {
+    const headers = ["name", "parent_category", "category", "unit", "quantity", "active", "return_delay_days", "sku", "notes", "image_url"];
+    const ex1 = ["Talíř mělký 24cm", "Inventář", "Porcelán", "ks", "100", "1", "0", "TAL24", "Poznámka...", ""];
+    const csvContent = [headers.join(";"), ex1.join(";")].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "sablona_import.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  useEffect(() => {
+    if (!open) {
+      setFile(null);
+      setResult(null);
+    }
+  }, [open]);
+
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Import položek (CSV)"
+      primaryText={result ? "Zavřít" : "Nahrát"}
+      onPrimary={result ? () => onOpenChange(false) : upload}
+      primaryDisabled={loading || !file}
+      secondaryText={result ? undefined : "Stáhnout šablonu"}
+      onSecondary={result ? undefined : downloadTemplate}
+    >
+      <div className="space-y-4">
+        {!result ? (
+          <div
+            className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-colors ${dragActive ? "border-indigo-500 bg-indigo-50" : "border-slate-200 bg-slate-50"
+              }`}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+          >
+            <Upload className={`h-8 w-8 mb-3 ${dragActive ? "text-indigo-500" : "text-slate-400"}`} />
+            <div className="text-sm font-medium text-slate-700">Přetáhněte sem CSV soubor</div>
+            <div className="text-xs text-slate-500 mt-1">nebo</div>
+            <label className="mt-3 cursor-pointer">
+              <span className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm shadow-sm hover:bg-slate-50 transition-colors">
+                Vybrat soubor
+              </span>
+              <input type="file" accept=".csv" className="hidden" onChange={handleSelect} />
+            </label>
+            {file && <div className="mt-4 text-sm font-semibold text-indigo-600">{file.name}</div>}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="p-3 bg-green-50 text-green-700 rounded-lg text-sm">
+              <div className="font-semibold">Import úspěšně dokončen!</div>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li>Vytvořeno položek: {result.created_items?.length ?? 0}</li>
+                <li>Aktualizováno položek: {result.updated_items?.length ?? 0}</li>
+                <li>Úpravy skladu: {result.ledger_adjustments?.length ?? 0}</li>
+              </ul>
+            </div>
+            {result.errors && result.errors.length > 0 && (
+              <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm max-h-40 overflow-y-auto">
+                <div className="font-semibold mb-1">Chyby ({result.errors.length}):</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {result.errors.map((e: any, i: number) => (
+                    <li key={i}>Řádek {e.row}: {e.error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
