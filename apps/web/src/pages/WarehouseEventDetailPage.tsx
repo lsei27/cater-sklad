@@ -64,8 +64,11 @@ export default function WarehouseEventDetailPage() {
   }, [event?.warehouseItems, snapshotItems]);
 
   const imageByItemId = useMemo(() => {
-    const entries = (event?.reservations ?? []).map((r: any) => [r.inventoryItemId, r.item?.imageUrl ?? null] as const);
-    return new Map(entries);
+    const entries = (event?.reservations ?? []).map((r: any) => {
+      const imageUrl = typeof r.item?.imageUrl === "string" ? r.item.imageUrl : null;
+      return [r.inventoryItemId, imageUrl] as const;
+    });
+    return new Map<string, string | null>(entries);
   }, [event?.reservations]);
 
   useEffect(() => {
