@@ -24,6 +24,7 @@ export default function AdminUsersPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [userRole, setUserRole] = useState<(typeof ROLE_OPTIONS)[number]["value"]>("event_manager");
   const [loading, setLoading] = useState(true);
 
@@ -106,7 +107,22 @@ export default function AdminUsersPage() {
             </label>
             <label className="text-sm">
               Heslo
-              <Input className="mt-1" value={password} type="password" onChange={(e) => setPassword(e.target.value)} placeholder="min. 6 znaků" />
+              <div className="relative mt-1">
+                <Input
+                  className="pr-16"
+                  value={password}
+                  type={showPassword ? "text" : "password"}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="min. 6 znaků"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                >
+                  {showPassword ? "Skrýt" : "Zobrazit"}
+                </button>
+              </div>
             </label>
 
             <div className="md:col-span-4">
@@ -155,6 +171,7 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleReset = async (e: React.FormEvent) => {
@@ -238,17 +255,36 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
               Nastavit nové heslo pro uživatele <strong>{user.email}</strong>.
             </p>
             <form onSubmit={handleReset} className="mt-4 space-y-4">
-              <Input
-                autoFocus
-                type="password"
-                placeholder="Nové heslo (min. 6 znaků)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={6}
-              />
+              <div className="relative">
+                <Input
+                  autoFocus
+                  type={showNewPassword ? "text" : "password"}
+                  placeholder="Nové heslo (min. 6 znaků)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  className="pr-16"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700"
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                >
+                  {showNewPassword ? "Skrýt" : "Zobrazit"}
+                </button>
+              </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setResetOpen(false)}>Zrušit</Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setResetOpen(false);
+                    setShowNewPassword(false);
+                  }}
+                >
+                  Zrušit
+                </Button>
                 <Button disabled={loading || newPassword.length < 6}>Uložit</Button>
               </div>
             </form>

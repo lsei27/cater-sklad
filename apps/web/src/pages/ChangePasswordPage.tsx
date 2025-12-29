@@ -12,6 +12,9 @@ export default function ChangePasswordPage() {
     const [oldPassword, setOldPassword] = useState("");
     const [newPassword, setNewPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
+    const [showOldPassword, setShowOldPassword] = useState(false);
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -55,35 +58,62 @@ export default function ChangePasswordPage() {
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <label className="block text-sm font-medium">
                             Současné heslo
-                            <Input
-                                type="password"
-                                className="mt-1"
-                                value={oldPassword}
-                                onChange={(e) => setOldPassword(e.target.value)}
-                                required
-                            />
+                            <div className="relative mt-1">
+                                <Input
+                                    type={showOldPassword ? "text" : "password"}
+                                    className="pr-16"
+                                    value={oldPassword}
+                                    onChange={(e) => setOldPassword(e.target.value)}
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700"
+                                    onClick={() => setShowOldPassword((prev) => !prev)}
+                                >
+                                    {showOldPassword ? "Skrýt" : "Zobrazit"}
+                                </button>
+                            </div>
                         </label>
                         <label className="block text-sm font-medium">
                             Nové heslo
-                            <Input
-                                type="password"
-                                className="mt-1"
-                                value={newPassword}
-                                onChange={(e) => setNewPassword(e.target.value)}
-                                required
-                                minLength={6}
-                            />
+                            <div className="relative mt-1">
+                                <Input
+                                    type={showNewPassword ? "text" : "password"}
+                                    className="pr-16"
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    required
+                                    minLength={6}
+                                />
+                                <button
+                                    type="button"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700"
+                                    onClick={() => setShowNewPassword((prev) => !prev)}
+                                >
+                                    {showNewPassword ? "Skrýt" : "Zobrazit"}
+                                </button>
+                            </div>
                         </label>
                         <label className="block text-sm font-medium">
                             Potvrzení nového hesla
-                            <Input
-                                type="password"
-                                className="mt-1"
-                                value={confirmPassword}
-                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                required
-                                minLength={6}
-                            />
+                            <div className="relative mt-1">
+                                <Input
+                                    type={showConfirmPassword ? "text" : "password"}
+                                    className="pr-16"
+                                    value={confirmPassword}
+                                    onChange={(e) => setConfirmPassword(e.target.value)}
+                                    required
+                                    minLength={6}
+                                />
+                                <button
+                                    type="button"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700"
+                                    onClick={() => setShowConfirmPassword((prev) => !prev)}
+                                >
+                                    {showConfirmPassword ? "Skrýt" : "Zobrazit"}
+                                </button>
+                            </div>
                         </label>
 
                         <div className="flex justify-end gap-2 pt-2">
