@@ -17,10 +17,10 @@ async function getOrCreateCategory(params: { parentId: string | null; name: stri
 }
 
 async function main() {
-  const password = await bcrypt.hash("admin123", 10);
+  const password = await bcrypt.hash("inter1995", 10);
   const admin = await prisma.user.upsert({
     where: { email: "admin@local" },
-    update: {},
+    update: { name: "Admin", passwordHash: password, role: Role.admin },
     create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
   });
 
