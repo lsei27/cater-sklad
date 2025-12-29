@@ -101,7 +101,7 @@ Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
 
 ## 🔐 Bezpečnost & Role
 - **Admin**: Úplný přístup (uživatelé, kategorie, importy).
-- **Event Manager**: Vytváří akce, spravuje své položky; může upravovat položky i po potvrzení kuchyně (dokud není ISSUED/CLOSED/CANCELLED).
+- **Event Manager**: Vytváří akce, spravuje položky jen ve svých akcích; může upravovat položky i po potvrzení kuchyně (dokud není ISSUED/CLOSED/CANCELLED). Akce může pouze rušit (jen svoje), mazání je jen pro admina.
 - **Chef**: Má přístup pouze k položkám v kategorii "Kuchyň". Potvrzuje svou část akce.
 - **Warehouse**: Vidí seznam akcí k vydání/svozu, značí vydání a návraty.
 

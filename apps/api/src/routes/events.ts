@@ -863,14 +863,13 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.delete("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
       await app.prisma.$transaction(async (tx) => {
         const event = await tx.event.findUnique({ where: { id: params.id } });
         if (!event) throw new Error("NOT_FOUND");
-        if (user.role === "event_manager" && event.createdById !== user.id) throw new Error("FORBIDDEN");
 
         // Cascade delete is handled by Prisma schema for relations except InventoryLedger (SetNull)
         // We might want to explicitly delete ledger entries linked to this event if we want "complete" clean up,
@@ -891,7 +890,6 @@ export async function eventRoutes(app: FastifyInstance) {
       return reply.send({ ok: true });
     } catch (e: any) {
       if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
-      if (e?.message === "FORBIDDEN") return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění smazat cizí akci.");
       request.log.error({ err: e }, "delete event failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
