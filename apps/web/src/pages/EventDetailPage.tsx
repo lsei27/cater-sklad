@@ -823,9 +823,10 @@ function AddItemsPanel(props: {
       title="Přidat položky"
       description="Zobrazujeme dostupnost pro termín této akce."
       contentClassName="max-w-5xl"
+      bodyClassName="md:h-[70vh] md:overflow-hidden"
     >
-      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] md:h-full md:min-h-0">
+        <div className="flex flex-col gap-4 md:h-full md:min-h-0">
           <div className="grid gap-3 md:grid-cols-3">
             <label className="md:col-span-3 text-sm">
               Hledat
@@ -868,7 +869,7 @@ function AddItemsPanel(props: {
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 md:flex-1 md:min-h-0 md:overflow-auto md:pr-1">
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 6 }).map((_, idx) => (
@@ -956,12 +957,12 @@ function AddItemsPanel(props: {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 md:h-full md:min-h-0 md:flex md:flex-col">
           <div className="text-sm font-semibold text-slate-900">Položky v akci</div>
           <div className="mt-1 text-xs text-slate-600">
             Aktuálně přidané položky ({activeItems.length})
           </div>
-          <div className="mt-3 space-y-2 max-h-[55vh] overflow-auto pr-1">
+          <div className="mt-3 space-y-2 max-h-[55vh] overflow-auto pr-1 md:max-h-none md:flex-1 md:min-h-0 md:overflow-auto">
             {activeItems.length === 0 ? (
               <div className="text-xs text-slate-500">Zatím žádné položky.</div>
             ) : (

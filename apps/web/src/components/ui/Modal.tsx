@@ -10,6 +10,7 @@ export default function Modal(props: {
   title: string;
   description?: string;
   contentClassName?: string;
+  bodyClassName?: string;
   children: ReactNode;
   footer?: ReactNode;
   secondaryText?: string;
@@ -40,7 +41,9 @@ export default function Modal(props: {
             </Dialog.Close>
           </div>
 
-          <div className="max-h-[70vh] overflow-auto px-4 py-4">{props.children}</div>
+          <div className={cn("max-h-[70vh] overflow-auto px-4 py-4", props.bodyClassName)}>
+            {props.children}
+          </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-3">
             {props.footer ?? <div />}
