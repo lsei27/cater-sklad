@@ -41,6 +41,7 @@ function Stepper(props: { status: string }) {
 type StockRow = { inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number };
 
 export default function EventDetailPage() {
+  const currentUserId = getCurrentUser()?.id;
   const role = getCurrentUser()?.role ?? "";
   const { id } = useParams();
   const nav = useNavigate();
@@ -87,6 +88,11 @@ export default function EventDetailPage() {
       toast.error("Akce je už uzamčená (vydaná nebo uzavřená).");
       return;
     }
+    if (role === "event_manager" && !isOwner) {
+      deepLinkHandled.current = true;
+      toast.error("Nemáte oprávnění přidávat položky do cizí akce.");
+      return;
+    }
     deepLinkHandled.current = true;
     setAddInitialSearch(params.get("q") ?? undefined);
     setAddFocusItemId(params.get("focusItemId") ?? undefined);
@@ -128,10 +134,12 @@ export default function EventDetailPage() {
   const canEM = ["admin", "event_manager"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
+  const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
+  const canManageEvent = role === "admin" || (role === "event_manager" && isOwner);
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
   const canAddItems =
-    ((canEM && ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(event?.status)) || canChef) &&
+    ((canManageEvent && ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(event?.status)) || canChef) &&
     canEditEvent;
 
   const latestExport = event?.exports?.[0] ?? null;
@@ -268,7 +276,7 @@ export default function EventDetailPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {canEM || canChef ? (
+            {canManageEvent || canChef ? (
               <Button variant="secondary" onClick={() => setAddOpen(true)} disabled={!canAddItems}>
                 <PackagePlus className="h-4 w-4" /> {role === "chef" ? "Přidat Kuchyň" : "Přidat položky"}
               </Button>
@@ -303,7 +311,7 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
-            {canEM ? (
+            {canManageEvent ? (
               <Button variant="danger" onClick={() => setCancelConfirm(true)} disabled={!canEditEvent}>
                 <Ban className="h-4 w-4" /> Zrušit akci
               </Button>
