@@ -392,7 +392,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
             <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
           </label>
           <label className="text-sm">
-            Začátek (doručení)
+            Čas závozu (doručení)
             <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
           </label>
           <label className="text-sm">
