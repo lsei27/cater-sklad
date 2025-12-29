@@ -128,6 +128,9 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const existing = await app.prisma.event.findUnique({ where: { id: params.id } });
     if (!existing) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+    if (user.role === "event_manager" && existing.createdById !== user.id) {
+      return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
+    }
     if (["ISSUED", "CLOSED", "CANCELLED"].includes(existing.status)) {
       return httpError(reply, 409, "READ_ONLY", "Akci nelze upravit.");
     }
@@ -158,10 +161,11 @@ export async function eventRoutes(app: FastifyInstance) {
 
     try {
       const event = await app.prisma.$transaction(async (tx) => {
-        const [row] = await tx.$queryRaw<{ id: string; status: string }[]>`
-          SELECT id, status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
+        const [row] = await tx.$queryRaw<{ id: string; status: string; created_by: string }[]>`
+          SELECT id, status::text, created_by::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
         `;
         if (!row) throw new Error("NOT_FOUND");
+        if (user.role === "event_manager" && row.created_by !== user.id) throw new Error("FORBIDDEN");
         if (row.status === "CLOSED") throw new Error("READ_ONLY");
         if (row.status === "ISSUED") throw new Error("ALREADY_ISSUED");
         if (row.status === "CANCELLED") return row;
@@ -398,8 +402,13 @@ export async function eventRoutes(app: FastifyInstance) {
 
         const eventRow = await tx.event.findUnique({
           where: { id: params.id },
-          select: { status: true, chefConfirmedAt: true }
+          select: { status: true, chefConfirmedAt: true, createdById: true }
         });
+
+        if (!eventRow) throw new Error("EVENT_NOT_FOUND");
+        if (user.role === "event_manager" && eventRow.createdById !== user.id) {
+          throw new Error("FORBIDDEN");
+        }
 
         let exportResult = null;
         if (["admin", "event_manager"].includes(user.role) && eventRow?.status === "SENT_TO_WAREHOUSE" && eventRow.chefConfirmedAt) {
@@ -854,13 +863,14 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.delete("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin"]);
+    requireRole(user.role, ["admin", "event_manager"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
       await app.prisma.$transaction(async (tx) => {
         const event = await tx.event.findUnique({ where: { id: params.id } });
         if (!event) throw new Error("NOT_FOUND");
+        if (user.role === "event_manager" && event.createdById !== user.id) throw new Error("FORBIDDEN");
 
         // Cascade delete is handled by Prisma schema for relations except InventoryLedger (SetNull)
         // We might want to explicitly delete ledger entries linked to this event if we want "complete" clean up,
@@ -881,6 +891,7 @@ export async function eventRoutes(app: FastifyInstance) {
       return reply.send({ ok: true });
     } catch (e: any) {
       if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
+      if (e?.message === "FORBIDDEN") return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění smazat cizí akci.");
       request.log.error({ err: e }, "delete event failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }

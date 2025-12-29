@@ -41,6 +41,7 @@ function Stepper(props: { status: string }) {
 type StockRow = { inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number };
 
 export default function EventDetailPage() {
+  const currentUserId = getCurrentUser()?.id;
   const role = getCurrentUser()?.role ?? "";
   const { id } = useParams();
   const nav = useNavigate();
@@ -128,6 +129,7 @@ export default function EventDetailPage() {
   const canEM = ["admin", "event_manager"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
+  const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
   const canAddItems =
@@ -309,9 +311,9 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
-            {role === "admin" ? (
+            {role === "admin" || (role === "event_manager" && isOwner) ? (
               <Button variant="danger" onClick={() => setHardDeleteConfirm(true)}>
-                <Icons.Trash className="h-4 w-4" /> Smazat (Admin)
+                <Icons.Trash className="h-4 w-4" /> {role === "admin" ? "Smazat (Admin)" : "Smazat"}
               </Button>
             ) : null}
 
