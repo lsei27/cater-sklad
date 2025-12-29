@@ -14,7 +14,10 @@ export default function AppShell() {
 
   useEffect(() => {
     if (!token && loc.pathname !== "/login") nav("/login");
-  }, [token, loc.pathname]);
+  }, [token, loc.pathname, nav]);
+
+  // Prevent flash of unauthenticated content
+  if (!token && loc.pathname !== "/login") return null;
 
   const role = user?.role ?? "";
   const eventsHref = role === "warehouse" ? "/warehouse" : "/events";
@@ -84,12 +87,12 @@ export default function AppShell() {
                 <button
                   onClick={() => nav("/settings")}
                   className={cn(
-                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                  loc.pathname.startsWith("/settings")
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                )}
-              >
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                    loc.pathname.startsWith("/settings")
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  )}
+                >
                   {/* We can use Icons.Edit as a placeholder for Settings or add a Settings icon later if needed. Using Edit for now as it's generic enough or just text. 
                              Actually, let's use Icons.User for now or just text. */}
                   <span>Nastavení</span>
