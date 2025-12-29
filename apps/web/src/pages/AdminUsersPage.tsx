@@ -248,7 +248,7 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
                 minLength={6}
               />
               <div className="flex justify-end gap-2">
-                <Button type="button" tone="neutral" onClick={() => setResetOpen(false)}>Zrušit</Button>
+                <Button type="button" variant="secondary" onClick={() => setResetOpen(false)}>Zrušit</Button>
                 <Button disabled={loading || newPassword.length < 6}>Uložit</Button>
               </div>
             </form>

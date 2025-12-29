@@ -87,7 +87,7 @@ export default function ChangePasswordPage() {
                         </label>
 
                         <div className="flex justify-end gap-2 pt-2">
-                            <Button type="button" tone="neutral" onClick={() => nav("/settings")}>
+                            <Button type="button" variant="secondary" onClick={() => nav("/settings")}>
                                 Zrušit
                             </Button>
                             <Button disabled={loading}>
