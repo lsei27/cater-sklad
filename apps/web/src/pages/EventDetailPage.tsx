@@ -61,16 +61,16 @@ export default function EventDetailPage() {
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [hardDeleteConfirm, setHardDeleteConfirm] = useState(false);
 
-  const load = async () => {
+  const load = async (opts?: { silent?: boolean }) => {
     if (!id) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const res = await api<{ event: any }>(`/events/${id}`);
       setEvent(res.event);
     } catch (e: any) {
       toast.error(humanError(e));
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   };
 
@@ -536,9 +536,7 @@ export default function EventDetailPage() {
         existingItems={reservationItems}
         initialSearch={addInitialSearch}
         focusItemId={addFocusItemId}
-        onDone={async () => {
-          await load();
-        }}
+        onDone={() => load({ silent: true })}
       />
 
       <Modal
@@ -801,7 +799,7 @@ function AddItemsPanel(props: {
       });
       setQty((prev) => ({ ...prev, [params.inventoryItemId]: normalizedQty }));
 
-      await props.onDone();
+      void props.onDone();
       if (normalizedQty <= 0) {
         toast.success("Odebráno");
       } else if (existing) {
