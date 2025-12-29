@@ -115,3 +115,5 @@ Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
 - **UI obrázky**: Miniatury položek se zobrazují při přidávání položek do akce i ve skladovém detailu. Do PDF exportů se obrázky nepřidávají.
 - **Add-items modal UX**: Přidání položek v `EventDetailPage` používá tichý refresh, aby modal neprobliknul; na desktopu se roloval pouze seznam skladu vlevo a panel "Položky v akci" zůstává viditelný (scrolluje jen při přetečení).
 - **Hesla v adminu a nastavení**: V admin UI a na stránce změny hesla je toggle pro zobrazení/skrývání hesla při zadávání.
+- **Seed a demo přihlašování**: Hesla pro seed uživatele bereme z env (`ADMIN_SEED_PASSWORD`, `EM_SEED_PASSWORD`, `CHEF_SEED_PASSWORD`, `WAREHOUSE_SEED_PASSWORD`). Demo přepínače na loginu jsou řízené `VITE_DEMO_USERS`.
+- **Repo hygiene**: `node_modules` a build cache jsou ignorované a nemají být commitované; po čistění stačí znovu spustit `pnpm install`.
