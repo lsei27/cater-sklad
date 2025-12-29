@@ -116,6 +116,45 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
   });
 
+  app.patch("/admin/users/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+    requireRole(request.user!.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        password: z.string().min(6).optional(),
+        name: z.string().min(1).optional(),
+        role: z.enum(["admin", "event_manager", "chef", "warehouse"]).optional()
+      })
+      .parse(request.body);
+
+    const data: any = {};
+    if (body.name) data.name = body.name;
+    if (body.role) data.role = body.role;
+    if (body.password) {
+      const bcrypt = await import("bcrypt");
+      data.passwordHash = await bcrypt.default.hash(body.password, 10);
+    }
+
+    if (Object.keys(data).length === 0) return reply.send({ ok: true });
+
+    const user = await app.prisma.user.update({
+      where: { id: params.id },
+      data
+    });
+
+    await app.prisma.auditLog.create({
+      data: {
+        actorUserId: request.user!.id,
+        entityType: "user",
+        entityId: user.id,
+        action: "update",
+        diffJson: body
+      }
+    });
+
+    return reply.send({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  });
+
   app.delete("/admin/users/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);

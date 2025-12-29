@@ -13,6 +13,7 @@ import WarehouseEventsPage from "./pages/WarehouseEventsPage";
 import WarehouseEventDetailPage from "./pages/WarehouseEventDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import HomeRedirect from "./pages/HomeRedirect";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/warehouse" element={<WarehouseEventsPage />} />
         <Route path="/warehouse/:id" element={<WarehouseEventDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/password" element={<ChangePasswordPage />} />
 
         <Route path="/settings/users" element={<AdminUsersPage />} />
         <Route path="/settings/roles" element={<AdminRoleCategoriesPage />} />

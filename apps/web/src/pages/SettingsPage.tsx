@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
+import { roleLabel } from "../lib/viewModel";
 import { FileUp, Layers3, Package, Users, ShieldAlert } from "lucide-react";
 
 function Tile(props: { to: string; title: string; desc: string; icon: any }) {
@@ -23,32 +24,29 @@ function Tile(props: { to: string; title: string; desc: string; icon: any }) {
 
 export default function SettingsPage() {
   const role = getCurrentUser()?.role ?? "";
-  if (role !== "admin") {
-    return (
-      <Card>
-        <CardContent>
-          <div className="text-sm text-slate-700">Nastavení je dostupné pouze pro administrátora.</div>
-        </CardContent>
-      </Card>
-    );
-  }
+  const isAdmin = role === "admin";
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Nastavení</h1>
-          <div className="text-sm text-slate-600">Správa skladu a uživatelů.</div>
+          <div className="text-sm text-slate-600">Správa aplikace a účtu.</div>
         </div>
-        <Badge>Admin</Badge>
+        <Badge>{roleLabel(role)}</Badge>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <Tile to="/settings/categories" title="Kategorie" desc="Strom typů a podkategorií." icon={Layers3} />
-        <Tile to="/settings/roles" title="Oprávnění rolí" desc="Přiřazení kategorií k rolím (Kuchyň, atd.)" icon={ShieldAlert} />
-        <Tile to="/settings/items" title="Položky" desc="Názvy, obrázky, aktivita, jednotky." icon={Package} />
-        <Tile to="/settings/items?import=true" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
-        <Tile to="/settings/users" title="Uživatelé" desc="Role a přístupy." icon={Users} />
+        {isAdmin && (
+          <>
+            <Tile to="/settings/categories" title="Kategorie" desc="Strom typů a podkategorií." icon={Layers3} />
+            <Tile to="/settings/roles" title="Oprávnění rolí" desc="Přiřazení kategorií k rolím (Kuchyň, atd.)" icon={ShieldAlert} />
+            <Tile to="/settings/items" title="Položky" desc="Názvy, obrázky, aktivita, jednotky." icon={Package} />
+            <Tile to="/settings/items?import=true" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
+            <Tile to="/settings/users" title="Uživatelé" desc="Role a přístupy." icon={Users} />
+          </>
+        )}
+        <Tile to="/settings/password" title="Změna hesla" desc="Změna přihlašovacího hesla." icon={ShieldAlert} />
       </div>
     </div>
   );

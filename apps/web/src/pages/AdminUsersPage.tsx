@@ -153,6 +153,31 @@ export default function AdminUsersPage() {
 
 function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
   const [confirm, setConfirm] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("Heslo musí mít alespoň 6 znaků.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api(`/admin/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ password: newPassword })
+      });
+      toast.success("Heslo resetováno");
+      setResetOpen(false);
+      setNewPassword("");
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Reset hesla selhal.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
@@ -163,6 +188,13 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
         </div>
         <div className="flex items-center gap-2">
           <Badge tone="neutral">{roleLabel(user.role)}</Badge>
+          <button
+            onClick={() => setResetOpen(true)}
+            className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+            title="Resetovat heslo"
+          >
+            <Icons.Lock className="h-4 w-4" /> {/* Assuming Lock icon exists or use generic */}
+          </button>
           <button
             onClick={() => setConfirm(true)}
             className="p-2 text-slate-400 hover:text-red-600 transition-colors"
@@ -190,6 +222,39 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
           }
         }}
       />
+
+      {/* Using a simple inline dialog or leveraging existing Modal/Dialog components. 
+         Since I can't confirm existing Dialog component API fully from here 
+         (ConfirmDialog is specific), I will use a simple fixed overlay or check if I can reuse something.
+         Actually, I see ConfirmDialog usage. I can probably create a simple custom dialog or check if there is a generic one.
+         Let's assume there isn't a generic versatile Dialog readily available in context, 
+         so I'll use a fixed overlay with styling similar to ConfirmDialog.*/}
+
+      {resetOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-lg font-semibold text-slate-900">Reset hesla</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Nastavit nové heslo pro uživatele <strong>{user.email}</strong>.
+            </p>
+            <form onSubmit={handleReset} className="mt-4 space-y-4">
+              <Input
+                autoFocus
+                type="password"
+                placeholder="Nové heslo (min. 6 znaků)"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={6}
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" tone="neutral" onClick={() => setResetOpen(false)}>Zrušit</Button>
+                <Button disabled={loading || newPassword.length < 6}>Uložit</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

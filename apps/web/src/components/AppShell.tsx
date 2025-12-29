@@ -22,7 +22,7 @@ export default function AppShell() {
   const role = user?.role ?? "";
   const eventsHref = role === "warehouse" ? "/warehouse" : "/events";
   const stockHref = "/inventory";
-  const isSettingsAllowed = role === "admin";
+  const isSettingsAllowed = true;
 
   const handleLogout = () => {
     setToken(null);
