@@ -17,32 +17,52 @@ async function getOrCreateCategory(params: { parentId: string | null; name: stri
 }
 
 async function main() {
-  const password = await bcrypt.hash("inter1995", 10);
+  const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
+  if (!adminSeedPassword) {
+    throw new Error("ADMIN_SEED_PASSWORD is required to seed the admin user.");
+  }
+  const password = await bcrypt.hash(adminSeedPassword, 10);
   const admin = await prisma.user.upsert({
     where: { email: "admin@local" },
     update: { name: "Admin", passwordHash: password, role: Role.admin },
     create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
   });
 
-  const emPassword = await bcrypt.hash("em123", 10);
-  const chefPassword = await bcrypt.hash("chef123", 10);
-  const whPassword = await bcrypt.hash("wh123", 10);
+  const emSeedPassword = process.env.EM_SEED_PASSWORD;
+  if (emSeedPassword) {
+    const emPassword = await bcrypt.hash(emSeedPassword, 10);
+    await prisma.user.upsert({
+      where: { email: "em@local" },
+      update: { name: "Event manager", passwordHash: emPassword, role: Role.event_manager },
+      create: { email: "em@local", name: "Event manager", passwordHash: emPassword, role: Role.event_manager }
+    });
+  } else {
+    console.log("Skipping demo Event Manager (EM_SEED_PASSWORD not set)");
+  }
 
-  await prisma.user.upsert({
-    where: { email: "em@local" },
-    update: {},
-    create: { email: "em@local", name: "Event manager", passwordHash: emPassword, role: Role.event_manager }
-  });
-  await prisma.user.upsert({
-    where: { email: "chef@local" },
-    update: {},
-    create: { email: "chef@local", name: "Kuchař", passwordHash: chefPassword, role: Role.chef }
-  });
-  await prisma.user.upsert({
-    where: { email: "warehouse@local" },
-    update: {},
-    create: { email: "warehouse@local", name: "Sklad", passwordHash: whPassword, role: Role.warehouse }
-  });
+  const chefSeedPassword = process.env.CHEF_SEED_PASSWORD;
+  if (chefSeedPassword) {
+    const chefPassword = await bcrypt.hash(chefSeedPassword, 10);
+    await prisma.user.upsert({
+      where: { email: "chef@local" },
+      update: { name: "Kuchař", passwordHash: chefPassword, role: Role.chef },
+      create: { email: "chef@local", name: "Kuchař", passwordHash: chefPassword, role: Role.chef }
+    });
+  } else {
+    console.log("Skipping demo Chef (CHEF_SEED_PASSWORD not set)");
+  }
+
+  const warehouseSeedPassword = process.env.WAREHOUSE_SEED_PASSWORD;
+  if (warehouseSeedPassword) {
+    const whPassword = await bcrypt.hash(warehouseSeedPassword, 10);
+    await prisma.user.upsert({
+      where: { email: "warehouse@local" },
+      update: { name: "Sklad", passwordHash: whPassword, role: Role.warehouse },
+      create: { email: "warehouse@local", name: "Sklad", passwordHash: whPassword, role: Role.warehouse }
+    });
+  } else {
+    console.log("Skipping demo Warehouse (WAREHOUSE_SEED_PASSWORD not set)");
+  }
 
   // Rename legacy "Technika" to "Kuchyň" if it exists so we don't creating duplicates and items stay valid
   const legacyTech = await prisma.category.findFirst({ where: { parentId: null, name: "Technika" } });

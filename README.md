@@ -39,11 +39,11 @@ Doporučené nastavení pro monorepo s `workspace:*`:
 - Output: `apps/web/dist`
 - Env: `VITE_API_BASE_URL=https://<render-api>`
 
-Seed účty:
-- `admin@local` / `admin123`
-- `em@local` / `em123`
-- `chef@local` / `chef123`
-- `warehouse@local` / `wh123`
+Seed účty (hesla z env při spuštění seed):
+- `admin@local` / `ADMIN_SEED_PASSWORD`
+- `em@local` / `EM_SEED_PASSWORD`
+- `chef@local` / `CHEF_SEED_PASSWORD`
+- `warehouse@local` / `WAREHOUSE_SEED_PASSWORD`
 
 ## UI (web)
 
@@ -60,13 +60,13 @@ Seed účty:
 ```bash
 curl -s http://localhost:3001/auth/login \
   -H 'content-type: application/json' \
-  -d '{"email":"admin@local","password":"admin123"}'
+  -d '{"email":"admin@local","password":"<ADMIN_SEED_PASSWORD>"}'
 ```
 
 Ulož token:
 
 ```bash
-TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"admin@local","password":"admin123"}' | jq -r .token)"
+TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"admin@local","password":"<ADMIN_SEED_PASSWORD>"}' | jq -r .token)"
 ```
 
 ### Create event (admin/EM)
@@ -90,7 +90,7 @@ curl -s http://localhost:3001/events/<EVENT_ID>/reserve \
 ### Confirm chef (chef/admin)
 
 ```bash
-CHEF_TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"chef@local","password":"chef123"}' | jq -r .token)"
+CHEF_TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"chef@local","password":"<CHEF_SEED_PASSWORD>"}' | jq -r .token)"
 curl -s http://localhost:3001/events/<EVENT_ID>/confirm-chef \
   -H "authorization: Bearer $CHEF_TOKEN" \
   -d '{}'
@@ -107,7 +107,7 @@ curl -s http://localhost:3001/events/<EVENT_ID>/export \
 ### Issue (warehouse/admin)
 
 ```bash
-WH_TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"warehouse@local","password":"wh123"}' | jq -r .token)"
+WH_TOKEN="$(curl -s http://localhost:3001/auth/login -H 'content-type: application/json' -d '{"email":"warehouse@local","password":"<WAREHOUSE_SEED_PASSWORD>"}' | jq -r .token)"
 curl -s http://localhost:3001/events/<EVENT_ID>/issue \
   -H "authorization: Bearer $WH_TOKEN" \
   -H 'content-type: application/json' \

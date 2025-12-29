@@ -142,13 +142,15 @@ export async function adminRoutes(app: FastifyInstance) {
       data
     });
 
+    const { password, ...rest } = body;
+    const diffJson = password ? { ...rest, passwordChanged: true } : rest;
     await app.prisma.auditLog.create({
       data: {
         actorUserId: request.user!.id,
         entityType: "user",
         entityId: user.id,
         action: "update",
-        diffJson: body
+        diffJson
       }
     });
 

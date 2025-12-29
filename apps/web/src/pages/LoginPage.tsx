@@ -8,10 +8,10 @@ import { humanError } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 
 const DEMO_USERS = [
-  { name: "Event Manager", email: "em@local", pass: "em123", role: "Manager", color: "bg-purple-100 text-purple-600" },
-  { name: "Skladník", email: "warehouse@local", pass: "wh123", role: "Sklad", color: "bg-orange-100 text-orange-600" },
-  { name: "Kuchař", email: "chef@local", pass: "chef123", role: "Kuchyně", color: "bg-green-100 text-green-600" },
-  { name: "Admin", email: "admin@local", pass: "inter1995", role: "Admin", color: "bg-blue-100 text-blue-600" },
+  { name: "Event Manager", email: "em@local", role: "Manager", color: "bg-purple-100 text-purple-600" },
+  { name: "Skladník", email: "warehouse@local", role: "Sklad", color: "bg-orange-100 text-orange-600" },
+  { name: "Kuchař", email: "chef@local", role: "Kuchyně", color: "bg-green-100 text-green-600" },
+  { name: "Admin", email: "admin@local", role: "Admin", color: "bg-blue-100 text-blue-600" },
 ];
 
 export default function LoginPage() {
@@ -20,12 +20,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = async (e?: React.FormEvent, creds?: { email: string; pass: string }) => {
+  const handleLogin = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (isLoading) return;
 
-    const loginEmail = creds?.email || email;
-    const loginPass = creds?.pass || password;
+    const loginEmail = email;
+    const loginPass = password;
 
     if (!loginEmail || !loginPass) {
       toast.error("Vyplňte prosím přihlašovací údaje");
@@ -59,14 +59,12 @@ export default function LoginPage() {
   };
 
   const handleDemoClick = (u: (typeof DEMO_USERS)[number]) => {
-    if (u.email === "admin@local") {
-      setEmail(u.email);
-      setPassword("");
-      toast("Admin vyžaduje zadání hesla.");
-      return;
-    }
-    void handleLogin(undefined, { email: u.email, pass: u.pass });
+    setEmail(u.email);
+    setPassword("");
+    toast("Zadejte heslo pro tento účet.");
   };
+
+  const demoEnabled = ["1", "true"].includes(String(import.meta.env.VITE_DEMO_USERS ?? "").toLowerCase());
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -112,35 +110,37 @@ export default function LoginPage() {
           </div>
         </form>
 
-        <div className="pt-6 mt-6 border-t border-gray-100 space-y-3">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rychlé přihlášení</div>
-          <div className="space-y-2">
-            {DEMO_USERS.map((u) => (
-              <button
-                key={u.email}
-                onClick={() => handleDemoClick(u)}
-                disabled={isLoading}
-                className="w-full flex items-center p-3 border border-gray-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed text-left bg-white shadow-sm"
-              >
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs mr-3 ${u.color}`}>
-                  {u.name.charAt(0)}
-                </div>
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-900 group-hover:text-indigo-700">{u.name}</div>
-                  <div className="text-[11px] text-gray-500 uppercase tracking-wide font-medium">
-                    {u.role}
+        {demoEnabled ? (
+          <div className="pt-6 mt-6 border-t border-gray-100 space-y-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Demo účty (vyplní email)</div>
+            <div className="space-y-2">
+              {DEMO_USERS.map((u) => (
+                <button
+                  key={u.email}
+                  onClick={() => handleDemoClick(u)}
+                  disabled={isLoading}
+                  className="w-full flex items-center p-3 border border-gray-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed text-left bg-white shadow-sm"
+                >
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs mr-3 ${u.color}`}>
+                    {u.name.charAt(0)}
                   </div>
-                </div>
-                <div className="text-gray-300 group-hover:text-indigo-500 transition-colors">
-                  {isLoading ? "..." : "→"}
-                </div>
-              </button>
-            ))}
+                  <div className="flex-1">
+                    <div className="font-semibold text-gray-900 group-hover:text-indigo-700">{u.name}</div>
+                    <div className="text-[11px] text-gray-500 uppercase tracking-wide font-medium">
+                      {u.role}
+                    </div>
+                  </div>
+                  <div className="text-gray-300 group-hover:text-indigo-500 transition-colors">
+                    {isLoading ? "..." : "→"}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-gray-500">
+              <Icons.User /> Heslo se zadává ručně.
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-gray-500">
-            <Icons.User /> Admin vyžaduje ruční zadání hesla.
-          </div>
-        </div>
+        ) : null}
       </div>
     </div>
   );
