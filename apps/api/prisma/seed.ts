@@ -18,15 +18,19 @@ async function getOrCreateCategory(params: { parentId: string | null; name: stri
 
 async function main() {
   const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
-  if (!adminSeedPassword) {
+  const existingAdmin = await prisma.user.findUnique({ where: { email: "admin@local" } });
+  if (!adminSeedPassword && existingAdmin) {
+    console.log("ADMIN_SEED_PASSWORD not set; keeping existing admin credentials.");
+  } else if (!adminSeedPassword) {
     throw new Error("ADMIN_SEED_PASSWORD is required to seed the admin user.");
+  } else {
+    const password = await bcrypt.hash(adminSeedPassword, 10);
+    await prisma.user.upsert({
+      where: { email: "admin@local" },
+      update: { name: "Admin", passwordHash: password, role: Role.admin },
+      create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
+    });
   }
-  const password = await bcrypt.hash(adminSeedPassword, 10);
-  const admin = await prisma.user.upsert({
-    where: { email: "admin@local" },
-    update: { name: "Admin", passwordHash: password, role: Role.admin },
-    create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
-  });
 
   const emSeedPassword = process.env.EM_SEED_PASSWORD;
   if (emSeedPassword) {
