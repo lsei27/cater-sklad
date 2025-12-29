@@ -654,7 +654,7 @@ function AddItemsPanel(props: {
   onOpenChange: (v: boolean) => void;
   eventId: string;
   role: string;
-  existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any }>;
+  existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>;
   onDone: () => void;
   initialSearch?: string;
   focusItemId?: string;
@@ -666,16 +666,32 @@ function AddItemsPanel(props: {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [qty, setQty] = useState<Record<string, number>>({});
+  const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>>([]);
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [availability, setAvailability] = useState<Map<string, StockRow>>(new Map());
   const initRef = useRef(false);
   const prefillRef = useRef(false);
 
   const isChef = props.role === "chef";
+  const userId = getCurrentUser()?.id;
 
   const subcats = useMemo(() => {
     const p = parents.find((x) => x.id === parentId);
     return p?.children ?? [];
   }, [parents, parentId]);
+
+  useEffect(() => {
+    if (!props.open) return;
+    const nextItems = props.existingItems.filter((r) => Number(r.reservedQuantity) > 0);
+    setCurrentItems(nextItems);
+    setQty((prev) => {
+      const next = { ...prev };
+      for (const item of nextItems) {
+        next[item.inventoryItemId] = Number(item.reservedQuantity);
+      }
+      return next;
+    });
+  }, [props.open, props.existingItems]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -754,27 +770,53 @@ function AddItemsPanel(props: {
     });
   }, [props.open, props.focusItemId, availability]);
 
-  const save = async () => {
-    const list = Object.entries(qty)
-      .map(([inventory_item_id, q]) => ({ inventory_item_id, qty: Number(q) }))
-      .filter((x) => x.qty > 0);
-    if (list.length === 0) {
-      toast.error("Vyber aspoň jednu položku.");
-      return;
-    }
+  const applyReservation = async (params: { inventoryItemId: string; qty: number; item?: any; createdById?: string }) => {
+    const normalizedQty = Math.max(0, Math.floor(Number(params.qty) || 0));
+    const existing = currentItems.find((r) => r.inventoryItemId === params.inventoryItemId);
+    if (!existing && normalizedQty <= 0) return;
+    if (existing && normalizedQty === Number(existing.reservedQuantity)) return;
+
+    setSaving((prev) => ({ ...prev, [params.inventoryItemId]: true }));
     try {
       await api(`/events/${props.eventId}/reserve`, {
         method: "POST",
-        body: JSON.stringify({ items: list })
+        body: JSON.stringify({ items: [{ inventory_item_id: params.inventoryItemId, qty: normalizedQty }] })
       });
-      toast.success("Uloženo");
-      setQty({});
-      props.onOpenChange(false);
-      props.onDone();
+
+      setCurrentItems((prev) => {
+        const found = prev.find((r) => r.inventoryItemId === params.inventoryItemId);
+        if (normalizedQty <= 0) {
+          return prev.filter((r) => r.inventoryItemId !== params.inventoryItemId);
+        }
+        const nextItem = {
+          inventoryItemId: params.inventoryItemId,
+          reservedQuantity: normalizedQty,
+          item: params.item ?? found?.item,
+          createdById: found?.createdById ?? params.createdById ?? userId
+        };
+        if (found) {
+          return prev.map((r) => (r.inventoryItemId === params.inventoryItemId ? { ...r, ...nextItem } : r));
+        }
+        return [...prev, nextItem];
+      });
+      setQty((prev) => ({ ...prev, [params.inventoryItemId]: normalizedQty }));
+
+      await props.onDone();
+      if (normalizedQty <= 0) {
+        toast.success("Odebráno");
+      } else if (existing) {
+        toast.success("Aktualizováno");
+      } else {
+        toast.success("Přidáno");
+      }
     } catch (e: any) {
       toast.error(humanError(e));
+    } finally {
+      setSaving((prev) => ({ ...prev, [params.inventoryItemId]: false }));
     }
   };
+
+  const activeItems = currentItems.filter((r) => Number(r.reservedQuantity) > 0);
 
   return (
     <Modal
@@ -783,9 +825,6 @@ function AddItemsPanel(props: {
       title="Přidat položky"
       description="Zobrazujeme dostupnost pro termín této akce."
       contentClassName="max-w-5xl"
-      primaryText="Uložit výběr"
-      onPrimary={save}
-      primaryDisabled={loading}
     >
       <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="space-y-4">
@@ -849,38 +888,39 @@ function AddItemsPanel(props: {
                 const available = a?.available ?? 0;
                 const unit = i.unit ?? "ks";
                 const tone = stockTone(available);
+                const existingReserved = currentItems.find((r) => r.inventoryItemId === i.id)?.reservedQuantity ?? 0;
                 return (
                   <div key={i.id} className="rounded-2xl border border-slate-200 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
-                        {i.imageUrl ? (
-                          <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
-                        ) : (
-                          <Icons.Image className="h-5 w-5 text-slate-400" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold">{i.name}</div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          {i.category?.parent?.name ?? ""} / {i.category?.name}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
+                          {i.imageUrl ? (
+                            <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
+                          ) : (
+                            <Icons.Image className="h-5 w-5 text-slate-400" />
+                          )}
                         </div>
-                        <div className="mt-2">
-                          <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
-                            K dispozici pro tuto akci: {available} {unit}
-                          </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">{i.name}</div>
                           <div className="mt-1 text-xs text-slate-600">
-                            Celkem: {a?.physicalTotal ?? 0} · Rezervováno: {a?.blockedTotal ?? 0}
+                            {i.category?.parent?.name ?? ""} / {i.category?.name}
                           </div>
-                          {available === 0 ? (
-                            <div className="mt-1 text-xs text-slate-500">Momentálně nedostupné (rezervováno na jiné akce).</div>
-                          ) : null}
+                          <div className="mt-2">
+                            <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
+                              K dispozici pro tuto akci: {available} {unit}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-600">
+                              Celkem: {a?.physicalTotal ?? 0} · Rezervováno: {a?.blockedTotal ?? 0}
+                            </div>
+                            {available === 0 ? (
+                              <div className="mt-1 text-xs text-slate-500">Momentálně nedostupné (rezervováno na jiné akce).</div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="w-28">
-                      <label className="text-xs">
-                        Množství
+                      <div className="w-28">
+                        <label className="text-xs">
+                          Množství
                           <Input
                             className="mt-1"
                             type="number"
@@ -900,12 +940,12 @@ function AddItemsPanel(props: {
                           className="mt-2 w-full"
                           onClick={() => {
                             if (available === 0) return;
-                            setQty((prev) => {
-                              const next = Math.min(available, (prev[i.id] ?? 0) + 1);
-                              return { ...prev, [i.id]: next };
-                            });
+                            const desired = Math.max(0, Math.min(available, Number(qty[i.id] ?? 0)));
+                            const fallback = existingReserved > 0 ? Math.min(available, Number(existingReserved)) : Math.min(available, 1);
+                            const nextQty = desired > 0 ? desired : fallback;
+                            applyReservation({ inventoryItemId: i.id, qty: nextQty, item: i, createdById: userId });
                           }}
-                          disabled={available === 0}
+                          disabled={available === 0 || saving[i.id]}
                         >
                           <Icons.Plus className="h-3 w-3" /> Přidat
                         </Button>
@@ -921,37 +961,86 @@ function AddItemsPanel(props: {
         <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
           <div className="text-sm font-semibold text-slate-900">Položky v akci</div>
           <div className="mt-1 text-xs text-slate-600">
-            Aktuálně přidané položky ({props.existingItems.filter((r) => Number(r.reservedQuantity) > 0).length})
+            Aktuálně přidané položky ({activeItems.length})
           </div>
           <div className="mt-3 space-y-2 max-h-[55vh] overflow-auto pr-1">
-            {props.existingItems.filter((r) => Number(r.reservedQuantity) > 0).length === 0 ? (
+            {activeItems.length === 0 ? (
               <div className="text-xs text-slate-500">Zatím žádné položky.</div>
             ) : (
-              props.existingItems
-                .filter((r) => Number(r.reservedQuantity) > 0)
+              activeItems
+                .slice()
                 .sort((a, b) => (a.item?.name ?? "").localeCompare(b.item?.name ?? "", "cs"))
-                .map((r) => (
-                  <div key={r.inventoryItemId} className="rounded-xl border border-slate-200 bg-white p-2">
-                    <div className="flex items-start gap-2">
-                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 flex items-center justify-center">
-                        {r.item?.imageUrl ? (
-                          <img className="h-full w-full object-cover" src={apiUrl(r.item.imageUrl)} alt={r.item?.name ?? "Položka"} />
-                        ) : (
-                          <Icons.Image className="h-4 w-4 text-slate-400" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
+                .map((r) => {
+                  const isKitchenItem = String(r.item?.category?.parent?.name ?? "").toLowerCase() === "kuchyň";
+                  const canModify =
+                    props.role === "admin" ||
+                    (props.role === "event_manager" && (!r.createdById || r.createdById === userId)) ||
+                    (props.role === "chef" && isKitchenItem);
+                  const availableForItem = availability.get(r.inventoryItemId)?.available;
+                  const reservedValue = qty[r.inventoryItemId] ?? Number(r.reservedQuantity);
+                  const updateQty = () => applyReservation({ inventoryItemId: r.inventoryItemId, qty: reservedValue, item: r.item, createdById: r.createdById });
+                  return (
+                    <div key={r.inventoryItemId} className="rounded-xl border border-slate-200 bg-white p-2">
+                      <div className="flex items-start gap-2">
+                        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 flex items-center justify-center">
+                          {r.item?.imageUrl ? (
+                            <img className="h-full w-full object-cover" src={apiUrl(r.item.imageUrl)} alt={r.item?.name ?? "Položka"} />
+                          ) : (
+                            <Icons.Image className="h-4 w-4 text-slate-400" />
+                          )}
                         </div>
-                        <div className="mt-1 text-xs font-semibold text-slate-700">
-                          {Number(r.reservedQuantity)} {r.item?.unit ?? "ks"}
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">
+                            {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
+                          </div>
+                          {canModify ? (
+                            <div className="mt-2 flex items-center gap-2">
+                              <Input
+                                className="h-8 w-20 text-xs"
+                                type="number"
+                                min={0}
+                                max={availableForItem}
+                                value={reservedValue}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => {
+                                  const raw = Number(e.target.value);
+                                  const clamped = availableForItem === undefined ? Math.max(0, raw) : Math.max(0, Math.min(availableForItem, raw));
+                                  setQty((prev) => ({ ...prev, [r.inventoryItemId]: clamped }));
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") updateQty();
+                                }}
+                                disabled={saving[r.inventoryItemId]}
+                              />
+                              <span className="text-[11px] text-slate-500">{r.item?.unit ?? "ks"}</span>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={updateQty}
+                                disabled={saving[r.inventoryItemId]}
+                              >
+                                Uložit
+                              </Button>
+                              <button
+                                className="rounded-lg p-1 text-slate-400 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Odebrat"
+                                onClick={() => applyReservation({ inventoryItemId: r.inventoryItemId, qty: 0, item: r.item, createdById: r.createdById })}
+                                disabled={saving[r.inventoryItemId]}
+                              >
+                                <Icons.Trash className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-xs font-semibold text-slate-700">
+                              {Number(r.reservedQuantity)} {r.item?.unit ?? "ks"}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
             )}
           </div>
         </div>
