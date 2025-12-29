@@ -31,6 +31,7 @@ Aplikace je postavena jako **monorepo** s následující strukturou:
 - **Routing**: React Router DOM.
 - **Ikony**: Lucide React.
 - **Komponenty**: Vlastní UI komponenty postavené na základech Radix UI (např. Modals/Dialogs).
+- **Modal body layout**: `Modal` podporuje `bodyClassName` pro řízení scrollu a layoutu obsahu u specifických oken.
 - **Notifikace**: react-hot-toast.
 
 ---
@@ -112,3 +113,4 @@ Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
 - **Měření/Váhy**: Defaultní jednotka je `ks`, ale podporujeme jakékoliv stringové vyjádření jednotky u položky.
 - **Event list**: Náhledy akcí jsou v UI seskupené podle stavu (DRAFT nahoře, CLOSED dole) a v rámci sekce podle data.
 - **UI obrázky**: Miniatury položek se zobrazují při přidávání položek do akce i ve skladovém detailu. Do PDF exportů se obrázky nepřidávají.
+- **Add-items modal UX**: Přidání položek v `EventDetailPage` používá tichý refresh, aby modal neprobliknul; na desktopu se roloval pouze seznam skladu vlevo a panel "Položky v akci" zůstává viditelný (scrolluje jen při přetečení).
