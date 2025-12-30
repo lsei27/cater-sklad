@@ -736,7 +736,7 @@ function AddItemsPanel(props: {
       const res = await api<{ items: any[] }>(`/inventory/items?${q.toString()}`);
       const slice = res.items.slice(0, 50);
       setItems(slice);
-      const ids = slice.map((i: any) => i.id);
+      const ids = slice.map((i: any) => i.itemId ?? i.id);
       if (ids.length) {
         const a = await api<{ rows: StockRow[] }>(`/events/${props.eventId}/availability`, {
           method: "POST",
@@ -902,13 +902,14 @@ function AddItemsPanel(props: {
               <div className="text-sm text-slate-600">Žádné položky pro zvolené filtry.</div>
             ) : (
               items.map((i: any) => {
-                const a = availability.get(i.id);
+                const itemId = i.itemId ?? i.id;
+                const a = availability.get(itemId);
                 const available = a?.available ?? 0;
                 const unit = i.unit ?? "ks";
                 const tone = stockTone(available);
-                const existingReserved = currentItems.find((r) => r.inventoryItemId === i.id)?.reservedQuantity ?? 0;
+                const existingReserved = currentItems.find((r) => r.inventoryItemId === itemId)?.reservedQuantity ?? 0;
                 return (
-                  <div key={i.id} className="rounded-2xl border border-slate-200 p-3">
+                  <div key={itemId} className="rounded-2xl border border-slate-200 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
@@ -945,11 +946,11 @@ function AddItemsPanel(props: {
                             min={0}
                             max={available}
                             disabled={available === 0}
-                            value={qty[i.id] ?? 0}
+                            value={qty[itemId] ?? 0}
                             onFocus={(e) => e.target.select()}
                             onChange={(e) => {
                               const v = Math.max(0, Math.min(available, Number(e.target.value)));
-                              setQty((prev) => ({ ...prev, [i.id]: v }));
+                              setQty((prev) => ({ ...prev, [itemId]: v }));
                             }}
                           />
                         </label>
@@ -958,12 +959,12 @@ function AddItemsPanel(props: {
                           className="mt-2 w-full"
                           onClick={() => {
                             if (available === 0) return;
-                            const desired = Math.max(0, Math.min(available, Number(qty[i.id] ?? 0)));
+                            const desired = Math.max(0, Math.min(available, Number(qty[itemId] ?? 0)));
                             const fallback = existingReserved > 0 ? Math.min(available, Number(existingReserved)) : Math.min(available, 1);
                             const nextQty = desired > 0 ? desired : fallback;
-                            applyReservation({ inventoryItemId: i.id, qty: nextQty, item: i, createdById: userId });
+                            applyReservation({ inventoryItemId: itemId, qty: nextQty, item: i, createdById: userId });
                           }}
-                          disabled={available === 0 || saving[i.id]}
+                          disabled={available === 0 || saving[itemId]}
                         >
                           <Icons.Plus className="h-3 w-3" /> Přidat
                         </Button>

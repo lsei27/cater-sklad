@@ -19,7 +19,7 @@ WITH target AS (
 item AS (
   SELECT
     i.id AS item_id,
-    i.return_delay_days AS delay_days
+    COALESCE(i.return_delay_days, 0) AS delay_days
   FROM inventory_items i
   WHERE i.id = ${inventoryItemId}::uuid
 ),
@@ -28,7 +28,8 @@ target_interval AS (
     t.event_id,
     t.t_start AS start_at,
     (t.t_pickup + (item.delay_days || ' days')::interval) AS end_at
-  FROM target t, item
+  FROM target t
+  CROSS JOIN item
 ),
 physical AS (
   SELECT COALESCE(SUM(l.delta_quantity),0) AS physical_total
@@ -57,10 +58,9 @@ blocked AS (
     )
 )
 SELECT
-  physical.physical_total,
-  blocked.blocked_total,
-  (physical.physical_total - blocked.blocked_total) AS available
-FROM physical, blocked;
+  COALESCE((SELECT physical_total FROM physical), 0) AS physical_total,
+  COALESCE((SELECT blocked_total FROM blocked), 0) AS blocked_total,
+  (COALESCE((SELECT physical_total FROM physical), 0) - COALESCE((SELECT blocked_total FROM blocked), 0)) AS available;
   `;
 
   const row = rows[0] ?? { physical_total: 0, blocked_total: 0, available: 0 };
