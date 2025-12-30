@@ -1,4 +1,4 @@
-import type { Role, Prisma } from "@prisma/client";
+import type { Role, Prisma } from "../../generated/prisma/client.js";
 import { getAvailabilityForEventItemTx } from "./availability.js";
 
 export class InsufficientStockError extends Error {

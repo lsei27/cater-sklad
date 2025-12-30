@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../generated/prisma/client.js";
 import { type ExportSnapshot } from "../pdf/exportPdf.js";
 
 export async function createExportTx(params: {

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EventStatus } from "@prisma/client";
+import { EventStatus } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";

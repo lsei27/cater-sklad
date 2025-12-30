@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
-import { ReservationState } from "@prisma/client";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { ReservationState } from "../../generated/prisma/client.js";
 
 export async function inventoryRoutes(app: FastifyInstance) {
   app.get("/categories/tree", { preHandler: [app.authenticate] }, async () => {

@@ -1,4 +1,4 @@
-import type { Role } from "@prisma/client";
+import type { Role } from "../../generated/prisma/client.js";
 
 export function requireRole(userRole: Role, allowed: Role[]) {
   if (!allowed.includes(userRole)) {

@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 
 export type AvailabilityRow = { physical_total: number; blocked_total: number; available: number };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PrismaClient, Role, LedgerReason } from "@prisma/client";
+import { PrismaClient, Role, LedgerReason } from "../generated/prisma/client.js";
 import { reserveItemsTx, InsufficientStockError } from "../src/services/reserve.js";
 
 describe("reserve transaction (integration)", () => {

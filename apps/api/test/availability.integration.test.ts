@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PrismaClient, Role, LedgerReason } from "@prisma/client";
+import { PrismaClient, Role, LedgerReason } from "../generated/prisma/client.js";
 import { getAvailabilityForEventItemTx } from "../src/services/availability.js";
 
 describe("availability SQL (integration)", () => {
