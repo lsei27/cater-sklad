@@ -124,9 +124,10 @@ Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
 - **PrismaPg Adapter**: PrismaClient v Prisma 7 vyžaduje adapter v konstruktoru. Používáme `PrismaPg` z `@prisma/adapter-pg` s `pg` Pool instancí.
 - **Real-time**: Sklad sleduje změny přes endpoint `/stream`, který posílá notifikace o nových exportech nebo změnách v ledgeru.
 - **Měření/Váhy**: Defaultní jednotka je `ks`, ale podporujeme jakékoliv stringové vyjádření jednotky u položky.
-- **Event list**: Náhledy akcí jsou v UI seskupené podle stavu (DRAFT nahoře, CLOSED dole) a v rámci sekce podle data. Oddělovače mezi sekcemi používají `border-t border-slate-100` pro jemné vizuální oddělení.
+- **Event list**: Náhledy akcí jsou v UI seskupené podle stavu (DRAFT nahoře, CLOSED dole) a v rámci sekce podle data. Oddělovače mezi sekcemi používají `border-t border-slate-100` pro jemné vizuální oddělení. Čára pod tlačítky přepínání zobrazení také používá `border-slate-100` pro konzistentní vzhled.
 - **UI obrázky**: Miniatury položek se zobrazují při přidávání položek do akce i ve skladovém detailu. Do PDF exportů se obrázky nepřidávají.
 - **Add-items modal UX**: Přidání položek v `EventDetailPage` používá tichý refresh, aby modal neprobliknul; na desktopu se roloval pouze seznam skladu vlevo a panel "Položky v akci" zůstává viditelný (scrolluje jen při přetečení).
+- **Automatické filtrování ve skladu**: Filtry na stránce skladu (`InventoryPage`) fungují automaticky - při změně kategorie (Typ/Kategorie) nebo při psaní názvu se výsledky načítají okamžitě bez nutnosti klikat na tlačítko. Vyhledávání má 300ms debounce pro optimalizaci API volání. Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu).
 - **Hesla v adminu a nastavení**: V admin UI a na stránce změny hesla je toggle pro zobrazení/skrývání hesla při zadávání.
 - **Seed a demo přihlašování**: Hesla pro seed uživatele bereme z env (`ADMIN_SEED_PASSWORD`, `EM_SEED_PASSWORD`, `CHEF_SEED_PASSWORD`, `WAREHOUSE_SEED_PASSWORD`). Demo přepínače na loginu jsou řízené `VITE_DEMO_USERS`.
 - **Repo hygiene**: `node_modules`, `generated/` (Prisma Client output) a build cache jsou ignorované a nemají být commitované; po čistění stačí znovu spustit `pnpm install` a `npx prisma generate`.
@@ -200,3 +201,11 @@ Aktualizace provedena přes Context7 MCP server pro zjištění nejnovějších 
 - **apps/web/postcss.config.js**: Změněn plugin z `tailwindcss` na `@tailwindcss/postcss`
 - **apps/web/src/styles.css**: Změněn import z `@tailwind` direktiv na `@import "tailwindcss"`
 - **.gitignore**: Přidána `generated/` složka pro Prisma Client output
+
+### UX Vylepšení (prosinec 2024)
+- **Jemnější oddělovače v UI**: Všechny oddělovače mezi sekcemi a pod tlačítky používají `border-slate-100` místo silnějších čar pro konzistentní a jemnější vzhled.
+- **Automatické filtrování ve skladu**: Filtry na stránce skladu (`InventoryPage.tsx`) fungují automaticky:
+  - Při změně kategorie (Typ/Kategorie) se výsledky načítají okamžitě
+  - Při psaní názvu se filtruje s 300ms debounce pro optimalizaci
+  - Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu)
+  - Implementováno pomocí `useCallback` a `useEffect` hooků s refy pro časové parametry

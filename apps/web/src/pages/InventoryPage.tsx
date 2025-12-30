@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, apiUrl, getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -52,7 +52,20 @@ export default function InventoryPage() {
     return d.toISOString().slice(0, 16);
   });
 
-  const load = async () => {
+  const isInitialLoad = useRef(true);
+  const startAtRef = useRef(startAt);
+  const endAtRef = useRef(endAt);
+
+  // Aktualizovat refy při změně
+  useEffect(() => {
+    startAtRef.current = startAt;
+  }, [startAt]);
+
+  useEffect(() => {
+    endAtRef.current = endAt;
+  }, [endAt]);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -61,8 +74,8 @@ export default function InventoryPage() {
       const q = new URLSearchParams();
       q.set("active", "true");
       q.set("with_stock", "true");
-      q.set("start_at", new Date(startAt).toISOString());
-      q.set("end_at", new Date(endAt).toISOString());
+      q.set("start_at", new Date(startAtRef.current).toISOString());
+      q.set("end_at", new Date(endAtRef.current).toISOString());
       if (search) q.set("search", search);
       if (parentId) q.set("parent_category_id", parentId);
       if (categoryId) q.set("category_id", categoryId);
@@ -72,8 +85,9 @@ export default function InventoryPage() {
       setError(e?.error?.message ?? "Nepodařilo se načíst sklad.");
     } finally {
       setLoading(false);
+      isInitialLoad.current = false;
     }
-  };
+  }, [search, parentId, categoryId]);
 
   useEffect(() => {
     load();
@@ -82,6 +96,28 @@ export default function InventoryPage() {
   useEffect(() => {
     localStorage.setItem("inv_view", view);
   }, [view]);
+
+  // Automatické filtrování při změně kategorií
+  useEffect(() => {
+    // Načíst pouze pokud už proběhlo prvotní načtení
+    if (!isInitialLoad.current) {
+      load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parentId, categoryId]);
+
+  // Automatické filtrování při psaní názvu (s debounce)
+  useEffect(() => {
+    // Načíst pouze pokud už proběhlo prvotní načtení
+    if (isInitialLoad.current) return;
+    
+    const timer = setTimeout(() => {
+      load();
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const loadEvents = async () => {
     setEventsLoading(true);
@@ -233,7 +269,7 @@ export default function InventoryPage() {
             </div>
 
             <div className="md:col-span-6 lg:col-span-12 flex justify-end">
-              <Button onClick={load}>Použít filtry</Button>
+              <Button onClick={load} variant="secondary">Obnovit</Button>
             </div>
           </div>
         </CardContent>
