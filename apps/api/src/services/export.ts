@@ -14,6 +14,7 @@ export async function createExportTx(params: {
             name: string;
             location: string;
             address: string | null;
+            notes: string | null;
             event_date: Date | null;
             delivery_datetime: Date;
             pickup_datetime: Date;
@@ -23,7 +24,7 @@ export async function createExportTx(params: {
             manager_id: string;
         }[]
     >`
-    SELECT e.id, e.name, e.location, e.address, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text,
+    SELECT e.id, e.name, e.location, e.address, e.notes, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text,
            u.name as manager_name, u.email as manager_email, u.id as manager_id
     FROM events e
     JOIN users u ON u.id = e.created_by
@@ -81,6 +82,7 @@ export async function createExportTx(params: {
             name: ev.name,
             location: ev.location,
             address: ev.address ?? null,
+            notes: ev.notes ?? null,
             eventDate: ev.event_date?.toISOString() ?? null,
             deliveryDatetime: ev.delivery_datetime.toISOString(),
             pickupDatetime: ev.pickup_datetime.toISOString(),

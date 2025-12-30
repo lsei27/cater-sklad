@@ -21,6 +21,7 @@ const EventCreateSchema = z.object({
   name: z.string().min(1),
   location: z.string().min(1),
   address: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime(),
   pickup_datetime: z.string().datetime()
@@ -30,6 +31,7 @@ const EventUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   location: z.string().min(1).optional(),
   address: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime().optional(),
   pickup_datetime: z.string().datetime().optional()
@@ -102,6 +104,7 @@ export async function eventRoutes(app: FastifyInstance) {
         name: body.name,
         location: body.location,
         address: body.address ?? null,
+        notes: body.notes ?? null,
         eventDate: body.event_date ? new Date(body.event_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
@@ -141,6 +144,7 @@ export async function eventRoutes(app: FastifyInstance) {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.location !== undefined ? { location: body.location } : {}),
         ...(body.address !== undefined ? { address: body.address } : {}),
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
         ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
         ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
         ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})
@@ -523,7 +527,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const ev = await app.prisma.event.findUnique({
       where: { id: params.id },
-      select: { id: true, name: true, location: true, address: true, eventDate: true, deliveryDatetime: true, pickupDatetime: true, status: true }
+      select: { id: true, name: true, location: true, address: true, notes: true, eventDate: true, deliveryDatetime: true, pickupDatetime: true, status: true }
     });
     if (!ev) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
 
@@ -550,6 +554,7 @@ export async function eventRoutes(app: FastifyInstance) {
         name: ev.name,
         location: ev.location,
         address: ev.address,
+        notes: ev.notes ?? null,
         eventDate: ev.eventDate?.toISOString() ?? null,
         deliveryDatetime: ev.deliveryDatetime.toISOString(),
         pickupDatetime: ev.pickupDatetime.toISOString()

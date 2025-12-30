@@ -118,6 +118,7 @@ model Event {
   name                String
   location            String
   address             String?
+  notes               String?
   deliveryDatetime    DateTime    @map("delivery_datetime") @db.Timestamptz(6)
   pickupDatetime      DateTime    @map("pickup_datetime") @db.Timestamptz(6)
   eventDate           DateTime?   @map("event_date") @db.Timestamptz(6)

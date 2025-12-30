@@ -251,6 +251,11 @@ export default function EventDetailPage() {
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
               </div>
+              {event.notes ? (
+                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-2 text-xs text-slate-700 whitespace-pre-wrap">
+                  <span className="font-semibold text-slate-600">Poznámka:</span> {event.notes}
+                </div>
+              ) : null}
               {latestExport?.version ? (
                 <div className="mt-2 text-xs text-slate-500">
                   Poslední export: v{latestExport.version} • {new Date(latestExport.exportedAt).toLocaleString()}
@@ -577,6 +582,12 @@ export default function EventDetailPage() {
               <div><span className="text-slate-500">Doručení:</span> {new Date(exportPreview.event?.deliveryDatetime).toLocaleString("cs-CZ")}</div>
               <div><span className="text-slate-500">Svoz:</span> {new Date(exportPreview.event?.pickupDatetime).toLocaleString("cs-CZ")}</div>
             </div>
+            {exportPreview.event?.notes ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                <div className="text-xs font-semibold text-slate-500 mb-1">Poznámka</div>
+                {exportPreview.event.notes}
+              </div>
+            ) : null}
             <div className="border-t pt-3">
               <div className="mb-2 font-semibold">Položky k zabalení ({exportPreview.itemCount})</div>
               {exportPreview.groups?.map((g: any, i: number) => (

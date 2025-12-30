@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 
 export type ExportSnapshot = {
   event: {
@@ -6,6 +6,7 @@ export type ExportSnapshot = {
     name: string;
     location: string;
     address?: string | null;
+    notes?: string | null;
     eventDate?: string | null;
     deliveryDatetime: string;
     pickupDatetime: string;
@@ -34,6 +35,32 @@ function pdfText(value: unknown) {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^\x20-\x7E]/g, "?");
+}
+
+function wrapText(value: string, font: PDFFont, size: number, maxWidth: number) {
+  const lines: string[] = [];
+  const paragraphs = value.split(/\r?\n/);
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim();
+    if (!trimmed) {
+      lines.push("");
+      continue;
+    }
+    const words = trimmed.split(/\s+/);
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      const width = font.widthOfTextAtSize(pdfText(candidate), size);
+      if (width <= maxWidth || !line) {
+        line = candidate;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
 function formatCzechDate(isoString: string | null | undefined): string {
@@ -93,9 +120,40 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
 
   // Pickup Time
   page.drawText(pdfText(`Svoz: ${formatCzechDate(snapshot.event.pickupDatetime)}, ${formatCzechTime(snapshot.event.pickupDatetime)}`), { x: 50, y: yPos, size: 12, font });
-  yPos -= 30;
+  yPos -= 20;
+
+  const eventNotes = (snapshot.event.notes ?? "").trim();
+  if (eventNotes) {
+    if (yPos < 80) {
+      page = pdfDoc.addPage();
+      ({ width, height } = page.getSize());
+      yPos = height - 50;
+    }
+
+    page.drawText(pdfText("Poznamka:"), { x: 50, y: yPos, size: 11, font: bold });
+    yPos -= 14;
+
+    const noteLines = wrapText(eventNotes, font, 10, width - 100);
+    for (const line of noteLines) {
+      if (yPos < 60) {
+        page = pdfDoc.addPage();
+        ({ width, height } = page.getSize());
+        yPos = height - 50;
+      }
+      if (line) {
+        page.drawText(pdfText(line), { x: 50, y: yPos, size: 10, font });
+      }
+      yPos -= 12;
+    }
+    yPos -= 10;
+  }
 
   // Section Header: Items to Pack
+  if (yPos < 60) {
+    page = pdfDoc.addPage();
+    ({ width, height } = page.getSize());
+    yPos = height - 50;
+  }
   page.drawText(pdfText("Polozky k zabaleni"), { x: 50, y: yPos, size: 14, font: bold });
   yPos -= 20;
 

@@ -5,6 +5,7 @@ import { startSSE } from "../lib/sse";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
+import Textarea from "../components/ui/Textarea";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
@@ -334,6 +335,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
   const [name, setName] = useState("Akce");
   const [location, setLocation] = useState("Praha");
   const [address, setAddress] = useState("");
+  const [notes, setNotes] = useState("");
   const [eventDate, setEventDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
   const [delivery, setDelivery] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
   const [pickup, setPickup] = useState(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16));
@@ -358,6 +360,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
                   name,
                   location,
                   address: address || null,
+                  notes: notes.trim() || null,
                   event_date: eventDate ? new Date(eventDate).toISOString() : null,
                   delivery_datetime: new Date(delivery).toISOString(),
                   pickup_datetime: new Date(pickup).toISOString()
@@ -384,6 +387,15 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
           <label className="text-sm">
             Adresa
             <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Ulice, město" />
+          </label>
+          <label className="text-sm md:col-span-2">
+            Poznámka
+            <Textarea
+              className="mt-1 min-h-[90px]"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Např. auto do 3,5 t, omezený vjezd, specifické požadavky..."
+            />
           </label>
           <label className="text-sm">
             Datum akce

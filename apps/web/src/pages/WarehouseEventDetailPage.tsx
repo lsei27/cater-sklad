@@ -237,6 +237,11 @@ export default function WarehouseEventDetailPage() {
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
               </div>
+              {event.notes ? (
+                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-2 text-xs text-slate-700 whitespace-pre-wrap">
+                  <span className="font-semibold text-slate-600">Poznámka:</span> {event.notes}
+                </div>
+              ) : null}
               {snapshot?.event?.version ? (
                 <div className="mt-2 text-xs text-slate-500">Export verze: v{snapshot.event.version}</div>
               ) : null}
