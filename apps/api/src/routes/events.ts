@@ -869,6 +869,9 @@ export async function eventRoutes(app: FastifyInstance) {
   app.delete("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin"]);
+    if ((user.email || "").toLowerCase() !== "admin@local") {
+      return httpError(reply, 403, "FORBIDDEN", "Eventy může mazat pouze účet admin@local.");
+    }
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {

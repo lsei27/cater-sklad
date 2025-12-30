@@ -30,7 +30,11 @@ app.addContentTypeParser("text/plain", { parseAs: "string" }, (req, body, done) 
   done(null, body);
 });
 
-await app.register(cors, { origin: true, credentials: true });
+await app.register(cors, {
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+});
 await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 await app.register(prismaPlugin);
 await app.register(authPlugin, { jwtSecret: env.JWT_SECRET });
