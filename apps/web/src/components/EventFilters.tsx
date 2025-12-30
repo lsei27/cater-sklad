@@ -73,6 +73,7 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
                     value={filters.year || ""}
                     onChange={(e) => onChange({ ...filters, year: e.target.value ? Number(e.target.value) : undefined })}
                 >
+                    <option value="">Všechny akce</option>
                     {years.map((y) => (
                         <option key={y} value={y}>
                             {y}

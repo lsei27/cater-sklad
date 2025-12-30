@@ -29,9 +29,7 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<EventFiltersData>({
-    year: new Date().getFullYear(),
-  });
+  const [filters, setFilters] = useState<EventFiltersData>({});
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const role = getCurrentUser()?.role ?? "";
 
