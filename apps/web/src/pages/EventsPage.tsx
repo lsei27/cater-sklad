@@ -201,7 +201,7 @@ export default function EventsPage() {
                   <span>{section.label}</span>
                   <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
                 </div>
-                <div className="mt-2 h-px bg-slate-200" />
+                <div className="mt-2 border-t border-slate-100" />
               </div>
               {section.events.map((e) => {
                 const manager = managerLabel(e.createdBy);
@@ -262,7 +262,7 @@ export default function EventsPage() {
                 <span>{section.label}</span>
                 <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
               </div>
-              <div className="mt-2 h-px bg-slate-200" />
+              <div className="mt-2 border-t border-slate-100" />
               <div className="mt-3 space-y-2">
                 {section.events.map((e) => {
                   const manager = managerLabel(e.createdBy);
