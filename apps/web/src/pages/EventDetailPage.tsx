@@ -686,8 +686,10 @@ function AddItemsPanel(props: {
   const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [availability, setAvailability] = useState<Map<string, StockRow>>(new Map());
+  const [categoriesReady, setCategoriesReady] = useState(false);
   const initRef = useRef(false);
   const prefillRef = useRef(false);
+  const loadSeq = useRef(0);
 
   const isChef = props.role === "chef";
   const userId = getCurrentUser()?.id;
@@ -711,9 +713,13 @@ function AddItemsPanel(props: {
   }, [props.open, props.existingItems]);
 
   useEffect(() => {
-    if (!props.open) return;
+    if (!props.open) {
+      setCategoriesReady(false);
+      return;
+    }
     initRef.current = false;
     prefillRef.current = false;
+    setCategoriesReady(false);
     api<{ parents: any[] }>("/categories/tree")
       .then((r) => {
         setParents(r.parents);
@@ -722,11 +728,13 @@ function AddItemsPanel(props: {
           if (tech) setParentId(tech.id);
         }
       })
-      .catch(() => { });
-  }, [props.open]);
+      .catch(() => { })
+      .finally(() => setCategoriesReady(true));
+  }, [props.open, isChef]);
 
   const load = async () => {
     setLoading(true);
+    const seq = ++loadSeq.current;
     try {
       const q = new URLSearchParams();
       q.set("active", "true");
@@ -734,6 +742,7 @@ function AddItemsPanel(props: {
       if (parentId) q.set("parent_category_id", parentId);
       if (categoryId) q.set("category_id", categoryId);
       const res = await api<{ items: any[] }>(`/inventory/items?${q.toString()}`);
+      if (seq !== loadSeq.current) return;
       const slice = res.items.slice(0, 50);
       setItems(slice);
       const ids = slice.map((i: any) => i.itemId ?? i.id);
@@ -742,6 +751,7 @@ function AddItemsPanel(props: {
           method: "POST",
           body: JSON.stringify({ inventory_item_ids: ids })
         });
+        if (seq !== loadSeq.current) return;
         setAvailability(new Map(a.rows.map((x) => [x.inventoryItemId, x])));
       } else {
         setAvailability(new Map());
@@ -749,14 +759,9 @@ function AddItemsPanel(props: {
     } catch (e: any) {
       toast.error(humanError(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (!props.open) return;
-    load();
-  }, [props.open]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -767,9 +772,10 @@ function AddItemsPanel(props: {
 
   useEffect(() => {
     if (!props.open) return;
+    if (isChef && !categoriesReady) return;
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
-  }, [props.open, search, parentId, categoryId]);
+  }, [props.open, search, parentId, categoryId, categoriesReady, isChef]);
 
   useEffect(() => {
     if (!props.open) return;
