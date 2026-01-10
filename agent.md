@@ -48,7 +48,7 @@ Aplikace je postavena jako **monorepo** s následující strukturou:
 - PrismaClient vyžaduje PrismaPg adapter pro PostgreSQL připojení (předáno v konstruktoru).
 - Linked dependency `db@./generated/prisma` je přidána pro čistší importy (aktuálně nepoužíváno, preferujeme relativní cesty).
 
-Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
+Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompatibilní). Hlavní modely:
 
 ### 1. Uživatelé a Role (`User`)
 - **Role**: `admin`, `event_manager`, `chef`, `warehouse`.
@@ -84,7 +84,7 @@ Databáze běží na **Renderu (PostgreSQL)**. Hlavní modely:
 ### Render.com
 - Backend i Frontend jsou nasazeny na Renderu.
 - **Automatický deployment**: Každý push do větve `main` spustí build a deploy.
-- **Databáze**: Spravovaná Postgres instance na Renderu.
+- **Databáze**: Spravovaná Postgres instance na **Supabase** (přesunuto z Renderu). Backend se připojuje přes Session pooler (IPv4 kompatibilní, connection string v `prisma.config.ts`).
 - **Migrace**: Při buildu se spouští `npx prisma migrate deploy`.
 
 ### Vercel
