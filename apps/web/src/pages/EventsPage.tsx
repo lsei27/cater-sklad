@@ -36,8 +36,8 @@ export default function EventsPage() {
 
   if (role === "warehouse") return <Navigate to="/warehouse" replace />;
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filters.status) params.append("status", filters.status);
@@ -53,15 +53,15 @@ export default function EventsPage() {
     } catch (e: any) {
       setError(e?.error?.message ?? "Failed");
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => {
     load();
     const off = startSSE((ev: any) => {
-      if (["event_status_changed", "export_created", "reservation_changed"].includes(ev?.type)) load();
+      if (["event_status_changed", "export_created", "reservation_changed"].includes(ev?.type)) load({ silent: true });
     });
-    const interval = setInterval(load, 15000);
+    const interval = setInterval(() => load({ silent: true }), 15000);
     return () => {
       off();
       clearInterval(interval);
