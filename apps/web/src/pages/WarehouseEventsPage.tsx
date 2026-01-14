@@ -77,7 +77,7 @@ export default function WarehouseEventsPage() {
         <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
       </div>
 
-      <div className="flex items-center justify-between border-b pb-4">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-4">
         <div className="flex gap-2">
           <Button
             size="sm"

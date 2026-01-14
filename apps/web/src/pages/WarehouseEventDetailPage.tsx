@@ -262,7 +262,7 @@ export default function WarehouseEventDetailPage() {
             </div>
           </div>
           {event.status === "CLOSED" ? (
-            <div className="mt-4 border-t pt-4">
+            <div className="mt-4">
               <Button
                 size="sm"
                 variant="secondary"
@@ -278,7 +278,7 @@ export default function WarehouseEventDetailPage() {
           ) : null}
 
           {snapshot?.event?.version ? (
-            <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+            <div className="mt-4 flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant="secondary"
