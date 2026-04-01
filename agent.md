@@ -18,24 +18,24 @@ Aplikace je postavena jako **monorepo** s následující strukturou:
 ## 🛠 Technologie & Závislosti
 
 ### Backend (apps/api)
-- **Framework**: Fastify 5.6.2 (rychlý a nízkoúrovňový webový framework pro Node.js).
-- **ORM**: Prisma 7.2.0 (používá PostgreSQL na Renderu s PrismaPg adapterem).
-- **Validace**: Zod 4.2.1 (schémata pro API requesty).
+- **Framework**: Fastify 5.8.4 (rychlý a nízkoúrovňový webový framework pro Node.js).
+- **ORM**: Prisma 7.6.0 (používá PostgreSQL na Renderu s PrismaPg adapterem).
+- **Validace**: Zod 4.3.6 (schémata pro API requesty).
 - **Autentizace**: JWT (@fastify/jwt 10.0.0) + Bcrypt 6.0.0 pro hašování hesel.
 - **PDF Generování**: `pdf-lib` 1.17.1 (vytváření exportních dokumentů pro sklad).
 - **Hlášení změn**: SSE (Server-Sent Events) pro real-time aktualizace skladu.
-- **TypeScript**: 5.9.3
+- **TypeScript**: 6.0.2
 - **Prisma Konfigurace**: Prisma 7 vyžaduje `prisma.config.ts` pro datasource konfiguraci a PrismaPg adapter pro PostgreSQL připojení.
 
 ### Frontend (apps/web)
-- **UI Framework**: React 19.2.3 + Vite 7.3.0.
-- **Styling**: Tailwind CSS 4.1.18 (s @tailwindcss/postcss pluginem) + Vanilla CSS.
-- **Routing**: React Router DOM 7.11.0.
-- **Ikony**: Lucide React 0.562.0.
+- **UI Framework**: React 19.2.4 + Vite 8.0.3.
+- **Styling**: Tailwind CSS 4.2.2 (s @tailwindcss/postcss pluginem) + Vanilla CSS.
+- **Routing**: React Router DOM 7.13.2.
+- **Ikony**: Lucide React 1.7.0.
 - **Komponenty**: Vlastní UI komponenty postavené na základech Radix UI (např. Modals/Dialogs).
 - **Modal body layout**: `Modal` podporuje `bodyClassName` pro řízení scrollu a layoutu obsahu u specifických oken.
 - **Notifikace**: react-hot-toast 2.6.0.
-- **TypeScript**: 5.9.3
+- **TypeScript**: 6.0.2
 
 ---
 
