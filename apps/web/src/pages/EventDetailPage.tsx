@@ -11,7 +11,15 @@ import Textarea from "../components/ui/Textarea";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
-import { humanError, managerLabel, statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
+import {
+  compareByCategoryParentName,
+  formatCategoryParentLabel,
+  humanError,
+  managerLabel,
+  statusBadgeClass,
+  statusLabel,
+  stockTone
+} from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
@@ -182,10 +190,7 @@ export default function EventDetailPage() {
     }
 
     const sortedGroups = Array.from(groups.values()).sort((a, b) => {
-      const ap = String(a.parent).toLowerCase() === "kuchyň" ? 0 : 1;
-      const bp = String(b.parent).toLowerCase() === "kuchyň" ? 0 : 1;
-      if (ap !== bp) return ap - bp;
-      return (a.parent + a.sub).localeCompare(b.parent + b.sub, "cs");
+      return compareByCategoryParentName(a, b);
     });
 
     for (const g of sortedGroups) {
@@ -690,7 +695,9 @@ export default function EventDetailPage() {
               <div className="mb-2 font-semibold">Položky k zabalení ({exportPreview.itemCount})</div>
               {exportPreview.groups?.map((g: any, i: number) => (
                 <div key={i} className="mb-3">
-                  <div className="text-xs font-medium text-slate-500">{g.parentCategory} / {g.category}</div>
+                  <div className="text-xs font-medium text-slate-500">
+                    {formatCategoryParentLabel(g.category, g.parentCategory)}
+                  </div>
                   <ul className="ml-4 list-disc">
                     {g.items?.map((item: any, j: number) => (
                       <li key={j}>{item.name} — <strong>{item.qty} {item.unit}</strong></li>
@@ -1060,7 +1067,7 @@ function AddItemsPanel(props: {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold">{i.name}</div>
                           <div className="mt-1 text-xs text-slate-600">
-                            {i.category?.parent?.name ?? ""} / {i.category?.name}
+                            {formatCategoryParentLabel(i.category?.name, i.category?.parent?.name)}
                           </div>
                           {i.masterPackageQty && i.masterPackageQty > 0 ? (
                             <div className="mt-1 text-[10px] font-medium text-blue-600">
@@ -1131,7 +1138,7 @@ function AddItemsPanel(props: {
             ) : (
               activeItems
                 .slice()
-                .sort((a, b) => (a.item?.name ?? "").localeCompare(b.item?.name ?? "", "cs"))
+                .sort(compareByCategoryParentName)
                 .map((r) => {
                   const isKitchenItem = String(r.item?.category?.parent?.name ?? "").toLowerCase() === "kuchyň";
                   const canModify =
@@ -1154,7 +1161,7 @@ function AddItemsPanel(props: {
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
                           <div className="mt-1 text-[11px] text-slate-500">
-                            {r.item?.category?.parent?.name ?? ""} / {r.item?.category?.name ?? ""}
+                            {formatCategoryParentLabel(r.item?.category?.name, r.item?.category?.parent?.name)}
                           </div>
                           {canModify ? (
                             <div className="mt-2 flex items-center gap-2">

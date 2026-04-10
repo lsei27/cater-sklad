@@ -35,10 +35,10 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const items = await app.prisma.inventoryItem.findMany({
       where,
       orderBy: [
-        { category: { parent: { sortOrder: "asc" } } },
-        { category: { parent: { name: "asc" } } },
         { category: { sortOrder: "asc" } },
         { category: { name: "asc" } },
+        { category: { parent: { sortOrder: "asc" } } },
+        { category: { parent: { name: "asc" } } },
         { name: "asc" }
       ],
       include: { category: { include: { parent: true } }, warehouse: true }
@@ -64,9 +64,7 @@ WITH params AS (
   SELECT ${startAt}::timestamptz AS t_start, ${endAt}::timestamptz AS t_end
 ),
 items AS (
-  SELECT id, return_delay_days
-  FROM inventory_items
-  WHERE id = ANY(${itemIds}::uuid[])
+  SELECT id FROM inventory_items WHERE id = ANY(${itemIds}::uuid[])
 ),
 physical AS (
   SELECT inventory_item_id, COALESCE(SUM(delta_quantity),0)::int AS physical_total
@@ -74,25 +72,35 @@ physical AS (
   WHERE inventory_item_id = ANY(${itemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
-blocked AS (
+-- Per item+event: take GREATEST of reservation vs manual warehouse block
+per_event_blocked AS (
   SELECT
-    r.inventory_item_id,
-    COALESCE(SUM(r.reserved_quantity),0)::int AS blocked_total
-  FROM event_reservations r
-  JOIN events e2 ON e2.id = r.event_id
-  JOIN items i ON i.id = r.inventory_item_id
-	  CROSS JOIN params p
-	  WHERE r.inventory_item_id = ANY(${itemIds}::uuid[])
-	    AND e2.status NOT IN ('CLOSED','CANCELLED')
-	    AND (
-	      r.state = 'confirmed'
-	      OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())
-	    )
-    AND (
-      e2.delivery_datetime < (p.t_end + (i.return_delay_days || ' days')::interval)
-      AND p.t_start < (e2.pickup_datetime + (i.return_delay_days || ' days')::interval)
-    )
-  GROUP BY r.inventory_item_id
+    i.id AS inventory_item_id,
+    e2.id AS event_id,
+    GREATEST(
+      COALESCE(SUM(r.reserved_quantity), 0),
+      COALESCE(MAX(wb.blocked_quantity), 0)
+    )::int AS blocked_qty
+  FROM items i
+  JOIN events e2 ON e2.status NOT IN ('CLOSED','CANCELLED')
+  CROSS JOIN params p
+  LEFT JOIN event_reservations r
+    ON r.event_id = e2.id
+    AND r.inventory_item_id = i.id
+    AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+  LEFT JOIN warehouse_blocks wb
+    ON wb.event_id = e2.id
+    AND wb.inventory_item_id = i.id
+    AND p.t_start < wb.blocked_until
+  WHERE e2.delivery_datetime < p.t_end
+    AND p.t_start < e2.pickup_datetime
+    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
+  GROUP BY i.id, e2.id
+),
+blocked AS (
+  SELECT inventory_item_id, COALESCE(SUM(blocked_qty), 0)::int AS blocked_total
+  FROM per_event_blocked
+  GROUP BY inventory_item_id
 )
 SELECT
   i.id::text AS inventory_item_id,
@@ -170,9 +178,7 @@ WITH params AS (
   SELECT ${startAt}::timestamptz AS t_start, ${endAt}::timestamptz AS t_end
 ),
 items AS (
-  SELECT id, return_delay_days
-  FROM inventory_items
-  WHERE id = ANY(${targetItemIds}::uuid[])
+  SELECT id FROM inventory_items WHERE id = ANY(${targetItemIds}::uuid[])
 ),
 physical AS (
   SELECT inventory_item_id, COALESCE(SUM(delta_quantity),0)::int AS physical_total
@@ -180,25 +186,34 @@ physical AS (
   WHERE inventory_item_id = ANY(${targetItemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
-blocked AS (
+per_event_blocked AS (
   SELECT
-    r.inventory_item_id,
-    COALESCE(SUM(r.reserved_quantity),0)::int AS blocked_total
-  FROM event_reservations r
-  JOIN events e2 ON e2.id = r.event_id
-  JOIN items i ON i.id = r.inventory_item_id
+    i.id AS inventory_item_id,
+    e2.id AS event_id,
+    GREATEST(
+      COALESCE(SUM(r.reserved_quantity), 0),
+      COALESCE(MAX(wb.blocked_quantity), 0)
+    )::int AS blocked_qty
+  FROM items i
+  JOIN events e2 ON e2.status NOT IN ('CLOSED','CANCELLED')
   CROSS JOIN params p
-  WHERE r.inventory_item_id = ANY(${targetItemIds}::uuid[])
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND (
-      r.state = 'confirmed'
-      OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())
-    )
-    AND (
-      e2.delivery_datetime < (p.t_end + (i.return_delay_days || ' days')::interval)
-      AND p.t_start < (e2.pickup_datetime + (i.return_delay_days || ' days')::interval)
-    )
-  GROUP BY r.inventory_item_id
+  LEFT JOIN event_reservations r
+    ON r.event_id = e2.id
+    AND r.inventory_item_id = i.id
+    AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+  LEFT JOIN warehouse_blocks wb
+    ON wb.event_id = e2.id
+    AND wb.inventory_item_id = i.id
+    AND p.t_start < wb.blocked_until
+  WHERE e2.delivery_datetime < p.t_end
+    AND p.t_start < e2.pickup_datetime
+    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
+  GROUP BY i.id, e2.id
+),
+blocked AS (
+  SELECT inventory_item_id, COALESCE(SUM(blocked_qty), 0)::int AS blocked_total
+  FROM per_event_blocked
+  GROUP BY inventory_item_id
 )
 SELECT
   i.id::text AS inventory_item_id,

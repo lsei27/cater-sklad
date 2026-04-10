@@ -12,62 +12,44 @@ WITH target AS (
   SELECT
     e.id AS event_id,
     e.delivery_datetime AS t_start,
-    e.pickup_datetime   AS t_pickup
+    e.pickup_datetime   AS t_end
   FROM events e
   WHERE e.id = ${targetEventId}::uuid
-),
-item AS (
-  SELECT
-    i.id AS item_id,
-    COALESCE(i.return_delay_days, 0) AS delay_days
-  FROM inventory_items i
-  WHERE i.id = ${inventoryItemId}::uuid
-),
-target_interval AS (
-  SELECT
-    t.event_id,
-    t.t_start AS start_at,
-    (t.t_pickup + (item.delay_days || ' days')::interval) AS end_at
-  FROM target t
-  CROSS JOIN item
 ),
 physical AS (
   SELECT COALESCE(SUM(l.delta_quantity),0) AS physical_total
   FROM inventory_ledger l
   WHERE l.inventory_item_id = ${inventoryItemId}::uuid
 ),
-blocked AS (
-  SELECT COALESCE(SUM(
+-- Per-event: take GREATEST of reservation vs manual block, then sum across events
+per_event_blocked AS (
+  SELECT
+    e2.id AS event_id,
     GREATEST(
-      CASE WHEN (
-        e2.status NOT IN ('CLOSED','CANCELLED')
-        AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
-        AND e2.delivery_datetime < ti.end_at
-        AND ti.start_at < (e2.pickup_datetime + (item.delay_days || ' days')::interval)
-      ) THEN r.reserved_quantity ELSE 0 END,
-      CASE WHEN (
-        b.blocked_quantity IS NOT NULL
-        AND e2.pickup_datetime < ti.end_at
-        AND ti.start_at < b.blocked_until
-      ) THEN b.blocked_quantity ELSE 0 END
-    )
-  ), 0) AS blocked_total
-  FROM event_reservations r
-  JOIN events e2 ON e2.id = r.event_id
-  CROSS JOIN target_interval ti
-  CROSS JOIN item
-  LEFT JOIN (
-    SELECT event_id, inventory_item_id, MAX(blocked_until) AS blocked_until, MAX(blocked_quantity) AS blocked_quantity
-    FROM warehouse_blocks
-    GROUP BY event_id, inventory_item_id
-  ) b ON b.event_id = r.event_id AND b.inventory_item_id = r.inventory_item_id
-  WHERE r.inventory_item_id = ${inventoryItemId}::uuid
-    AND r.event_id <> ${targetEventId}::uuid
+      COALESCE(SUM(r.reserved_quantity), 0),
+      COALESCE(MAX(wb.blocked_quantity), 0)
+    ) AS blocked_qty
+  FROM events e2
+  CROSS JOIN target t
+  LEFT JOIN event_reservations r
+    ON r.event_id = e2.id
+    AND r.inventory_item_id = ${inventoryItemId}::uuid
+    AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+  LEFT JOIN warehouse_blocks wb
+    ON wb.event_id = e2.id
+    AND wb.inventory_item_id = ${inventoryItemId}::uuid
+    AND t.t_start < wb.blocked_until
+  WHERE e2.id <> ${targetEventId}::uuid
+    AND e2.status NOT IN ('CLOSED','CANCELLED')
+    AND e2.delivery_datetime < t.t_end
+    AND t.t_start < e2.pickup_datetime
+    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
+  GROUP BY e2.id
 )
 SELECT
   COALESCE((SELECT physical_total FROM physical), 0) AS physical_total,
-  COALESCE((SELECT blocked_total FROM blocked), 0) AS blocked_total,
-  (COALESCE((SELECT physical_total FROM physical), 0) - COALESCE((SELECT blocked_total FROM blocked), 0)) AS available;
+  COALESCE((SELECT SUM(blocked_qty) FROM per_event_blocked), 0) AS blocked_total,
+  (COALESCE((SELECT physical_total FROM physical), 0) - COALESCE((SELECT SUM(blocked_qty) FROM per_event_blocked), 0)) AS available;
   `;
 
   const row = rows[0] ?? { physical_total: 0, blocked_total: 0, available: 0 };

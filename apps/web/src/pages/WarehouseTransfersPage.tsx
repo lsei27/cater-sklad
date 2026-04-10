@@ -7,6 +7,7 @@ import Select from "../components/ui/Select";
 import { Icons } from "../lib/icons";
 import toast from "react-hot-toast";
 import { cn } from "../lib/ui";
+import { compareByCategoryParentName, formatCategoryParentLabel } from "../lib/viewModel";
 
 type Warehouse = {
   id: string;
@@ -64,7 +65,7 @@ export default function WarehouseTransfersPage() {
     i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.category.parent?.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
     i.category.sub.name.toLowerCase().includes(search.toLowerCase())
-  );
+  ).sort(compareByCategoryParentName);
 
   const addItemToTransfer = (i: Item) => {
     if (transferItems.find(x => x.itemId === i.itemId)) return;
@@ -294,7 +295,9 @@ export default function WarehouseTransfersPage() {
                     >
                       <div>
                         <div className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{i.name}</div>
-                        <div className="text-[11px] text-gray-500">{i.category.parent?.name} / {i.category.sub.name}</div>
+                        <div className="text-[11px] text-gray-500">
+                          {formatCategoryParentLabel(i.category.sub.name, i.category.parent?.name)}
+                        </div>
                       </div>
                       <div className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
                         <Icons.ChevronRight className="w-5 h-5" />

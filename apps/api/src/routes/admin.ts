@@ -201,10 +201,30 @@ export async function adminRoutes(app: FastifyInstance) {
     const query = z.object({ search: z.string().optional() }).parse(request.query);
     const items = await app.prisma.inventoryItem.findMany({
       where: query.search ? { name: { contains: query.search, mode: "insensitive" } } : {},
-      orderBy: { createdAt: "desc" },
+      orderBy: [
+        { category: { sortOrder: "asc" } },
+        { category: { name: "asc" } },
+        { category: { parent: { sortOrder: "asc" } } },
+        { category: { parent: { name: "asc" } } },
+        { name: "asc" }
+      ],
       include: { category: { include: { parent: true } } }
     });
-    return { items };
+    const totals = items.length
+      ? await app.prisma.inventoryLedger.groupBy({
+          by: ["inventoryItemId"],
+          where: { inventoryItemId: { in: items.map((item) => item.id) } },
+          _sum: { deltaQuantity: true }
+        })
+      : [];
+    const totalByItemId = new Map(totals.map((row) => [row.inventoryItemId, row._sum.deltaQuantity ?? 0]));
+    return {
+      items: items.map((item) => ({
+        ...item,
+        category_id: item.categoryId,
+        totalQuantity: totalByItemId.get(item.id) ?? 0
+      }))
+    };
   });
 
   app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -217,7 +237,6 @@ export async function adminRoutes(app: FastifyInstance) {
         unit: z.string().min(1).default("ks"),
         image_url: ImageUrlSchema.optional(),
         active: z.boolean().optional(),
-        return_delay_days: z.number().int().min(0).optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
@@ -235,7 +254,6 @@ export async function adminRoutes(app: FastifyInstance) {
         unit: body.unit,
         imageUrl: body.image_url ?? null,
         active: body.active ?? true,
-        returnDelayDays: body.return_delay_days ?? 0,
         sku: body.sku ?? null,
         notes: body.notes ?? null,
         masterPackageQty: body.master_package_qty ?? null,
@@ -264,7 +282,6 @@ export async function adminRoutes(app: FastifyInstance) {
         unit: z.string().min(1).optional(),
         image_url: ImageUrlSchema.optional(),
         active: z.boolean().optional(),
-        return_delay_days: z.number().int().min(0).optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
@@ -283,7 +300,6 @@ export async function adminRoutes(app: FastifyInstance) {
         ...(body.unit !== undefined ? { unit: body.unit } : {}),
         ...(body.image_url !== undefined ? { imageUrl: body.image_url } : {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
-        ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
         ...(body.sku !== undefined ? { sku: body.sku } : {}),
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
         ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
@@ -365,6 +381,45 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ itemId: item.id, imageUrl: item.imageUrl });
   });
 
+  app.post("/admin/items/:id/stock", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const actor = request.user!;
+    requireRole(actor.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        change: z.number().int().refine((value) => value !== 0, "Change must not be zero"),
+        reason: z.string().trim().optional()
+      })
+      .parse(request.body);
+
+    const item = await app.prisma.inventoryItem.findUnique({ where: { id: params.id } });
+    if (!item) return httpError(reply, 404, "NOT_FOUND", "Položka nenalezena.");
+
+    const ledger = await app.prisma.inventoryLedger.create({
+      data: {
+        inventoryItemId: item.id,
+        deltaQuantity: body.change,
+        reason: "manual",
+        createdById: actor.id,
+        note: body.reason || null,
+        warehouseId: item.warehouseId ?? null
+      }
+    });
+
+    await app.prisma.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        entityType: "inventory_item",
+        entityId: item.id,
+        action: "stock_adjustment",
+        diffJson: { change: body.change, reason: body.reason ?? null }
+      }
+    });
+
+    sseBus.emit({ type: "ledger_changed", inventoryItemId: item.id });
+    return reply.send({ ok: true, ledger });
+  });
+
   app.post("/admin/import/csv", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
@@ -405,7 +460,6 @@ export async function adminRoutes(app: FastifyInstance) {
             const parentName = (r.parent_category ?? "").trim();
             const subName = (r.category ?? "").trim();
             const quantity = Number(String(r.quantity ?? "0").trim());
-            const returnDelayDays = Number(String(r.return_delay_days ?? "0").trim());
             const unit = (r.unit ?? "ks").trim() || "ks";
             const sku = (r.sku ?? "").trim() || null;
             const notes = (r.notes ?? "").trim() || null;
@@ -440,7 +494,7 @@ export async function adminRoutes(app: FastifyInstance) {
               : await tx.inventoryItem.findFirst({ where: { name, categoryId: child.id } });
 
             const itemData = {
-              name, categoryId: child.id, unit, returnDelayDays, notes, imageUrl, active,
+              name, categoryId: child.id, unit, notes, imageUrl, active,
               masterPackageQty, masterPackageWeight, volume, plateDiameter,
               warehouseId,
               sku: sku ?? undefined

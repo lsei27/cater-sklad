@@ -67,3 +67,38 @@ export function managerLabel(user?: { name?: string | null; email?: string | nul
   const email = user.email?.trim();
   return name || email || "";
 }
+
+export function compareByCategoryParentName(a: any, b: any) {
+  const categoryA = String(
+    a?.category?.sub?.name ??
+      a?.category?.name ??
+      (typeof a?.category === "string" ? a.category : undefined) ??
+      a?.sub ??
+      ""
+  );
+  const categoryB = String(
+    b?.category?.sub?.name ??
+      b?.category?.name ??
+      (typeof b?.category === "string" ? b.category : undefined) ??
+      b?.sub ??
+      ""
+  );
+  const byCategory = categoryA.localeCompare(categoryB, "cs");
+  if (byCategory !== 0) return byCategory;
+
+  const parentA = String(a?.category?.parent?.name ?? a?.parentCategory ?? a?.parentName ?? a?.parent ?? "");
+  const parentB = String(b?.category?.parent?.name ?? b?.parentCategory ?? b?.parentName ?? b?.parent ?? "");
+  const byParent = parentA.localeCompare(parentB, "cs");
+  if (byParent !== 0) return byParent;
+
+  const nameA = String(a?.item?.name ?? a?.name ?? "");
+  const nameB = String(b?.item?.name ?? b?.name ?? "");
+  return nameA.localeCompare(nameB, "cs");
+}
+
+export function formatCategoryParentLabel(category?: string | null, parent?: string | null) {
+  const categoryLabel = String(category ?? "").trim();
+  const parentLabel = String(parent ?? "").trim();
+  if (categoryLabel && parentLabel) return `${categoryLabel} / ${parentLabel}`;
+  return categoryLabel || parentLabel;
+}

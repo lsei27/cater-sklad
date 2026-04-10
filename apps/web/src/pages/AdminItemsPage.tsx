@@ -11,6 +11,7 @@ import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
 import { Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
+import { compareByCategoryParentName, formatCategoryParentLabel } from "../lib/viewModel";
 
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
@@ -30,7 +31,10 @@ export default function AdminItemsPage() {
   }, [searchParams]);
 
   const childCats = useMemo(
-    () => parents.flatMap((p: any) => (p.children ?? []).map((c: any) => ({ ...c, parentName: p.name }))),
+    () =>
+      parents
+        .flatMap((p: any) => (p.children ?? []).map((c: any) => ({ ...c, parentName: p.name })))
+        .sort(compareByCategoryParentName),
     [parents]
   );
 
@@ -42,7 +46,7 @@ export default function AdminItemsPage() {
       const q = new URLSearchParams();
       if (search) q.set("search", search);
       const res = await api<{ items: any[] }>(`/admin/items?${q.toString()}`);
-      setItems(res.items);
+      setItems([...res.items].sort(compareByCategoryParentName));
     } catch (e: any) {
       toast.error(e?.error?.message ?? "Nepodařilo se načíst položky.");
     } finally {
@@ -112,7 +116,7 @@ export default function AdminItemsPage() {
                 <option value="">Vyber kategorii…</option>
                 {childCats.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {c.parentName} / {c.name}
+                    {formatCategoryParentLabel(c.name, c.parentName)}
                   </option>
                 ))}
               </Select>
@@ -242,7 +246,7 @@ function ItemRow({ item, parents, childCats, onSaved }: { item: any; parents: an
 
 function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
   const [name, setName] = useState(item.name);
-  const [categoryId, setCategoryId] = useState(item.category_id);
+  const [categoryId, setCategoryId] = useState(item.category_id ?? item.category?.id ?? "");
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? "");
   const [qrCode, setQrCode] = useState(item.qrCode ?? "");
   const [active, setActive] = useState(item.active ?? true);
@@ -252,7 +256,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
   useEffect(() => {
     if (!open) return;
     setName(item.name);
-    setCategoryId(item.category_id);
+    setCategoryId(item.category_id ?? item.category?.id ?? "");
     setImageUrl(item.imageUrl ?? "");
     setQrCode(item.qrCode ?? "");
     setActive(item.active ?? true);
@@ -287,7 +291,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
           <Select className="mt-1" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
             {childCats.map((c: any) => (
               <option key={c.id} value={c.id}>
-                {c.parentName} / {c.name}
+                {formatCategoryParentLabel(c.name, c.parentName)}
               </option>
             ))}
           </Select>
@@ -483,8 +487,8 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
   };
 
   const downloadTemplate = () => {
-    const headers = ["name", "parent_category", "category", "unit", "quantity", "active", "return_delay_days", "sku", "notes", "image_url"];
-    const ex1 = ["Talíř mělký 24cm", "Inventář", "Porcelán", "ks", "100", "1", "0", "TAL24", "Poznámka...", ""];
+    const headers = ["name", "parent_category", "category", "unit", "quantity", "active", "sku", "notes", "image_url"];
+    const ex1 = ["Talíř mělký 24cm", "Inventář", "Porcelán", "ks", "100", "1", "TAL24", "Poznámka...", ""];
     const csvContent = [headers.join(";"), ex1.join(";")].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -561,4 +565,3 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
     </Modal>
   );
 }
-

@@ -17,6 +17,22 @@ function safeFilename(value: string) {
     .replace(/^_+|_+$/g, "");
 }
 
+function compareByCategoryParentName(a: any, b: any) {
+  const byCategory = String(a?.category?.sub?.name ?? a?.category?.name ?? a?.sub ?? "").localeCompare(
+    String(b?.category?.sub?.name ?? b?.category?.name ?? b?.sub ?? ""),
+    "cs"
+  );
+  if (byCategory !== 0) return byCategory;
+
+  const byParent = String(a?.category?.parent?.name ?? a?.category?.parent ?? a?.parentCategory ?? "").localeCompare(
+    String(b?.category?.parent?.name ?? b?.category?.parent ?? b?.parentCategory ?? ""),
+    "cs"
+  );
+  if (byParent !== 0) return byParent;
+
+  return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
+}
+
 const EventCreateSchema = z.object({
   name: z.string().min(1),
   location: z.string().min(1),
@@ -441,7 +457,7 @@ export async function eventRoutes(app: FastifyInstance) {
       };
     });
 
-    return { items: dto.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
+    return { items: dto.sort(compareByCategoryParentName) };
   });
 
   app.get("/events/:id/cross-sell-warnings", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -486,7 +502,7 @@ export async function eventRoutes(app: FastifyInstance) {
       }
     }
 
-    return { warnings: suggestions.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
+    return { warnings: suggestions.sort(compareByCategoryParentName) };
   });
 
   app.post("/events/:id/cross-sell-dismiss", { preHandler: [app.authenticate] }, async (request, reply) => {

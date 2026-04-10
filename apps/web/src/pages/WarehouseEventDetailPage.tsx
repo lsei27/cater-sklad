@@ -8,7 +8,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Input from "../components/ui/Input";
 import toast from "react-hot-toast";
-import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
+import { compareByCategoryParentName, managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import Modal from "../components/ui/Modal";
 import { Icons } from "../lib/icons";
@@ -21,7 +21,7 @@ type Snapshot = {
   groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
 };
 
-type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string };
+type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string };
 
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
@@ -40,6 +40,7 @@ export default function WarehouseEventDetailPage() {
     broken: number; 
     total?: number; 
     parentCategory?: string; 
+    category?: string;
     imageUrl?: string | null; 
     target_warehouse_id?: string;
     masterPackageQty?: number;
@@ -94,7 +95,8 @@ export default function WarehouseEventDetailPage() {
   }, [event]);
 
   const snapshotItems = useMemo(() => {
-    const list = snapshot?.groups?.flatMap((g) => g.items.map(i => ({ ...i, parentCategory: g.parentCategory }))) ?? [];
+    const list =
+      snapshot?.groups?.flatMap((g) => g.items.map((i) => ({ ...i, parentCategory: g.parentCategory, category: g.category }))) ?? [];
     return list;
   }, [snapshot]);
 
@@ -144,6 +146,7 @@ export default function WarehouseEventDetailPage() {
           returned: s?.returned ?? 0,
           broken: s?.broken ?? 0,
           parentCategory: (i as any).parentCategory || "",
+          category: (i as any).category || "",
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
           target_warehouse_id: undefined,
           masterPackageQty: (i as any).masterPackageQty
@@ -202,6 +205,7 @@ export default function WarehouseEventDetailPage() {
         sections[0].items.push(r);
       }
     }
+    sections.forEach((section) => section.items.sort(compareByCategoryParentName));
     return sections;
   }, [rows]);
 
