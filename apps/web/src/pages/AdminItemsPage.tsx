@@ -116,7 +116,7 @@ export default function AdminItemsPage() {
                 <option value="">Vyber kategorii…</option>
                 {childCats.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {formatCategoryParentLabel(c.name, c.parentName)}
+                    {formatCategoryParentLabel(c.parentName, c.name)}
                   </option>
                 ))}
               </Select>
@@ -218,9 +218,7 @@ function ItemRow({ item, parents, childCats, onSaved }: { item: any; parents: an
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{item.name}</div>
                 <div className="flex flex-wrap gap-2 text-xs text-slate-600">
-                  <span>{item.category?.parent?.name ?? "Typ"}</span>
-                  <span className="text-slate-300">•</span>
-                  <span>{item.category?.name ?? "Kategorie"}</span>
+                  <span>{formatCategoryParentLabel(item.category?.parent?.name, item.category?.name)}</span>
                   {!item.active ? <span className="text-red-600 font-semibold">• Neaktivní</span> : null}
                 </div>
               </div>
@@ -291,7 +289,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
           <Select className="mt-1" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
             {childCats.map((c: any) => (
               <option key={c.id} value={c.id}>
-                {formatCategoryParentLabel(c.name, c.parentName)}
+                {formatCategoryParentLabel(c.parentName, c.name)}
               </option>
             ))}
           </Select>

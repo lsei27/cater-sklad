@@ -345,7 +345,9 @@ export default function InventoryPage() {
                 </div>
                 <CardContent className="p-3">
                   <div className="line-clamp-1 text-sm font-semibold text-gray-900" title={i.name}>{i.name}</div>
-                  <div className="text-xs text-gray-500 mb-1">{i.category.sub.name}</div>
+                  <div className="text-xs text-gray-500 mb-1">
+                    {formatCategoryParentLabel(i.category.parent?.name, i.category.sub.name)}
+                  </div>
                   {i.warehouse?.name && (
                     <div className="text-[10px] text-indigo-500 font-medium mb-2">📦 {i.warehouse.name}</div>
                   )}
@@ -430,7 +432,7 @@ export default function InventoryPage() {
                       </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {formatCategoryParentLabel(i.category.sub.name, i.category.parent?.name)}
+                      {formatCategoryParentLabel(i.category.parent?.name, i.category.sub.name)}
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right font-medium bg-gray-50/50">
                       {i.stock.total}

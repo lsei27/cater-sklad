@@ -18,17 +18,17 @@ function safeFilename(value: string) {
 }
 
 function compareByCategoryParentName(a: any, b: any) {
-  const byCategory = String(a?.category?.sub?.name ?? a?.category?.name ?? a?.sub ?? "").localeCompare(
-    String(b?.category?.sub?.name ?? b?.category?.name ?? b?.sub ?? ""),
-    "cs"
-  );
-  if (byCategory !== 0) return byCategory;
-
-  const byParent = String(a?.category?.parent?.name ?? a?.category?.parent ?? a?.parentCategory ?? "").localeCompare(
-    String(b?.category?.parent?.name ?? b?.category?.parent ?? b?.parentCategory ?? ""),
+  const byParent = String(a?.category?.parent?.name ?? a?.parentCategory ?? a?.parent ?? "").localeCompare(
+    String(b?.category?.parent?.name ?? b?.parentCategory ?? b?.parent ?? ""),
     "cs"
   );
   if (byParent !== 0) return byParent;
+
+  const byCategory = String(a?.category?.sub?.name ?? a?.category?.name ?? a?.category ?? a?.sub ?? "").localeCompare(
+    String(b?.category?.sub?.name ?? b?.category?.name ?? b?.category ?? b?.sub ?? ""),
+    "cs"
+  );
+  if (byCategory !== 0) return byCategory;
 
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
 }

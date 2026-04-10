@@ -696,7 +696,7 @@ export default function EventDetailPage() {
               {exportPreview.groups?.map((g: any, i: number) => (
                 <div key={i} className="mb-3">
                   <div className="text-xs font-medium text-slate-500">
-                    {formatCategoryParentLabel(g.category, g.parentCategory)}
+                    {formatCategoryParentLabel(g.parentCategory, g.category)}
                   </div>
                   <ul className="ml-4 list-disc">
                     {g.items?.map((item: any, j: number) => (
@@ -1067,7 +1067,7 @@ function AddItemsPanel(props: {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold">{i.name}</div>
                           <div className="mt-1 text-xs text-slate-600">
-                            {formatCategoryParentLabel(i.category?.name, i.category?.parent?.name)}
+                            {formatCategoryParentLabel(i.category?.parent?.name, i.category?.name)}
                           </div>
                           {i.masterPackageQty && i.masterPackageQty > 0 ? (
                             <div className="mt-1 text-[10px] font-medium text-blue-600">
@@ -1161,7 +1161,7 @@ function AddItemsPanel(props: {
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold text-slate-800">{r.item?.name ?? "Položka"}</div>
                           <div className="mt-1 text-[11px] text-slate-500">
-                            {formatCategoryParentLabel(r.item?.category?.name, r.item?.category?.parent?.name)}
+                            {formatCategoryParentLabel(r.item?.category?.parent?.name, r.item?.category?.name)}
                           </div>
                           {canModify ? (
                             <div className="mt-2 flex items-center gap-2">

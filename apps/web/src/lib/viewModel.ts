@@ -68,37 +68,44 @@ export function managerLabel(user?: { name?: string | null; email?: string | nul
   return name || email || "";
 }
 
-export function compareByCategoryParentName(a: any, b: any) {
-  const categoryA = String(
-    a?.category?.sub?.name ??
-      a?.category?.name ??
-      (typeof a?.category === "string" ? a.category : undefined) ??
-      a?.sub ??
-      ""
-  );
-  const categoryB = String(
-    b?.category?.sub?.name ??
-      b?.category?.name ??
-      (typeof b?.category === "string" ? b.category : undefined) ??
-      b?.sub ??
-      ""
-  );
-  const byCategory = categoryA.localeCompare(categoryB, "cs");
-  if (byCategory !== 0) return byCategory;
+function categoryParts(value: any) {
+  if (value?.category?.sub !== undefined) {
+    const main = String(value?.category?.parent?.name ?? "");
+    const child = String(value?.category?.sub?.name ?? value?.category?.name ?? "");
+    return { main, child };
+  }
 
-  const parentA = String(a?.category?.parent?.name ?? a?.parentCategory ?? a?.parentName ?? a?.parent ?? "");
-  const parentB = String(b?.category?.parent?.name ?? b?.parentCategory ?? b?.parentName ?? b?.parent ?? "");
-  const byParent = parentA.localeCompare(parentB, "cs");
-  if (byParent !== 0) return byParent;
+  if (value?.category && typeof value.category === "object") {
+    const childName = String(value?.category?.name ?? "");
+    const mainName = String(value?.category?.parent?.name ?? "");
+    return {
+      main: mainName || childName,
+      child: mainName ? childName : ""
+    };
+  }
+
+  const main = String(value?.parentCategory ?? value?.parentName ?? value?.parent ?? "");
+  const child = String((typeof value?.category === "string" ? value.category : undefined) ?? value?.sub ?? "");
+  return { main: main || child, child: main ? child : "" };
+}
+
+export function compareByCategoryParentName(a: any, b: any) {
+  const aParts = categoryParts(a);
+  const bParts = categoryParts(b);
+  const byMain = aParts.main.localeCompare(bParts.main, "cs");
+  if (byMain !== 0) return byMain;
+
+  const byChild = aParts.child.localeCompare(bParts.child, "cs");
+  if (byChild !== 0) return byChild;
 
   const nameA = String(a?.item?.name ?? a?.name ?? "");
   const nameB = String(b?.item?.name ?? b?.name ?? "");
   return nameA.localeCompare(nameB, "cs");
 }
 
-export function formatCategoryParentLabel(category?: string | null, parent?: string | null) {
-  const categoryLabel = String(category ?? "").trim();
-  const parentLabel = String(parent ?? "").trim();
-  if (categoryLabel && parentLabel) return `${categoryLabel} / ${parentLabel}`;
-  return categoryLabel || parentLabel;
+export function formatCategoryParentLabel(mainCategory?: string | null, childCategory?: string | null) {
+  const mainLabel = String(mainCategory ?? "").trim();
+  const childLabel = String(childCategory ?? "").trim();
+  if (mainLabel && childLabel) return `${mainLabel} / ${childLabel}`;
+  return mainLabel || childLabel;
 }

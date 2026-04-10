@@ -202,10 +202,10 @@ export async function adminRoutes(app: FastifyInstance) {
     const items = await app.prisma.inventoryItem.findMany({
       where: query.search ? { name: { contains: query.search, mode: "insensitive" } } : {},
       orderBy: [
-        { category: { sortOrder: "asc" } },
-        { category: { name: "asc" } },
         { category: { parent: { sortOrder: "asc" } } },
         { category: { parent: { name: "asc" } } },
+        { category: { sortOrder: "asc" } },
+        { category: { name: "asc" } },
         { name: "asc" }
       ],
       include: { category: { include: { parent: true } } }

@@ -35,21 +35,26 @@ export async function reserveItemsTx(params: {
       where: { role: actor.role },
       select: { categoryId: true }
     });
+
+    // Empty role config means unrestricted access for that role.
+    // Restrictions only apply once admin explicitly assigns categories.
+    if (allowedAccess.length > 0) {
     const allowedCategoryIds = new Set(allowedAccess.map((a: any) => a.categoryId));
 
-    const itemIds = items.map((i) => i.inventoryItemId);
-    const itemCats = await tx.inventoryItem.findMany({
-      where: { id: { in: itemIds } },
-      select: { id: true, categoryId: true, category: { select: { parentId: true } } }
-    });
+      const itemIds = items.map((i) => i.inventoryItemId);
+      const itemCats = await tx.inventoryItem.findMany({
+        where: { id: { in: itemIds } },
+        select: { id: true, categoryId: true, category: { select: { parentId: true } } }
+      });
 
-    for (const item of itemCats) {
-      const isAllowed =
-        allowedCategoryIds.has(item.categoryId) ||
-        (item.category.parentId && allowedCategoryIds.has(item.category.parentId));
+      for (const item of itemCats) {
+        const isAllowed =
+          allowedCategoryIds.has(item.categoryId) ||
+          (item.category.parentId && allowedCategoryIds.has(item.category.parentId));
 
-      if (!isAllowed) {
-        throw new Error("CATEGORY_ACCESS_DENIED");
+        if (!isAllowed) {
+          throw new Error("CATEGORY_ACCESS_DENIED");
+        }
       }
     }
   }
