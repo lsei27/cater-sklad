@@ -9,7 +9,7 @@ import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import Modal from "../components/ui/Modal";
 import { cn } from "../lib/ui";
-import { statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
+import { formatCategoryParentLabel, statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 import toast from "react-hot-toast";
 
@@ -329,9 +329,9 @@ export default function InventoryPage() {
             const tone = stockTone(i.stock.available);
             return (
               <Card key={i.itemId} className="overflow-hidden group hover:shadow-md transition-shadow border-gray-200 hover:border-indigo-300">
-                <div className="aspect-[4/3] w-full overflow-hidden bg-gray-50 relative">
+                <div className="aspect-[4/3] w-full overflow-hidden bg-white relative border-b border-gray-100">
                   {i.imageUrl ? (
-                    <img className="h-full w-full object-cover transition-transform group-hover:scale-105" src={apiUrl(i.imageUrl)} alt={i.name} />
+                    <img className="h-full w-full object-contain transition-transform group-hover:scale-105 p-1" src={apiUrl(i.imageUrl)} alt={i.name} />
                   ) : (
                     <div className="flex h-full items-center justify-center text-gray-400">
                       <Icons.Image />
@@ -345,7 +345,10 @@ export default function InventoryPage() {
                 </div>
                 <CardContent className="p-3">
                   <div className="line-clamp-1 text-sm font-semibold text-gray-900" title={i.name}>{i.name}</div>
-                  <div className="text-xs text-gray-500 mb-3">{i.category.sub.name}</div>
+                  <div className="text-xs text-gray-500 mb-1">{i.category.sub.name}</div>
+                  {i.warehouse?.name && (
+                    <div className="text-[10px] text-indigo-500 font-medium mb-2">📦 {i.warehouse.name}</div>
+                  )}
 
                   <div className="flex flex-col gap-1 text-[11px] text-gray-500 mb-3">
                     <div className="flex justify-between">
@@ -393,7 +396,7 @@ export default function InventoryPage() {
           })}
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -415,7 +418,7 @@ export default function InventoryPage() {
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 overflow-hidden rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
                           {i.imageUrl ? (
-                            <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
+                            <img className="h-full w-full object-contain p-0.5" src={apiUrl(i.imageUrl)} alt={i.name} />
                           ) : (
                             <div className="text-gray-400"><Icons.Image /></div>
                           )}
@@ -427,7 +430,7 @@ export default function InventoryPage() {
                       </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {i.category.parent?.name ?? ""} / {i.category.sub.name}
+                      {formatCategoryParentLabel(i.category.sub.name, i.category.parent?.name)}
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right font-medium bg-gray-50/50">
                       {i.stock.total}
@@ -442,7 +445,7 @@ export default function InventoryPage() {
                         {i.stock.available}
                       </span>
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-3 text-sm text-gray-500 min-w-[140px]">
                       <div className="flex flex-col gap-0.5">
                         {warehouses.map(w => {
                           const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
