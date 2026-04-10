@@ -997,7 +997,7 @@ function AddItemsPanel(props: {
               <Input className="mt-1" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název…" />
             </label>
             <label className="text-sm">
-              Kategorie
+              Hlavní kategorie
               <Select
                 className="mt-1"
                 value={parentId}
@@ -1067,7 +1067,7 @@ function AddItemsPanel(props: {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold">{i.name}</div>
                           <div className="mt-1 text-xs text-slate-600">
-                            {formatCategoryParentLabel(i.category?.parent?.name, i.category?.name)}
+                            {formatCategoryParentLabel(i.category?.parent?.name, i.category?.sub?.name)}
                           </div>
                           {i.masterPackageQty && i.masterPackageQty > 0 ? (
                             <div className="mt-1 text-[10px] font-medium text-blue-600">

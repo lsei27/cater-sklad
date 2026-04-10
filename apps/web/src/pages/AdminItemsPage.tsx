@@ -485,7 +485,7 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
   };
 
   const downloadTemplate = () => {
-    const headers = ["name", "parent_category", "category", "unit", "quantity", "active", "sku", "notes", "image_url"];
+    const headers = ["name", "main_category", "child_category", "unit", "quantity", "active", "sku", "notes", "image_url"];
     const ex1 = ["Talíř mělký 24cm", "Inventář", "Porcelán", "ks", "100", "1", "TAL24", "Poznámka...", ""];
     const csvContent = [headers.join(";"), ex1.join(";")].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });

@@ -64,7 +64,7 @@ export default function WarehouseTransfersPage() {
   const filteredItems = items.filter(i => 
     i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.category.parent?.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    i.category.sub.name.toLowerCase().includes(search.toLowerCase())
+    (i.category.sub?.name ?? "").toLowerCase().includes(search.toLowerCase())
   ).sort(compareByCategoryParentName);
 
   const addItemToTransfer = (i: Item) => {
@@ -296,7 +296,7 @@ export default function WarehouseTransfersPage() {
                       <div>
                         <div className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{i.name}</div>
                         <div className="text-[11px] text-gray-500">
-                          {formatCategoryParentLabel(i.category.parent?.name, i.category.sub.name)}
+                          {formatCategoryParentLabel(i.category.parent?.name, i.category.sub?.name)}
                         </div>
                       </div>
                       <div className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">

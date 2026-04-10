@@ -193,7 +193,8 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
       }
 
       // Group Header (Category)
-      page.drawText(pdfText(`${group.parentCategory} / ${group.category}`), { x: colMargin, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
+      const groupLabel = group.category ? `${group.parentCategory} / ${group.category}` : group.parentCategory;
+      page.drawText(pdfText(groupLabel), { x: colMargin, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
       yPos -= 14;
 
       for (const item of group.items) {

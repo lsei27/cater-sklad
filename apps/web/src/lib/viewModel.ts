@@ -69,32 +69,57 @@ export function managerLabel(user?: { name?: string | null; email?: string | nul
 }
 
 function categoryParts(value: any) {
-  if (value?.category?.sub !== undefined) {
-    const main = String(value?.category?.parent?.name ?? "");
-    const child = String(value?.category?.sub?.name ?? value?.category?.name ?? "");
-    return { main, child };
+  if (value?.category?.sub !== undefined || value?.category?.parent !== undefined) {
+    const parent = value?.category?.parent;
+    const sub = value?.category?.sub;
+    const main = String(
+      (typeof parent === "string" ? parent : parent?.name) ??
+        (typeof sub === "string" ? sub : sub?.name) ??
+        value?.category?.name ??
+        ""
+    );
+    const child = String(
+      (typeof parent === "string" || parent) ? ((typeof sub === "string" ? sub : sub?.name) ?? "") : ""
+    );
+    const mainSort = typeof parent === "object" && parent ? Number(parent.sortOrder) : typeof sub === "object" && sub ? Number(sub.sortOrder) : undefined;
+    const childSort = typeof sub === "object" && sub && (typeof parent === "string" || parent) ? Number(sub.sortOrder) : undefined;
+    return { main, child, mainSort, childSort };
   }
 
   if (value?.category && typeof value.category === "object") {
     const childName = String(value?.category?.name ?? "");
     const mainName = String(value?.category?.parent?.name ?? "");
+    const mainSort = mainName ? Number(value?.category?.parent?.sortOrder) : Number(value?.category?.sortOrder);
+    const childSort = mainName ? Number(value?.category?.sortOrder) : undefined;
     return {
       main: mainName || childName,
-      child: mainName ? childName : ""
+      child: mainName ? childName : "",
+      mainSort,
+      childSort
     };
   }
 
   const main = String(value?.parentCategory ?? value?.parentName ?? value?.parent ?? "");
   const child = String((typeof value?.category === "string" ? value.category : undefined) ?? value?.sub ?? "");
-  return { main: main || child, child: main ? child : "" };
+  return { main: main || child, child: main ? child : "", mainSort: Number(value?.parentSortOrder), childSort: Number(value?.categorySortOrder) };
 }
 
 export function compareByCategoryParentName(a: any, b: any) {
   const aParts = categoryParts(a);
   const bParts = categoryParts(b);
+  const aMainSort = Number.isFinite(aParts.mainSort) ? aParts.mainSort : undefined;
+  const bMainSort = Number.isFinite(bParts.mainSort) ? bParts.mainSort : undefined;
+  if (aMainSort !== undefined && bMainSort !== undefined && aMainSort !== bMainSort) {
+    return aMainSort - bMainSort;
+  }
   const byMain = aParts.main.localeCompare(bParts.main, "cs");
   if (byMain !== 0) return byMain;
 
+  const aChildSort = Number.isFinite(aParts.childSort) ? aParts.childSort : undefined;
+  const bChildSort = Number.isFinite(bParts.childSort) ? bParts.childSort : undefined;
+  if (aChildSort !== undefined && bChildSort !== undefined && aChildSort !== bChildSort) {
+    return aChildSort - bChildSort;
+  }
   const byChild = aParts.child.localeCompare(bParts.child, "cs");
   if (byChild !== 0) return byChild;
 

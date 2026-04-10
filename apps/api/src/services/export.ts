@@ -53,35 +53,21 @@ export async function createExportTx(params: {
     });
     if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
 
-    const CATEGORY_SEQUENCE = [
-        "Mobiliář",
-        "Sklo",
-        "Porcelán",
-        "Příbory",
-        "Dekorace",
-        "Prádlo",
-        "Inventář",
-        "Zboží"
-    ];
-
     const groupsMap = new Map<string, ExportSnapshot["groups"][number] & { sequenceIndex: number; parentSortOrder: number; categorySortOrder: number }>();
     for (const r of reservations) {
-        const child = r.item.category;
-        const parentName = child.parent?.name ?? "Nezařazeno";
-
-        let sequenceIndex = CATEGORY_SEQUENCE.indexOf(parentName);
-        if (sequenceIndex === -1) sequenceIndex = 999;
-
-        const parentSortOrder = child.parent?.sortOrder ?? 999;
-        const categorySortOrder = child.sortOrder ?? 999;
-        const key = `${sequenceIndex}||${parentName}||${child.name}`;
+        const category = r.item.category;
+        const parentName = category.parent?.name ?? category.name;
+        const childName = category.parent ? category.name : "";
+        const parentSortOrder = category.parent?.sortOrder ?? category.sortOrder ?? 999;
+        const categorySortOrder = category.parent ? (category.sortOrder ?? 999) : -1;
+        const key = `${parentSortOrder}||${parentName}||${categorySortOrder}||${childName}`;
         const group =
             groupsMap.get(key) ??
             (() => {
                 const g = { 
                     parentCategory: parentName, 
-                    category: child.name, 
-                    sequenceIndex,
+                    category: childName, 
+                    sequenceIndex: parentSortOrder,
                     parentSortOrder, 
                     categorySortOrder, 
                     items: [] as any[] 
@@ -103,12 +89,14 @@ export async function createExportTx(params: {
     const sortedGroups = Array.from(groupsMap.values())
         .map(g => ({
             ...g,
-            items: g.items.sort((a, b) => a.name.localeCompare(b.name))
+            items: g.items.sort((a, b) => a.name.localeCompare(b.name, "cs"))
         }))
         .sort((a, b) => {
-            if (a.sequenceIndex !== b.sequenceIndex) return a.sequenceIndex - b.sequenceIndex;
             if (a.parentSortOrder !== b.parentSortOrder) return a.parentSortOrder - b.parentSortOrder;
-            return a.categorySortOrder - b.categorySortOrder;
+            const byParentName = a.parentCategory.localeCompare(b.parentCategory, "cs");
+            if (byParentName !== 0) return byParentName;
+            if (a.categorySortOrder !== b.categorySortOrder) return a.categorySortOrder - b.categorySortOrder;
+            return a.category.localeCompare(b.category, "cs");
         })
         .map(({ sequenceIndex, parentSortOrder, categorySortOrder, ...rest }) => rest);
 

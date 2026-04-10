@@ -5,6 +5,40 @@ import { ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal } from "../services/availability.js";
 
+function compareNullableSortOrder(a?: number | null, b?: number | null) {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "number") return -1;
+  if (typeof b === "number") return 1;
+  return 0;
+}
+
+function mapCategory(category: { id: string; name: string; sortOrder: number; parent?: { id: string; name: string; sortOrder: number } | null }) {
+  const main = category.parent
+    ? { id: category.parent.id, name: category.parent.name, sortOrder: category.parent.sortOrder }
+    : { id: category.id, name: category.name, sortOrder: category.sortOrder };
+  const child = category.parent
+    ? { id: category.id, name: category.name, sortOrder: category.sortOrder }
+    : null;
+
+  return { parent: main, sub: child };
+}
+
+function compareInventoryDtoByCategory(a: any, b: any) {
+  const byMainSort = compareNullableSortOrder(a?.category?.parent?.sortOrder, b?.category?.parent?.sortOrder);
+  if (byMainSort !== 0) return byMainSort;
+
+  const byMainName = String(a?.category?.parent?.name ?? "").localeCompare(String(b?.category?.parent?.name ?? ""), "cs");
+  if (byMainName !== 0) return byMainName;
+
+  const byChildSort = compareNullableSortOrder(a?.category?.sub?.sortOrder, b?.category?.sub?.sortOrder);
+  if (byChildSort !== 0) return byChildSort;
+
+  const byChildName = String(a?.category?.sub?.name ?? "").localeCompare(String(b?.category?.sub?.name ?? ""), "cs");
+  if (byChildName !== 0) return byChildName;
+
+  return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
+}
+
 export async function inventoryRoutes(app: FastifyInstance) {
   app.get("/categories/tree", { preHandler: [app.authenticate] }, async () => {
     const parents = await app.prisma.category.findMany({
@@ -44,12 +78,29 @@ export async function inventoryRoutes(app: FastifyInstance) {
       include: { category: { include: { parent: true } }, warehouse: true }
     });
 
-    const filtered =
-      query.parent_category_id
-        ? items.filter((i) => i.category.parentId === query.parent_category_id)
-        : items;
+    const filtered = query.parent_category_id
+      ? items.filter((i) => i.category.parentId === query.parent_category_id || (!i.category.parentId && i.categoryId === query.parent_category_id))
+      : items;
 
-    if (!query.with_stock) return { items: filtered };
+    if (!query.with_stock) {
+      return {
+        items: filtered
+          .map((it) => ({
+            itemId: it.id,
+            name: it.name,
+            sku: it.sku,
+            unit: it.unit,
+            imageUrl: it.imageUrl,
+            masterPackageQty: it.masterPackageQty,
+            masterPackageWeight: it.masterPackageWeight,
+            volume: it.volume,
+            plateDiameter: it.plateDiameter,
+            warehouse: it.warehouse ? { id: it.warehouse.id, name: it.warehouse.name } : null,
+            category: mapCategory(it.category)
+          }))
+          .sort(compareInventoryDtoByCategory)
+      };
+    }
 
     const startAt = query.start_at ? new Date(query.start_at) : new Date();
     const endAt = query.end_at ? new Date(query.end_at) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
@@ -127,17 +178,14 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
         volume: it.volume,
         plateDiameter: it.plateDiameter,
         warehouse: it.warehouse ? { id: it.warehouse.id, name: it.warehouse.name } : null,
-        category: {
-          sub: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder },
-          parent: it.category.parent ? { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder } : null
-        },
+        category: mapCategory(it.category),
         stock: {
           total: Number(s.physical_total),
           reserved: Number(s.blocked_total),
           available: Number(s.available)
         }
       };
-    });
+    }).sort(compareInventoryDtoByCategory);
 
     return { items: dto, startAt: startAt.toISOString(), endAt: endAt.toISOString() };
   });
@@ -236,17 +284,14 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
         unit: it.unit,
         imageUrl: it.imageUrl,
         masterPackageQty: it.masterPackageQty,
-        category: {
-          sub: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder },
-          parent: it.category.parent ? { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder } : null
-        },
+        category: mapCategory(it.category),
         stock: {
           total: Number(s.physical_total),
           reserved: Number(s.blocked_total),
           available: Number(s.available)
         }
       };
-    });
+    }).sort(compareInventoryDtoByCategory);
 
     return { items: dto };
   });

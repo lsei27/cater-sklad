@@ -43,13 +43,19 @@ async function getOrCreateCategory(params: {
   tx: any;
   parentId: string | null;
   name: string;
+  sortOrder?: number;
 }) {
-  const { tx, parentId, name } = params;
+  const { tx, parentId, name, sortOrder } = params;
   const existing = await tx.category.findFirst({ where: { parentId, name } });
-  if (existing) return existing;
+  if (existing) {
+    if (typeof sortOrder === "number" && existing.sortOrder !== sortOrder) {
+      return tx.category.update({ where: { id: existing.id }, data: { sortOrder } });
+    }
+    return existing;
+  }
   try {
-    const sortOrder = parentId === null ? (CATEGORY_SORT_ORDER[name] ?? 99) : 0;
-    return await tx.category.create({ data: { parentId, name, sortOrder } });
+    const nextSortOrder = typeof sortOrder === "number" ? sortOrder : (parentId === null ? (CATEGORY_SORT_ORDER[name] ?? 99) : 0);
+    return await tx.category.create({ data: { parentId, name, sortOrder: nextSortOrder } });
   } catch {
     const again = await tx.category.findFirst({ where: { parentId, name } });
     if (!again) throw new Error("CATEGORY_CREATE_FAILED");
@@ -457,8 +463,8 @@ export async function adminRoutes(app: FastifyInstance) {
           const r = records[idx]!;
           try {
             const name = (r.name ?? "").trim();
-            const parentName = (r.parent_category ?? "").trim();
-            const subName = (r.category ?? "").trim();
+            const parentName = (r.main_category ?? r.parent_category ?? "").trim();
+            const subName = (r.child_category ?? r.category ?? "").trim();
             const quantity = Number(String(r.quantity ?? "0").trim());
             const unit = (r.unit ?? "ks").trim() || "ks";
             const sku = (r.sku ?? "").trim() || null;
@@ -474,7 +480,7 @@ export async function adminRoutes(app: FastifyInstance) {
             const plateDiameter = (r["plate diameter"] ?? r.plate_diameter ?? "").toString().trim() || null;
             const inventoryName = (r["Inventory"] ?? r.warehouse ?? "").toString().trim() || null;
 
-            if (!name || !parentName || !subName) throw new Error("Missing name/parent_category/category");
+            if (!name || !parentName || !subName) throw new Error("Missing name/main_category/child_category");
 
             const parent = await getOrCreateCategory({ tx, parentId: null, name: parentName });
             const child = await getOrCreateCategory({ tx, parentId: parent.id, name: subName });

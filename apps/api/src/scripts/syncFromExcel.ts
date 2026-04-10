@@ -106,8 +106,8 @@ async function main() {
     const name = item.name?.trim();
     if (!name) continue;
 
-    const catName = item.category || "Ostatní";
-    const parentCatName = item.parent_category;
+    const catName = item.child_category || item.category || "";
+    const parentCatName = item.main_category || item.parent_category || "Ostatní";
     const sku = item.sku ? String(item.sku).trim() : null;
     const unit = item.unit || "ks";
     const masterPackageQty = item["master package"] ? parseInt(String(item["master package"])) : null;
@@ -124,11 +124,13 @@ async function main() {
     }
 
     // 1. Resolve Categories
-    let parentId: string | null = null;
-    if (parentCatName) {
-      parentId = await getOrCreateCategory(parentCatName, null);
+    let categoryId: string;
+    if (catName) {
+      const parentId = await getOrCreateCategory(parentCatName, null);
+      categoryId = await getOrCreateCategory(catName, parentId);
+    } else {
+      categoryId = await getOrCreateCategory(parentCatName, null);
     }
-    const categoryId = await getOrCreateCategory(catName, parentId);
 
     // 2. Create Item
     let finalSku = sku;
@@ -222,4 +224,3 @@ main().catch(err => {
   console.error("❌ Sync failed:", err);
   process.exit(1);
 });
-

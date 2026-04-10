@@ -18,14 +18,26 @@ function safeFilename(value: string) {
 }
 
 function compareByCategoryParentName(a: any, b: any) {
-  const byParent = String(a?.category?.parent?.name ?? a?.parentCategory ?? a?.parent ?? "").localeCompare(
-    String(b?.category?.parent?.name ?? b?.parentCategory ?? b?.parent ?? ""),
+  const aParentSort = a?.category?.parent?.sortOrder ?? a?.parentSortOrder;
+  const bParentSort = b?.category?.parent?.sortOrder ?? b?.parentSortOrder;
+  if (typeof aParentSort === "number" && typeof bParentSort === "number" && aParentSort !== bParentSort) {
+    return aParentSort - bParentSort;
+  }
+
+  const byParent = String(a?.category?.parent?.name ?? a?.category?.parent ?? a?.parentCategory ?? a?.parent ?? "").localeCompare(
+    String(b?.category?.parent?.name ?? b?.category?.parent ?? b?.parentCategory ?? b?.parent ?? ""),
     "cs"
   );
   if (byParent !== 0) return byParent;
 
-  const byCategory = String(a?.category?.sub?.name ?? a?.category?.name ?? a?.category ?? a?.sub ?? "").localeCompare(
-    String(b?.category?.sub?.name ?? b?.category?.name ?? b?.category ?? b?.sub ?? ""),
+  const aCategorySort = a?.category?.sub?.sortOrder ?? a?.category?.sortOrder ?? a?.categorySortOrder;
+  const bCategorySort = b?.category?.sub?.sortOrder ?? b?.category?.sortOrder ?? b?.categorySortOrder;
+  if (typeof aCategorySort === "number" && typeof bCategorySort === "number" && aCategorySort !== bCategorySort) {
+    return aCategorySort - bCategorySort;
+  }
+
+  const byCategory = String(a?.category?.sub?.name ?? a?.category?.sub ?? a?.category?.name ?? a?.category ?? a?.sub ?? "").localeCompare(
+    String(b?.category?.sub?.name ?? b?.category?.sub ?? b?.category?.name ?? b?.category ?? b?.sub ?? ""),
     "cs"
   );
   if (byCategory !== 0) return byCategory;
@@ -695,12 +707,24 @@ export async function eventRoutes(app: FastifyInstance) {
       orderBy: { inventoryItemId: "asc" }
     });
 
-    const groupsMap = new Map<string, { parentCategory: string; category: string; items: Array<{ name: string; qty: number; unit: string }> }>();
+    const groupsMap = new Map<
+      string,
+      {
+        parentCategory: string;
+        category: string;
+        parentSortOrder: number;
+        categorySortOrder: number;
+        items: Array<{ name: string; qty: number; unit: string }>;
+      }
+    >();
     for (const r of reservations) {
-      const parentName = r.item.category.parent?.name ?? "Bez kategorie";
-      const key = `${parentName}/${r.item.category.name}`;
+      const parentName = r.item.category.parent?.name ?? r.item.category.name;
+      const categoryName = r.item.category.parent ? r.item.category.name : "";
+      const parentSortOrder = r.item.category.parent?.sortOrder ?? r.item.category.sortOrder ?? 999;
+      const categorySortOrder = r.item.category.parent ? (r.item.category.sortOrder ?? 999) : -1;
+      const key = `${parentSortOrder}/${parentName}/${categorySortOrder}/${categoryName}`;
       const group = groupsMap.get(key) ?? (() => {
-        const g = { parentCategory: parentName, category: r.item.category.name, items: [] as any[] };
+        const g = { parentCategory: parentName, category: categoryName, parentSortOrder, categorySortOrder, items: [] as any[] };
         groupsMap.set(key, g);
         return g;
       })();
@@ -717,7 +741,13 @@ export async function eventRoutes(app: FastifyInstance) {
         deliveryDatetime: ev.deliveryDatetime.toISOString(),
         pickupDatetime: ev.pickupDatetime.toISOString()
       },
-      groups: Array.from(groupsMap.values()),
+      groups: Array.from(groupsMap.values())
+        .map((group) => ({
+          ...group,
+          items: group.items.sort((a, b) => a.name.localeCompare(b.name, "cs"))
+        }))
+        .sort(compareByCategoryParentName)
+        .map(({ parentSortOrder, categorySortOrder, ...group }) => group),
       itemCount: reservations.length
     };
 
