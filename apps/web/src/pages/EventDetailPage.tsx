@@ -760,7 +760,14 @@ export default function EventDetailPage() {
           }
         }}
       />
-    </div >
+      <EditBasicsModal
+        open={editBasicsOpen}
+        onOpenChange={(v) => setEditBasicsOpen(v)}
+        event={event}
+        onDone={() => load({ silent: true })}
+      />
+    </div>
+
   );
 }
 
@@ -1255,14 +1262,7 @@ function AddItemsPanel(props: {
         </div>
       </Modal>
     )}
-    {editBasicsOpen && (
-      <EditBasicsModal
-        open={editBasicsOpen}
-        onOpenChange={setEditBasicsOpen}
-        event={event}
-        onDone={() => load({ silent: true })}
-      />
-    )}
+
     </>
   );
 }
