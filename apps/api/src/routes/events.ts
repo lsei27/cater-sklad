@@ -89,6 +89,7 @@ export async function eventRoutes(app: FastifyInstance) {
           EventStatus.READY_FOR_WAREHOUSE,
           EventStatus.SENT_TO_WAREHOUSE,
           EventStatus.ISSUED,
+          EventStatus.CANCELLED,
           EventStatus.CLOSED
         ]
       };
