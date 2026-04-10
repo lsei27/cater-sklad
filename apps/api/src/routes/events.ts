@@ -160,9 +160,6 @@ export async function eventRoutes(app: FastifyInstance) {
       return httpError(reply, 403, "EVENT_IN_PAST", "Akci s datem v minulosti již nelze upravovat.");
     }
 
-    if (user.role === "event_manager" && existing.createdById !== user.id) {
-      return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
-    }
     if (["ISSUED", "CLOSED", "CANCELLED"].includes(existing.status)) {
       return httpError(reply, 409, "READ_ONLY", "Akci nelze upravit.");
     }
@@ -549,9 +546,6 @@ export async function eventRoutes(app: FastifyInstance) {
     });
     if (!eventCheck) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena");
 
-    if (user.role === "event_manager" && eventCheck.createdById !== user.id) {
-      return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
-    }
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);

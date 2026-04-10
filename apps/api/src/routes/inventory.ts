@@ -128,8 +128,8 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
         plateDiameter: it.plateDiameter,
         warehouse: it.warehouse ? { id: it.warehouse.id, name: it.warehouse.name } : null,
         category: {
-          parent: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : null,
-          sub: { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder }
+          sub: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder },
+          parent: it.category.parent ? { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder } : null
         },
         stock: {
           total: Number(s.physical_total),
@@ -237,8 +237,8 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
         imageUrl: it.imageUrl,
         masterPackageQty: it.masterPackageQty,
         category: {
-          parent: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : null,
-          sub: { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder }
+          sub: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder },
+          parent: it.category.parent ? { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder } : null
         },
         stock: {
           total: Number(s.physical_total),
