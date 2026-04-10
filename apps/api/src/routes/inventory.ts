@@ -35,10 +35,10 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const items = await app.prisma.inventoryItem.findMany({
       where,
       orderBy: [
-        { category: { sortOrder: "asc" } },
-        { category: { name: "asc" } },
         { category: { parent: { sortOrder: "asc" } } },
         { category: { parent: { name: "asc" } } },
+        { category: { sortOrder: "asc" } },
+        { category: { name: "asc" } },
         { name: "asc" }
       ],
       include: { category: { include: { parent: true } }, warehouse: true }
