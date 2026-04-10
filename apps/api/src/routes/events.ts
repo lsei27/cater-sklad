@@ -543,8 +543,15 @@ export async function eventRoutes(app: FastifyInstance) {
       })
       .parse(request.body);
 
-    const eventCheck = await app.prisma.event.findUnique({ where: { id: params.id }, select: { eventDate: true } });
+    const eventCheck = await app.prisma.event.findUnique({
+      where: { id: params.id },
+      select: { eventDate: true, createdById: true }
+    });
     if (!eventCheck) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena");
+
+    if (user.role === "event_manager" && eventCheck.createdById !== user.id) {
+      return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
+    }
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -567,9 +574,6 @@ export async function eventRoutes(app: FastifyInstance) {
         });
 
         if (!eventRow) throw new Error("EVENT_NOT_FOUND");
-        if (user.role === "event_manager" && eventRow.createdById !== user.id) {
-          throw new Error("FORBIDDEN");
-        }
 
         let exportResult = null;
         if (["admin", "event_manager"].includes(user.role) && eventRow?.status === "SENT_TO_WAREHOUSE" && eventRow.chefConfirmedAt) {
@@ -610,13 +614,16 @@ export async function eventRoutes(app: FastifyInstance) {
           available: e.available
         });
       }
-      if (e?.message === "CHEF_ONLY_TECH") {
-        return httpError(reply, 403, "CHEF_ONLY_TECH", "Chef může rezervovat pouze Techniku");
+      if (e?.message === "CATEGORY_ACCESS_DENIED") {
+        return httpError(reply, 403, "CATEGORY_ACCESS_DENIED", "Nemáte oprávnění rezervovat položky z této kategorie.");
       }
       if (e?.message === "EVENT_READ_ONLY") {
         return httpError(reply, 409, "EVENT_READ_ONLY", "Event je po výdeji uzamčen");
       }
       if (e?.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
+      if (e?.message === "FORBIDDEN") {
+        return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
+      }
       throw e;
     }
   });
