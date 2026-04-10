@@ -215,7 +215,20 @@ export async function adminRoutes(app: FastifyInstance) {
         { category: { name: "asc" } },
         { name: "asc" }
       ],
-      include: { category: { include: { parent: true } } }
+      include: {
+        category: { include: { parent: true } },
+        warehouse: true,
+        crossSellSources: {
+          include: {
+            targetItem: {
+              include: {
+                category: { include: { parent: true } }
+              }
+            }
+          },
+          orderBy: { targetItem: { name: "asc" } }
+        }
+      }
     });
     const totals = items.length
       ? await app.prisma.inventoryLedger.groupBy({
@@ -229,6 +242,14 @@ export async function adminRoutes(app: FastifyInstance) {
       items: items.map((item) => ({
         ...item,
         category_id: item.categoryId,
+        crossSellItemIds: item.crossSellSources.map((link) => link.targetItemId),
+        crossSellItems: item.crossSellSources.map((link) => ({
+          id: link.targetItem.id,
+          name: link.targetItem.name,
+          sku: link.targetItem.sku,
+          unit: link.targetItem.unit,
+          category: link.targetItem.category
+        })),
         totalQuantity: totalByItemId.get(item.id) ?? 0
       }))
     };
@@ -252,26 +273,39 @@ export async function adminRoutes(app: FastifyInstance) {
         volume: z.string().nullable().optional(),
         plate_diameter: z.string().nullable().optional(),
         warehouse_id: z.string().uuid().nullable().optional(),
-        qr_code: z.string().nullable().optional()
+        qr_code: z.string().nullable().optional(),
+        cross_sell_item_ids: z.array(z.string().uuid()).optional()
       })
       .parse(request.body);
-    const item = await app.prisma.inventoryItem.create({
-      data: {
-        name: body.name,
-        categoryId: body.category_id,
-        unit: body.unit,
-        imageUrl: body.image_url ?? null,
-        active: body.active ?? true,
-        sku: body.sku ?? null,
-        notes: body.notes ?? null,
-        returnDelayDays: body.return_delay_days ?? 0,
-        masterPackageQty: body.master_package_qty ?? null,
-        masterPackageWeight: body.master_package_weight ?? null,
-        volume: body.volume ?? null,
-        plateDiameter: body.plate_diameter ?? null,
-        warehouseId: body.warehouse_id ?? null,
-        qrCode: body.qr_code ?? null
+    const item = await app.prisma.$transaction(async (tx) => {
+      const created = await tx.inventoryItem.create({
+        data: {
+          name: body.name,
+          categoryId: body.category_id,
+          unit: body.unit,
+          imageUrl: body.image_url ?? null,
+          active: body.active ?? true,
+          sku: body.sku ?? null,
+          notes: body.notes ?? null,
+          returnDelayDays: body.return_delay_days ?? 0,
+          masterPackageQty: body.master_package_qty ?? null,
+          masterPackageWeight: body.master_package_weight ?? null,
+          volume: body.volume ?? null,
+          plateDiameter: body.plate_diameter ?? null,
+          warehouseId: body.warehouse_id ?? null,
+          qrCode: body.qr_code ?? null
+        }
+      });
+
+      const targetIds = Array.from(new Set((body.cross_sell_item_ids ?? []).filter((id) => id !== created.id)));
+      if (targetIds.length > 0) {
+        await tx.crossSellLink.createMany({
+          data: targetIds.map((targetItemId) => ({ sourceItemId: created.id, targetItemId })),
+          skipDuplicates: true
+        });
       }
+
+      return created;
     });
     await app.prisma.auditLog.create({
       data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "create", diffJson: body }
@@ -299,27 +333,43 @@ export async function adminRoutes(app: FastifyInstance) {
         volume: z.string().nullable().optional(),
         plate_diameter: z.string().nullable().optional(),
         warehouse_id: z.string().uuid().nullable().optional(),
-        qr_code: z.string().nullable().optional()
+        qr_code: z.string().nullable().optional(),
+        cross_sell_item_ids: z.array(z.string().uuid()).optional()
       })
       .parse(request.body);
-    const item = await app.prisma.inventoryItem.update({
-      where: { id: params.id },
-      data: {
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.category_id !== undefined ? { categoryId: body.category_id } : {}),
-        ...(body.unit !== undefined ? { unit: body.unit } : {}),
-        ...(body.image_url !== undefined ? { imageUrl: body.image_url } : {}),
-        ...(body.active !== undefined ? { active: body.active } : {}),
-        ...(body.sku !== undefined ? { sku: body.sku } : {}),
-        ...(body.notes !== undefined ? { notes: body.notes } : {}),
-        ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
-        ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
-        ...(body.master_package_weight !== undefined ? { masterPackageWeight: body.master_package_weight } : {}),
-        ...(body.volume !== undefined ? { volume: body.volume } : {}),
-        ...(body.plate_diameter !== undefined ? { plateDiameter: body.plate_diameter } : {}),
-        ...(body.warehouse_id !== undefined ? { warehouseId: body.warehouse_id } : {}),
-        ...(body.qr_code !== undefined ? { qrCode: body.qr_code } : {})
+    const item = await app.prisma.$transaction(async (tx) => {
+      const updated = await tx.inventoryItem.update({
+        where: { id: params.id },
+        data: {
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.category_id !== undefined ? { categoryId: body.category_id } : {}),
+          ...(body.unit !== undefined ? { unit: body.unit } : {}),
+          ...(body.image_url !== undefined ? { imageUrl: body.image_url } : {}),
+          ...(body.active !== undefined ? { active: body.active } : {}),
+          ...(body.sku !== undefined ? { sku: body.sku } : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
+          ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
+          ...(body.master_package_weight !== undefined ? { masterPackageWeight: body.master_package_weight } : {}),
+          ...(body.volume !== undefined ? { volume: body.volume } : {}),
+          ...(body.plate_diameter !== undefined ? { plateDiameter: body.plate_diameter } : {}),
+          ...(body.warehouse_id !== undefined ? { warehouseId: body.warehouse_id } : {}),
+          ...(body.qr_code !== undefined ? { qrCode: body.qr_code } : {})
+        }
+      });
+
+      if (body.cross_sell_item_ids !== undefined) {
+        const targetIds = Array.from(new Set(body.cross_sell_item_ids.filter((id) => id !== params.id)));
+        await tx.crossSellLink.deleteMany({ where: { sourceItemId: params.id } });
+        if (targetIds.length > 0) {
+          await tx.crossSellLink.createMany({
+            data: targetIds.map((targetItemId) => ({ sourceItemId: params.id, targetItemId })),
+            skipDuplicates: true
+          });
+        }
       }
+
+      return updated;
     });
     await app.prisma.auditLog.create({
       data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "update", diffJson: body }
@@ -560,8 +610,12 @@ export async function adminRoutes(app: FastifyInstance) {
             // Collect cross-sell references
             const crossSellRefs: string[] = [];
             for (let csIdx = 1; csIdx <= 10; csIdx++) {
-              const key = csIdx <= 8 ? `Cross sell ${csIdx}` : `Cross sel ${csIdx}`;
-              const ref = (r[key] ?? "").toString().trim();
+              const ref = (
+                r[`cross_sell_${csIdx}`] ??
+                r[`Cross sell ${csIdx}`] ??
+                r[`Cross sel ${csIdx}`] ??
+                ""
+              ).toString().trim();
               if (ref) crossSellRefs.push(ref);
             }
             if (crossSellRefs.length > 0) {

@@ -71,6 +71,7 @@ export default function EventDetailPage() {
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [hardDeleteConfirm, setHardDeleteConfirm] = useState(false);
   const [crossSellWarnings, setCrossSellWarnings] = useState<any[]>([]);
+  const [exportCrossSellAcknowledged, setExportCrossSellAcknowledged] = useState(false);
   const [editBasicsOpen, setEditBasicsOpen] = useState(false);
 
   const load = async (opts?: { silent?: boolean }) => {
@@ -273,7 +274,7 @@ export default function EventDetailPage() {
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {crossSellWarnings.map((w) => (
-                      <div key={w.id} className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white p-2">
+                      <div key={w.itemId ?? w.id} className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white p-2">
                         <span className="text-xs font-medium">{w.name}</span>
                         <div className="flex gap-1">
                           <Button
@@ -281,7 +282,7 @@ export default function EventDetailPage() {
                             variant="secondary"
                             onClick={() => {
                               setAddInitialSearch(w.name);
-                              setAddFocusItemId(w.id);
+                              setAddFocusItemId(w.itemId ?? w.id);
                               setAddOpen(true);
                             }}
                           >
@@ -295,16 +296,16 @@ export default function EventDetailPage() {
                               try {
                                 await api(`/events/${id}/cross-sell-dismiss`, {
                                   method: "POST",
-                                  body: JSON.stringify({ inventory_item_id: w.id })
+                                  body: JSON.stringify({ itemId: w.itemId ?? w.id })
                                 });
-                                setCrossSellWarnings((prev) => prev.filter((x) => x.id !== w.id));
-                                toast.success("Odmítnuto");
+                                setCrossSellWarnings((prev) => prev.filter((x) => (x.itemId ?? x.id) !== (w.itemId ?? w.id)));
+                                toast.success("Potvrzeno");
                               } catch (e: any) {
                                 toast.error("Chyba");
                               }
                             }}
                           >
-                            Skrýt
+                            Jsem si vědom
                           </Button>
                         </div>
                       </div>
@@ -657,10 +658,17 @@ export default function EventDetailPage() {
 
       <Modal
         open={exportConfirm}
-        onOpenChange={(v) => { setExportConfirm(v); if (!v) setExportPreview(null); }}
+        onOpenChange={(v) => {
+          setExportConfirm(v);
+          if (!v) {
+            setExportPreview(null);
+            setExportCrossSellAcknowledged(false);
+          }
+        }}
         title="Náhled exportu"
         description="Zkontrolujte obsah před předáním do skladu."
         primaryText="Vytvořit export"
+        primaryDisabled={crossSellWarnings.length > 0 && !exportCrossSellAcknowledged}
         onPrimary={async () => {
           if (!id) return;
           try {
@@ -689,6 +697,30 @@ export default function EventDetailPage() {
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
                 <div className="text-xs font-semibold text-slate-500 mb-1">Poznámka</div>
                 {exportPreview.event.notes}
+              </div>
+            ) : null}
+            {crossSellWarnings.length > 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="text-sm font-semibold text-amber-900">Ještě chybí doporučené položky</div>
+                <div className="mt-1 text-sm text-amber-800">
+                  U některých položek není v akci přidaný související cross-sell. Buď je doplňte, nebo potvrďte, že o tom víte.
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {crossSellWarnings.map((warning) => (
+                    <span key={warning.itemId ?? warning.id} className="rounded-full border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-900">
+                      {warning.name}
+                    </span>
+                  ))}
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-sm text-amber-900">
+                  <input
+                    type="checkbox"
+                    checked={exportCrossSellAcknowledged}
+                    onChange={(e) => setExportCrossSellAcknowledged(e.target.checked)}
+                    className="h-4 w-4 rounded border-amber-300"
+                  />
+                  Jsem si vědom, že doporučené položky nejsou přidané, a chci pokračovat.
+                </label>
               </div>
             ) : null}
             <div className="border-t pt-3">

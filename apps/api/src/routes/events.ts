@@ -526,15 +526,20 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/cross-sell-dismiss", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "chef"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
-    const body = z.object({ itemId: z.string().uuid() }).parse(request.body);
+    const body = z.object({
+      itemId: z.string().uuid().optional(),
+      inventory_item_id: z.string().uuid().optional()
+    }).parse(request.body);
+    const itemId = body.itemId ?? body.inventory_item_id;
+    if (!itemId) return httpError(reply, 400, "BAD_REQUEST", "Missing itemId");
 
     const event = await app.prisma.event.findUnique({ where: { id: params.id } });
     if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
 
     const dismissed = new Set((event.dismissedCrossSellIds || []) as string[]);
-    dismissed.add(body.itemId);
+    dismissed.add(itemId);
 
     await app.prisma.event.update({
       where: { id: params.id },

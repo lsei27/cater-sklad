@@ -13,6 +13,8 @@ import toast from "react-hot-toast";
 import { Download, Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
 import { compareByCategoryParentName, formatCategoryParentLabel } from "../lib/viewModel";
 
+const CROSS_SELL_COLUMNS = 10;
+
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
   const canManageItems = role === "admin" || role === "warehouse";
@@ -97,27 +99,34 @@ export default function AdminItemsPage() {
       "master_package_weight",
       "volume",
       "plate_diameter",
-      "warehouse"
+      "warehouse",
+      ...Array.from({ length: CROSS_SELL_COLUMNS }, (_, idx) => `cross_sell_${idx + 1}`)
     ];
 
-    const rows = items.map((item) => [
-      item.name,
-      item.category?.parent?.name ?? item.category?.name ?? "",
-      item.category?.parent ? item.category?.name ?? "" : "",
-      item.unit ?? "",
-      item.totalQuantity ?? 0,
-      item.active ? 1 : 0,
-      item.sku ?? "",
-      item.notes ?? "",
-      item.imageUrl ?? "",
-      item.qrCode ?? "",
-      item.returnDelayDays ?? 0,
-      item.masterPackageQty ?? "",
-      item.masterPackageWeight ?? "",
-      item.volume ?? "",
-      item.plateDiameter ?? "",
-      item.warehouse?.name ?? ""
-    ]);
+    const rows = items.map((item) => {
+      const crossSellRefs = (item.crossSellItems ?? [])
+        .slice(0, CROSS_SELL_COLUMNS)
+        .map((linked: any) => linked.sku || linked.name);
+      return [
+        item.name,
+        item.category?.parent?.name ?? item.category?.name ?? "",
+        item.category?.parent ? item.category?.name ?? "" : "",
+        item.unit ?? "",
+        item.totalQuantity ?? 0,
+        item.active ? 1 : 0,
+        item.sku ?? "",
+        item.notes ?? "",
+        item.imageUrl ?? "",
+        item.qrCode ?? "",
+        item.returnDelayDays ?? 0,
+        item.masterPackageQty ?? "",
+        item.masterPackageWeight ?? "",
+        item.volume ?? "",
+        item.plateDiameter ?? "",
+        item.warehouse?.name ?? "",
+        ...Array.from({ length: CROSS_SELL_COLUMNS }, (_, idx) => crossSellRefs[idx] ?? "")
+      ];
+    });
 
     const csvContent = [headers, ...rows]
       .map((row) => row.map(escapeCell).join(";"))
@@ -297,7 +306,7 @@ export default function AdminItemsPage() {
       ) : (
         <div className="space-y-2">
           {items.map((i) => (
-            <ItemRow key={i.id} item={i} parents={parents} warehouses={warehouses} onSaved={() => load({ keepLoading: true })} />
+            <ItemRow key={i.id} item={i} allItems={items} parents={parents} warehouses={warehouses} onSaved={() => load({ keepLoading: true })} />
           ))}
         </div>
       )}
@@ -306,7 +315,7 @@ export default function AdminItemsPage() {
   );
 }
 
-function ItemRow({ item, parents, warehouses, onSaved }: { item: any; parents: any[]; warehouses: any[]; onSaved: () => void }) {
+function ItemRow({ item, allItems, parents, warehouses, onSaved }: { item: any; allItems: any[]; parents: any[]; warehouses: any[]; onSaved: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
 
@@ -346,13 +355,13 @@ function ItemRow({ item, parents, warehouses, onSaved }: { item: any; parents: a
         </CardContent>
       </Card>
 
-      <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} parents={parents} warehouses={warehouses} onSaved={onSaved} />
+      <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} allItems={allItems} parents={parents} warehouses={warehouses} onSaved={onSaved} />
       <StockModal open={stockOpen} onOpenChange={setStockOpen} item={item} onSaved={onSaved} />
     </>
   );
 }
 
-function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved }: any) {
+function EditItemModal({ open, onOpenChange, item, allItems, parents, warehouses, onSaved }: any) {
   const [name, setName] = useState(item.name);
   const [parentId, setParentId] = useState(item.category?.parent?.id ?? "");
   const [categoryId, setCategoryId] = useState(item.category_id ?? item.category?.id ?? "");
@@ -367,6 +376,8 @@ function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved 
   const [warehouseId, setWarehouseId] = useState(item.warehouseId ?? "");
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? "");
   const [qrCode, setQrCode] = useState(item.qrCode ?? "");
+  const [crossSellSearch, setCrossSellSearch] = useState("");
+  const [crossSellItemIds, setCrossSellItemIds] = useState<string[]>(item.crossSellItemIds ?? []);
   const [active, setActive] = useState(item.active ?? true);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -394,8 +405,25 @@ function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved 
     setWarehouseId(item.warehouseId ?? "");
     setImageUrl(item.imageUrl ?? "");
     setQrCode(item.qrCode ?? "");
+    setCrossSellSearch("");
+    setCrossSellItemIds(item.crossSellItemIds ?? item.crossSellItems?.map((x: any) => x.id) ?? []);
     setActive(item.active ?? true);
   }, [open, item]);
+
+  const crossSellCandidates = useMemo(
+    () =>
+      (allItems ?? [])
+        .filter((candidate: any) => candidate.id !== item.id)
+        .filter((candidate: any) => {
+          const query = crossSellSearch.trim().toLowerCase();
+          if (!query) return true;
+          return [candidate.name, candidate.sku, candidate.category?.parent?.name, candidate.category?.name]
+            .filter(Boolean)
+            .some((part: any) => String(part).toLowerCase().includes(query));
+        })
+        .sort((a: any, b: any) => compareByCategoryParentName(a, b)),
+    [allItems, crossSellSearch, item.id]
+  );
 
   const save = async () => {
     setSaving(true);
@@ -416,6 +444,7 @@ function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved 
           warehouse_id: warehouseId || null,
           image_url: imageUrl ? imageUrl : null,
           qr_code: qrCode ? qrCode : null,
+          cross_sell_item_ids: crossSellItemIds,
           active
         })
       });
@@ -554,6 +583,64 @@ function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved 
           QR Kód / EAN (pro budoucí čtečky)
           <Input className="mt-1" value={qrCode} onChange={e => setQrCode(e.target.value)} placeholder="Naskenuj nebo zadej kód…" />
         </label>
+        <div className="text-sm md:col-span-2">
+          Cross-sell produkty
+          <div className="mt-1 rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">
+              Produkty, které se mají doporučovat při přidání této položky do akce.
+            </div>
+            <Input
+              className="mt-3"
+              value={crossSellSearch}
+              onChange={(e) => setCrossSellSearch(e.target.value)}
+              placeholder="Hledej podle názvu, SKU nebo kategorie…"
+            />
+            <div className="mt-3 max-h-52 space-y-2 overflow-y-auto pr-1">
+              {crossSellCandidates.slice(0, 40).map((candidate: any) => {
+                const checked = crossSellItemIds.includes(candidate.id);
+                return (
+                  <label key={candidate.id} className="flex items-start gap-3 rounded-lg border border-slate-100 p-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        setCrossSellItemIds((prev) =>
+                          e.target.checked ? [...prev, candidate.id] : prev.filter((id) => id !== candidate.id)
+                        );
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-800">{candidate.name}</div>
+                      <div className="truncate text-xs text-slate-500">
+                        {formatCategoryParentLabel(candidate.category?.parent?.name, candidate.category?.name)}
+                        {candidate.sku ? ` • ${candidate.sku}` : ""}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+              {crossSellCandidates.length === 0 ? (
+                <div className="text-xs text-slate-500">Žádné odpovídající položky.</div>
+              ) : null}
+            </div>
+            {crossSellItemIds.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {crossSellItemIds.map((selectedId) => {
+                  const selected = allItems.find((candidate: any) => candidate.id === selectedId);
+                  if (!selected) return null;
+                  return (
+                    <Badge key={selectedId} className="bg-slate-100 text-slate-700">
+                      {selected.name}
+                    </Badge>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-slate-500">Zatím nejsou vybrané žádné cross-sell produkty.</div>
+            )}
+          </div>
+        </div>
 
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
@@ -766,7 +853,8 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
       "master_package_weight",
       "volume",
       "plate_diameter",
-      "warehouse"
+      "warehouse",
+      ...Array.from({ length: CROSS_SELL_COLUMNS }, (_, idx) => `cross_sell_${idx + 1}`)
     ];
     const ex1 = [
       "Talíř mělký 24cm",
@@ -784,7 +872,8 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
       "8.5",
       "",
       "24",
-      "Liboc"
+      "Liboc",
+      ...Array.from({ length: CROSS_SELL_COLUMNS }, () => "")
     ];
     const csvContent = [headers.join(";"), ex1.join(";")].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
