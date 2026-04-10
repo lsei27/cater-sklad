@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { env } from "../config.js";
 import { execSync } from "node:child_process";
 import path from "node:path";
+import { normalizeMainCategory, normalizeChildCategory } from "./categoryNormalize.js";
 
 const pool = new Pool({ connectionString: env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -106,8 +107,8 @@ async function main() {
     const name = item.name?.trim();
     if (!name) continue;
 
-    const catName = item.child_category || item.category || "";
-    const parentCatName = item.main_category || item.parent_category || "Ostatní";
+    const catName = normalizeChildCategory(item.child_category || item.category);
+    const parentCatName = normalizeMainCategory(item.main_category || item.parent_category) || "Ostatní";
     const sku = item.sku ? String(item.sku).trim() : null;
     const unit = item.unit || "ks";
     const masterPackageQty = item["master package"] ? parseInt(String(item["master package"])) : null;
