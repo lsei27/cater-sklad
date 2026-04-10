@@ -5,6 +5,7 @@ import { LedgerReason, ReservationState } from "../../generated/prisma/client.js
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { getPhysicalTotal } from "../services/availability.js";
+import { createInventoryLedgerEntry } from "../services/ledger.js";
 
 function compareNullableSortOrder(a?: number | null, b?: number | null) {
   if (typeof a === "number" && typeof b === "number") return a - b;
@@ -352,25 +353,21 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
       });
 
       // Create ledger entries
-      await tx.inventoryLedger.createMany({
-        data: [
-          {
-            inventoryItemId: body.inventory_item_id,
-            deltaQuantity: -body.quantity,
-            reason: LedgerReason.transfer,
-            warehouseId: body.from_warehouse_id,
-            note: body.note || `Převod do ${body.to_warehouse_id}`,
-            createdById: request.user!.id
-          },
-          {
-            inventoryItemId: body.inventory_item_id,
-            deltaQuantity: body.quantity,
-            reason: LedgerReason.transfer,
-            warehouseId: body.to_warehouse_id,
-            note: body.note || `Převod z ${body.from_warehouse_id}`,
-            createdById: request.user!.id
-          }
-        ]
+      await createInventoryLedgerEntry(tx, {
+        inventoryItemId: body.inventory_item_id,
+        deltaQuantity: -body.quantity,
+        reason: LedgerReason.transfer,
+        warehouseId: body.from_warehouse_id,
+        note: body.note || `Převod do ${body.to_warehouse_id}`,
+        createdById: request.user!.id
+      });
+      await createInventoryLedgerEntry(tx, {
+        inventoryItemId: body.inventory_item_id,
+        deltaQuantity: body.quantity,
+        reason: LedgerReason.transfer,
+        warehouseId: body.to_warehouse_id,
+        note: body.note || `Převod z ${body.from_warehouse_id}`,
+        createdById: request.user!.id
       });
 
       return transfer;

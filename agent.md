@@ -126,12 +126,14 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 - **Event Manager**: Vytváří akce, spravuje položky jen ve svých akcích; může upravovat položky i po potvrzení kuchyně (dokud není ISSUED/CLOSED/CANCELLED). Akce může pouze rušit (jen svoje), mazání je jen pro admina.
 - **Chef**: Má přístup pouze k položkám v kategorii "Kuchyň". Potvrzuje svou část akce.
 - **Warehouse**: Vidí seznam akcí k vydání/svozu, značí vydání a návraty.
+  - **Defaultní výpis skladu**: Hlavní seznam skladu (`/warehouse`) implicitně zahrnuje i `DRAFT` a `READY_FOR_WAREHOUSE`, nejen `SENT_TO_WAREHOUSE` / `ISSUED` / `CLOSED`, aby byly vidět i rozpracované akce bez ručního filtrování na „Koncept“.
 
 ---
 
 ## 💡 Tipy pro vývoj
 - **DB Změny**: Po změně v `schema.prisma` spusťte `npx prisma migrate dev --name <nazev>` (lokálně) nebo se spolehněte na auto-deploy migrace (produkce).
 - **Prisma enumy v kódu**: Pro `LedgerReason` používejte `LedgerReason.<value>` z Prisma klienta místo raw stringů, aby změny enumu byly typově svázané s backendem.
+- **Ledger kompatibilita**: `apps/api/src/services/ledger.ts` obsahuje kompatibilní wrapper pro zápisy do `inventory_ledger`. Pokud starší databáze ještě nezná novější `LedgerReason` hodnotu (`issue`, `return`, případně `transfer`), zápis spadne zpět na `manual` a původní reason se zachová v `note` markeru.
 - **Prisma Generate**: Po změnách v schema nebo po aktualizaci Prisma spusťte `npx prisma generate` v `apps/api` pro regeneraci klienta.
 - **Prisma 7 Importy**: Všechny importy Prisma klienta musí používat relativní cestu s `.js` příponou: `import { PrismaClient } from "../../generated/prisma/client.js"`.
 - **PrismaPg Adapter**: PrismaClient v Prisma 7 vyžaduje adapter v konstruktoru. Používáme `PrismaPg` z `@prisma/adapter-pg` s `pg` Pool instancí.

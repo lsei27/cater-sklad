@@ -8,6 +8,7 @@ import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
+import { createInventoryLedgerEntry } from "../services/ledger.js";
 
 function safeFilename(value: string) {
   return value
@@ -82,7 +83,15 @@ export async function eventRoutes(app: FastifyInstance) {
     const where: any = {};
 
     if (user.role === "warehouse") {
-      where.status = { in: [EventStatus.SENT_TO_WAREHOUSE, EventStatus.ISSUED, EventStatus.CLOSED] };
+      where.status = {
+        in: [
+          EventStatus.DRAFT,
+          EventStatus.READY_FOR_WAREHOUSE,
+          EventStatus.SENT_TO_WAREHOUSE,
+          EventStatus.ISSUED,
+          EventStatus.CLOSED
+        ]
+      };
     }
 
     if (query.status) {
@@ -850,16 +859,14 @@ export async function eventRoutes(app: FastifyInstance) {
         
         // Add Ledger entries for issued items
         for (const row of rows) {
-          await tx.inventoryLedger.create({
-            data: {
-              inventoryItemId: row.inventoryItemId,
-              deltaQuantity: -row.issuedQuantity,
-              reason: LedgerReason.issue,
-              eventId: params.id,
-              warehouseId: row.warehouseId,
-              createdById: user.id,
-              note: "Výdej na akci"
-            }
+          await createInventoryLedgerEntry(tx, {
+            inventoryItemId: row.inventoryItemId,
+            deltaQuantity: -row.issuedQuantity,
+            reason: LedgerReason.issue,
+            eventId: params.id,
+            warehouseId: row.warehouseId,
+            createdById: user.id,
+            note: "Výdej na akci"
           });
         }
 
@@ -944,16 +951,14 @@ export async function eventRoutes(app: FastifyInstance) {
           // Add Ledger entries for returned items
           for (const row of rows) {
             if (row.returnedQuantity > 0) {
-              await tx.inventoryLedger.create({
-                data: {
-                  inventoryItemId: row.inventoryItemId,
-                  deltaQuantity: row.returnedQuantity,
-                  reason: LedgerReason.return,
-                  eventId: params.id,
-                  warehouseId: row.targetWarehouseId,
-                  createdById: user.id,
-                  note: "Vráceno z akce"
-                }
+              await createInventoryLedgerEntry(tx, {
+                inventoryItemId: row.inventoryItemId,
+                deltaQuantity: row.returnedQuantity,
+                reason: LedgerReason.return,
+                eventId: params.id,
+                warehouseId: row.targetWarehouseId,
+                createdById: user.id,
+                note: "Vráceno z akce"
               });
             }
             changedLedgerItemIds.push(row.inventoryItemId);
@@ -1007,16 +1012,14 @@ export async function eventRoutes(app: FastifyInstance) {
                 idempotencyKey: `breakage:${params.id}:${t.inventory_item_id}:${Date.now()}`
               }
             });
-            await tx.inventoryLedger.create({
-              data: {
-                inventoryItemId: t.inventory_item_id,
-                deltaQuantity: -broken,
-                reason: LedgerReason.breakage,
-                eventId: params.id,
-                warehouseId: warehouseId,
-                createdById: user.id,
-                note: "Rozbité při návratu"
-              }
+            await createInventoryLedgerEntry(tx, {
+              inventoryItemId: t.inventory_item_id,
+              deltaQuantity: -broken,
+              reason: LedgerReason.breakage,
+              eventId: params.id,
+              warehouseId: warehouseId,
+              createdById: user.id,
+              note: "Rozbité při návratu"
             });
             changedLedgerItemIds.push(t.inventory_item_id);
           }
@@ -1032,16 +1035,14 @@ export async function eventRoutes(app: FastifyInstance) {
                 idempotencyKey: `missing:${params.id}:${t.inventory_item_id}:${Date.now()}`
               }
             });
-            await tx.inventoryLedger.create({
-              data: {
-                inventoryItemId: t.inventory_item_id,
-                deltaQuantity: -missing,
-                reason: LedgerReason.missing,
-                eventId: params.id,
-                warehouseId: warehouseId,
-                createdById: user.id,
-                note: "Chybějící při uzavření"
-              }
+            await createInventoryLedgerEntry(tx, {
+              inventoryItemId: t.inventory_item_id,
+              deltaQuantity: -missing,
+              reason: LedgerReason.missing,
+              eventId: params.id,
+              warehouseId: warehouseId,
+              createdById: user.id,
+              note: "Chybějící při uzavření"
             });
             changedLedgerItemIds.push(t.inventory_item_id);
           }
