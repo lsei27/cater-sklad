@@ -127,6 +127,7 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 - **Chef**: Má přístup pouze k položkám v kategorii "Kuchyň". Potvrzuje svou část akce.
 - **Warehouse**: Vidí seznam akcí k vydání/svozu, značí vydání a návraty.
   - **Defaultní výpis skladu**: Hlavní seznam skladu (`/warehouse`) implicitně zahrnuje i `DRAFT` a `READY_FOR_WAREHOUSE`, nejen `SENT_TO_WAREHOUSE` / `ISSUED` / `CLOSED`, aby byly vidět i rozpracované akce bez ručního filtrování na „Koncept“.
+  - **Načítání všech stavů ve skladu**: `WarehouseEventsPage` při volbě „Všechny stavy“ explicitně načítá jednotlivé statusy separátně a výsledky skládá na frontendu. Tím není závislá na backendovém default filtru pro warehouse roli a řazení/sekce odpovídají hlavní stránce akcí.
 
 ---
 

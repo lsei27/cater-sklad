@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, getCurrentUser } from "../lib/api";
 import { Card, CardContent } from "../components/ui/Card";
@@ -22,6 +22,7 @@ type EventRow = {
 };
 
 export default function WarehouseEventsPage() {
+  const allStatuses = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CANCELLED", "CLOSED"] as const;
   const role = getCurrentUser()?.role ?? "";
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,17 +36,36 @@ export default function WarehouseEventsPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams();
-      if (filters.status) params.append("status", filters.status);
-      if (filters.month) params.append("month", String(filters.month));
-      if (filters.year) params.append("year", String(filters.year));
-      if (filters.onlyMine) {
-        const user = getCurrentUser();
-        if (user?.id) params.append("created_by_id", user.id);
-      }
+      const buildParams = (status?: string) => {
+        const params = new URLSearchParams();
+        if (status) params.append("status", status);
+        if (filters.month) params.append("month", String(filters.month));
+        if (filters.year) params.append("year", String(filters.year));
+        if (filters.onlyMine) {
+          const user = getCurrentUser();
+          if (user?.id) params.append("created_by_id", user.id);
+        }
+        return params.toString();
+      };
 
-      const res = await api<{ events: EventRow[] }>(`/events?${params.toString()}`);
-      setEvents(res.events);
+      if (filters.status) {
+        const res = await api<{ events: EventRow[] }>(`/events?${buildParams(filters.status)}`);
+        setEvents(res.events);
+      } else {
+        const results = await Promise.all(
+          allStatuses.map(async (status) => {
+            const res = await api<{ events: EventRow[] }>(`/events?${buildParams(status)}`);
+            return res.events;
+          })
+        );
+        const deduped = new Map<string, EventRow>();
+        for (const list of results) {
+          for (const event of list) {
+            if (!deduped.has(event.id)) deduped.set(event.id, event);
+          }
+        }
+        setEvents(Array.from(deduped.values()));
+      }
     } catch (e: any) {
       setError(e?.error?.message ?? "Nepodařilo se načíst akce.");
     } finally {
@@ -56,6 +76,39 @@ export default function WarehouseEventsPage() {
   useEffect(() => {
     load();
   }, [filters]);
+
+  const groupedSections = useMemo(() => {
+    const statusOrder = [...allStatuses] as string[];
+    const byStatus = new Map<string, EventRow[]>(statusOrder.map((s) => [s, []]));
+    const other: EventRow[] = [];
+
+    for (const e of events) {
+      const bucket = byStatus.get(e.status);
+      if (bucket) bucket.push(e);
+      else other.push(e);
+    }
+
+    const byDate = (a: EventRow, b: EventRow) => {
+      const diff = new Date(a.deliveryDatetime).getTime() - new Date(b.deliveryDatetime).getTime();
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name, "cs");
+    };
+
+    const sections = statusOrder
+      .map((status) => {
+        const list = byStatus.get(status) ?? [];
+        list.sort(byDate);
+        return { status, label: statusLabel(status), events: list };
+      })
+      .filter((section) => section.events.length > 0);
+
+    if (other.length > 0) {
+      other.sort(byDate);
+      sections.push({ status: "OTHER", label: "Ostatní", events: other });
+    }
+
+    return sections;
+  }, [events]);
 
   if (!["warehouse", "admin"].includes(role)) {
     return (
@@ -125,100 +178,121 @@ export default function WarehouseEventsPage() {
             </Card>
           ))}
         </div>
-      ) : viewMode === "grid" ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {events.map((e) => {
-            const manager = managerLabel(e.createdBy);
-            return (
-              <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-                <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
-                  <CardContent className="p-5 flex flex-col h-full">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex flex-col gap-1">
-                        <Badge className={statusBadgeClass(e.status)}>
-                          {statusLabel(e.status)}
-                        </Badge>
-                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
-                    {manager ? (
-                      <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
-                        Manažer: {manager}
-                      </div>
-                    ) : null}
-
-                    <div className="text-sm text-slate-500 space-y-2 mt-2">
-                      <div className="flex items-center gap-2">
-                        <div className="text-slate-400"><Icons.MapPin /></div>
-                        <span className="truncate text-slate-700">{e.location}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="text-slate-400"><Icons.Calendar /></div>
-                        <span className="text-xs">
-                          {new Date(e.deliveryDatetime).toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
       ) : events.length === 0 ? (
         <Card>
           <CardContent>
             <div className="text-sm text-slate-600">Žádné akce k vyřízení.</div>
           </CardContent>
         </Card>
+      ) : viewMode === "grid" ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {groupedSections.map((section) => (
+            <Fragment key={section.status}>
+              <div className="col-span-full mt-2">
+                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <span>{section.label}</span>
+                  <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
+                </div>
+                <div className="mt-2 border-t border-slate-100" />
+              </div>
+              {section.events.map((e) => {
+                const manager = managerLabel(e.createdBy);
+                return (
+                  <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+                    <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
+                      <CardContent className="p-5 flex flex-col h-full">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex flex-col gap-1">
+                            <Badge className={statusBadgeClass(e.status)}>
+                              {statusLabel(e.status)}
+                            </Badge>
+                            {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                              <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                                <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
+                        {manager ? (
+                          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
+                            Manažer: {manager}
+                          </div>
+                        ) : null}
+
+                        <div className="text-sm text-slate-500 space-y-2 mt-2">
+                          <div className="flex items-center gap-2">
+                            <div className="text-slate-400"><Icons.MapPin /></div>
+                            <span className="truncate text-slate-700">{e.location}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-slate-400"><Icons.Calendar /></div>
+                            <span className="text-xs">
+                              {new Date(e.deliveryDatetime).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
       ) : (
         <div className="space-y-2">
-          {events.map((e) => {
-            const manager = managerLabel(e.createdBy);
-            return (
-              <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-                <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
-                  <CardContent className="p-4 flex items-center justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
-                          {e.name}
-                        </h3>
-                        <Badge className={`scale-90 ${statusBadgeClass(e.status)}`}>
-                          {statusLabel(e.status)}
-                        </Badge>
-                        {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                            <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-slate-500">
-                        <div className="flex items-center gap-1">
-                          <Icons.MapPin className="h-3 w-3" /> {e.location}
-                        </div>
-                        <div className="flex items-center gap-1 font-medium">
-                          <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
-                        </div>
-                      </div>
-                      {manager ? (
-                        <div className="mt-1 text-xs text-slate-500">
-                          Manažer: <span className="font-medium text-slate-700">{manager}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                    <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+          {groupedSections.map((section) => (
+            <div key={section.status}>
+              <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <span>{section.label}</span>
+                <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
+              </div>
+              <div className="space-y-2">
+                {section.events.map((e) => {
+                  const manager = managerLabel(e.createdBy);
+                  return (
+                    <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
+                      <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
+                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-3 mb-1">
+                              <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
+                                {e.name}
+                              </h3>
+                              <Badge className={`scale-90 ${statusBadgeClass(e.status)}`}>
+                                {statusLabel(e.status)}
+                              </Badge>
+                              {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
+                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
+                                  <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-slate-500">
+                              <div className="flex items-center gap-1">
+                                <Icons.MapPin className="h-3 w-3" /> {e.location}
+                              </div>
+                              <div className="flex items-center gap-1 font-medium">
+                                <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
+                              </div>
+                            </div>
+                            {manager ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                Manažer: <span className="font-medium text-slate-700">{manager}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                          <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
