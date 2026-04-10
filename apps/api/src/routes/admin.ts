@@ -204,7 +204,7 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/items", { preHandler: [app.authenticate] }, async (request) => {
-    requireRole(request.user!.role, ["admin"]);
+    requireRole(request.user!.role, ["admin", "warehouse"]);
     const query = z.object({ search: z.string().optional() }).parse(request.query);
     const items = await app.prisma.inventoryItem.findMany({
       where: query.search ? { name: { contains: query.search, mode: "insensitive" } } : {},
@@ -236,7 +236,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/items", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const body = z
       .object({
         name: z.string().min(1),
@@ -246,6 +246,7 @@ export async function adminRoutes(app: FastifyInstance) {
         active: z.boolean().optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
+        return_delay_days: z.number().int().min(0).optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
         master_package_weight: z.string().nullable().optional(),
         volume: z.string().nullable().optional(),
@@ -263,6 +264,7 @@ export async function adminRoutes(app: FastifyInstance) {
         active: body.active ?? true,
         sku: body.sku ?? null,
         notes: body.notes ?? null,
+        returnDelayDays: body.return_delay_days ?? 0,
         masterPackageQty: body.master_package_qty ?? null,
         masterPackageWeight: body.master_package_weight ?? null,
         volume: body.volume ?? null,
@@ -280,7 +282,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.patch("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
@@ -291,6 +293,7 @@ export async function adminRoutes(app: FastifyInstance) {
         active: z.boolean().optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
+        return_delay_days: z.number().int().min(0).optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
         master_package_weight: z.string().nullable().optional(),
         volume: z.string().nullable().optional(),
@@ -309,6 +312,7 @@ export async function adminRoutes(app: FastifyInstance) {
         ...(body.active !== undefined ? { active: body.active } : {}),
         ...(body.sku !== undefined ? { sku: body.sku } : {}),
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
         ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
         ...(body.master_package_weight !== undefined ? { masterPackageWeight: body.master_package_weight } : {}),
         ...(body.volume !== undefined ? { volume: body.volume } : {}),
@@ -325,7 +329,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.delete("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const result = await app.prisma.$transaction(async (tx) => {
@@ -348,7 +352,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/items/:id/image", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const file = await (request as any).file?.();
@@ -390,7 +394,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/items/:id/stock", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
@@ -429,7 +433,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/import/csv", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin"]);
+    requireRole(actor.role, ["admin", "warehouse"]);
     const dryRun = z.object({ dry_run: z.coerce.boolean().optional() }).parse(request.query).dry_run ?? false;
     const raw = (request.body as any) ?? "";
     if (typeof raw !== "string") return httpError(reply, 400, "BAD_REQUEST", "Send CSV as text/plain body");
@@ -471,7 +475,10 @@ export async function adminRoutes(app: FastifyInstance) {
             const sku = (r.sku ?? "").trim() || null;
             const notes = (r.notes ?? "").trim() || null;
             const imageUrl = (r.image_url ?? "").trim() || null;
+            const qrCode = (r.qr_code ?? "").trim() || null;
             const active = parseBool(r.active) ?? true;
+            const returnDelayDaysRaw = (r.return_delay_days ?? "").toString().trim();
+            const returnDelayDays = returnDelayDaysRaw ? Math.max(0, Number(returnDelayDaysRaw) || 0) : 0;
 
             // New fields
             const masterPackageQtyRaw = (r["master package"] ?? r.master_package_qty ?? "").toString().trim();
@@ -502,6 +509,8 @@ export async function adminRoutes(app: FastifyInstance) {
 
             const itemData = {
               name, categoryId: child.id, unit, notes, imageUrl, active,
+              qrCode,
+              returnDelayDays,
               masterPackageQty, masterPackageWeight, volume, plateDiameter,
               warehouseId,
               sku: sku ?? undefined

@@ -27,7 +27,7 @@ type EventRow = {
 export default function InventoryPage() {
   const nav = useNavigate();
   const role = getCurrentUser()?.role ?? "";
-  const canEdit = role === "admin";
+  const canEdit = role === "admin" || role === "warehouse";
   const canPrint = role === "admin" || role === "warehouse";
   const [items, setItems] = useState<any[]>([]);
   const [parents, setParents] = useState<any[]>([]);

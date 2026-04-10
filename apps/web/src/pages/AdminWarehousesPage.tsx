@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, getCurrentUser } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
@@ -14,6 +14,8 @@ type Warehouse = {
 };
 
 export default function AdminWarehousesPage() {
+  const role = getCurrentUser()?.role ?? "";
+  const canManageWarehouses = role === "admin" || role === "warehouse";
   const [items, setItems] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,8 +40,19 @@ export default function AdminWarehousesPage() {
   };
 
   useEffect(() => {
+    if (!canManageWarehouses) return;
     load();
-  }, []);
+  }, [canManageWarehouses]);
+
+  if (!canManageWarehouses) {
+    return (
+      <Card>
+        <CardContent>
+          <div className="text-sm text-slate-700">Správa skladů je dostupná pouze pro administrátora a sklad.</div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const handleEdit = (w: Warehouse) => {
     setEditId(w.id);

@@ -128,6 +128,7 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 - **Warehouse**: Vidí seznam akcí k vydání/svozu, značí vydání a návraty.
   - **Defaultní výpis skladu**: Hlavní seznam skladu (`/warehouse`) implicitně zahrnuje i `DRAFT` a `READY_FOR_WAREHOUSE`, nejen `SENT_TO_WAREHOUSE` / `ISSUED` / `CLOSED`, aby byly vidět i rozpracované akce bez ručního filtrování na „Koncept“.
   - **Načítání všech stavů ve skladu**: `WarehouseEventsPage` při volbě „Všechny stavy“ explicitně načítá jednotlivé statusy separátně a výsledky skládá na frontendu. Tím není závislá na backendovém default filtru pro warehouse roli a řazení/sekce odpovídají hlavní stránce akcí.
+  - **Katalog a sklady**: Role `warehouse` může stejně jako admin spravovat položky (`/settings/items`), spouštět CSV import položek a upravovat fyzické sklady (`/settings/warehouses`).
 
 ---
 
@@ -144,6 +145,8 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 - **UI obrázky**: Miniatury položek se zobrazují při přidávání položek do akce i ve skladovém detailu. Do PDF exportů se obrázky nepřidávají.
 - **Add-items modal UX**: Přidání položek v `EventDetailPage` používá tichý refresh, aby modal neprobliknul; na desktopu se roloval pouze seznam skladu vlevo a panel "Položky v akci" zůstává viditelný (scrolluje jen při přetečení).
 - **Automatické filtrování ve skladu**: Filtry na stránce skladu (`InventoryPage`) fungují automaticky - při změně kategorie (Typ/Kategorie) nebo při psaní názvu se výsledky načítají okamžitě bez nutnosti klikat na tlačítko. Vyhledávání má 300ms debounce pro optimalizaci API volání. Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu).
+- **Admin/warehouse item management**: Formuláře pro vytvoření i editaci položky používají oddělený výběr `Hlavní kategorie` -> `Podkategorie`. Edit modal umí upravit všechny běžně spravované sloupce `InventoryItem` včetně jednotky, SKU, poznámek, výchozího skladu, QR kódu, `returnDelayDays` a parametrů balení.
+- **CSV import položek**: Šablona importu v admin UI zahrnuje i `qr_code`, `return_delay_days`, `master_package_qty`, `master_package_weight`, `volume`, `plate_diameter` a `warehouse`; backend `POST /admin/import/csv` tyto sloupce mapuje přímo do `InventoryItem`.
 - **Hesla v adminu a nastavení**: V admin UI a na stránce změny hesla je toggle pro zobrazení/skrývání hesla při zadávání.
 - **Seed a demo přihlašování**: Hesla pro seed uživatele bereme z env (`ADMIN_SEED_PASSWORD`, `EM_SEED_PASSWORD`, `CHEF_SEED_PASSWORD`, `WAREHOUSE_SEED_PASSWORD`). Demo přepínače na loginu jsou řízené `VITE_DEMO_USERS`.
 - **Repo hygiene**: `node_modules`, `generated/` (Prisma Client output) a build cache jsou ignorované a nemají být commitované; po čistění stačí znovu spustit `pnpm install` a `npx prisma generate`.

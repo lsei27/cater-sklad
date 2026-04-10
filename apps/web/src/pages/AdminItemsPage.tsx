@@ -15,11 +15,14 @@ import { compareByCategoryParentName, formatCategoryParentLabel } from "../lib/v
 
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
+  const canManageItems = role === "admin" || role === "warehouse";
   const [searchParams, setSearchParams] = useSearchParams();
   const [parents, setParents] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [newName, setNewName] = useState("");
+  const [newParentId, setNewParentId] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
@@ -38,11 +41,21 @@ export default function AdminItemsPage() {
     [parents]
   );
 
+  const newSubcats = useMemo(
+    () =>
+      newParentId
+        ? (parents.find((p: any) => p.id === newParentId)?.children ?? [])
+        : [],
+    [parents, newParentId]
+  );
+
   const load = async (opts?: { keepLoading?: boolean }) => {
     if (!opts?.keepLoading) setLoading(true);
     try {
       const cats = await api<{ parents: any[] }>("/categories/tree");
       setParents(cats.parents);
+      const warehouseRes = await api<{ warehouses: any[] }>("/warehouses?all=true");
+      setWarehouses(warehouseRes.warehouses);
       const q = new URLSearchParams();
       if (search) q.set("search", search);
       const res = await api<{ items: any[] }>(`/admin/items?${q.toString()}`);
@@ -55,15 +68,15 @@ export default function AdminItemsPage() {
   };
 
   useEffect(() => {
-    if (role !== "admin") return;
+    if (!canManageItems) return;
     load().catch(() => { });
-  }, [role]);
+  }, [canManageItems]);
 
-  if (role !== "admin") {
+  if (!canManageItems) {
     return (
       <Card>
         <CardContent>
-          <div className="text-sm text-slate-700">Nastavení položek je dostupné pouze pro administrátora.</div>
+          <div className="text-sm text-slate-700">Správa položek je dostupná pouze pro administrátora a sklad.</div>
         </CardContent>
       </Card>
     );
@@ -89,7 +102,7 @@ export default function AdminItemsPage() {
         </CardHeader>
         <CardContent>
           <form
-            className="grid gap-3 md:grid-cols-3"
+            className="grid gap-3 md:grid-cols-4"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
@@ -98,6 +111,7 @@ export default function AdminItemsPage() {
                   body: JSON.stringify({ name: newName, category_id: newCategoryId })
                 });
                 setNewName("");
+                setNewParentId("");
                 setNewCategoryId("");
                 toast.success("Položka vytvořena");
                 await load({ keepLoading: true });
@@ -111,12 +125,35 @@ export default function AdminItemsPage() {
               <Input className="mt-1" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Např. Sklenice na vodu" />
             </label>
             <label className="text-sm">
-              Kategorie
-              <Select className="mt-1" value={newCategoryId} onChange={(e) => setNewCategoryId(e.target.value)}>
-                <option value="">Vyber kategorii…</option>
-                {childCats.map((c: any) => (
+              Hlavní kategorie
+              <Select
+                className="mt-1"
+                value={newParentId}
+                onChange={(e) => {
+                  setNewParentId(e.target.value);
+                  setNewCategoryId("");
+                }}
+              >
+                <option value="">Vyber hlavní kategorii…</option>
+                {parents.map((p: any) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="text-sm">
+              Podkategorie
+              <Select
+                className="mt-1"
+                value={newCategoryId}
+                onChange={(e) => setNewCategoryId(e.target.value)}
+                disabled={!newParentId}
+              >
+                <option value="">{newParentId ? "Vyber podkategorii…" : "Nejdřív vyber hlavní kategorii…"}</option>
+                {newSubcats.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {formatCategoryParentLabel(c.parentName, c.name)}
+                    {c.name}
                   </option>
                 ))}
               </Select>
@@ -187,7 +224,7 @@ export default function AdminItemsPage() {
       ) : (
         <div className="space-y-2">
           {items.map((i) => (
-            <ItemRow key={i.id} item={i} parents={parents} childCats={childCats} onSaved={() => load({ keepLoading: true })} />
+            <ItemRow key={i.id} item={i} parents={parents} warehouses={warehouses} onSaved={() => load({ keepLoading: true })} />
           ))}
         </div>
       )}
@@ -196,7 +233,7 @@ export default function AdminItemsPage() {
   );
 }
 
-function ItemRow({ item, parents, childCats, onSaved }: { item: any; parents: any[]; childCats: any[]; onSaved: () => void }) {
+function ItemRow({ item, parents, warehouses, onSaved }: { item: any; parents: any[]; warehouses: any[]; onSaved: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
 
@@ -236,25 +273,52 @@ function ItemRow({ item, parents, childCats, onSaved }: { item: any; parents: an
         </CardContent>
       </Card>
 
-      <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} childCats={childCats} onSaved={onSaved} />
+      <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} parents={parents} warehouses={warehouses} onSaved={onSaved} />
       <StockModal open={stockOpen} onOpenChange={setStockOpen} item={item} onSaved={onSaved} />
     </>
   );
 }
 
-function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
+function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved }: any) {
   const [name, setName] = useState(item.name);
+  const [parentId, setParentId] = useState(item.category?.parent?.id ?? "");
   const [categoryId, setCategoryId] = useState(item.category_id ?? item.category?.id ?? "");
+  const [unit, setUnit] = useState(item.unit ?? "ks");
+  const [sku, setSku] = useState(item.sku ?? "");
+  const [notes, setNotes] = useState(item.notes ?? "");
+  const [returnDelayDays, setReturnDelayDays] = useState(String(item.returnDelayDays ?? 0));
+  const [masterPackageQty, setMasterPackageQty] = useState(item.masterPackageQty?.toString() ?? "");
+  const [masterPackageWeight, setMasterPackageWeight] = useState(item.masterPackageWeight ?? "");
+  const [volume, setVolume] = useState(item.volume ?? "");
+  const [plateDiameter, setPlateDiameter] = useState(item.plateDiameter ?? "");
+  const [warehouseId, setWarehouseId] = useState(item.warehouseId ?? "");
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? "");
   const [qrCode, setQrCode] = useState(item.qrCode ?? "");
   const [active, setActive] = useState(item.active ?? true);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const subcats = useMemo(
+    () =>
+      parentId
+        ? (parents.find((p: any) => p.id === parentId)?.children ?? [])
+        : [],
+    [parents, parentId]
+  );
 
   useEffect(() => {
     if (!open) return;
     setName(item.name);
+    setParentId(item.category?.parent?.id ?? "");
     setCategoryId(item.category_id ?? item.category?.id ?? "");
+    setUnit(item.unit ?? "ks");
+    setSku(item.sku ?? "");
+    setNotes(item.notes ?? "");
+    setReturnDelayDays(String(item.returnDelayDays ?? 0));
+    setMasterPackageQty(item.masterPackageQty?.toString() ?? "");
+    setMasterPackageWeight(item.masterPackageWeight ?? "");
+    setVolume(item.volume ?? "");
+    setPlateDiameter(item.plateDiameter ?? "");
+    setWarehouseId(item.warehouseId ?? "");
     setImageUrl(item.imageUrl ?? "");
     setQrCode(item.qrCode ?? "");
     setActive(item.active ?? true);
@@ -265,7 +329,22 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
     try {
       await api(`/admin/items/${item.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, category_id: categoryId, image_url: imageUrl ? imageUrl : null, qr_code: qrCode ? qrCode : null, active })
+        body: JSON.stringify({
+          name,
+          category_id: categoryId,
+          unit,
+          sku: sku.trim() ? sku.trim() : null,
+          notes: notes.trim() ? notes.trim() : null,
+          return_delay_days: Number.isFinite(Number(returnDelayDays)) ? Number(returnDelayDays) : 0,
+          master_package_qty: masterPackageQty.trim() ? Number(masterPackageQty) : null,
+          master_package_weight: masterPackageWeight.trim() ? masterPackageWeight.trim() : null,
+          volume: volume.trim() ? volume.trim() : null,
+          plate_diameter: plateDiameter.trim() ? plateDiameter.trim() : null,
+          warehouse_id: warehouseId || null,
+          image_url: imageUrl ? imageUrl : null,
+          qr_code: qrCode ? qrCode : null,
+          active
+        })
       });
       toast.success("Uloženo");
       onSaved();
@@ -285,14 +364,81 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
           <Input className="mt-1" value={name} onChange={e => setName(e.target.value)} />
         </label>
         <label className="text-sm">
-          Kategorie
-          <Select className="mt-1" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
-            {childCats.map((c: any) => (
-              <option key={c.id} value={c.id}>
-                {formatCategoryParentLabel(c.parentName, c.name)}
+          Jednotka
+          <Input className="mt-1" value={unit} onChange={e => setUnit(e.target.value)} placeholder="ks" />
+        </label>
+        <label className="text-sm">
+          Hlavní kategorie
+          <Select
+            className="mt-1"
+            value={parentId}
+            onChange={e => {
+              setParentId(e.target.value);
+              setCategoryId("");
+            }}
+          >
+            <option value="">Vyber hlavní kategorii…</option>
+            {parents.map((p: any) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
               </option>
             ))}
           </Select>
+        </label>
+        <label className="text-sm">
+          Podkategorie
+          <Select
+            className="mt-1"
+            value={categoryId}
+            onChange={e => setCategoryId(e.target.value)}
+            disabled={!parentId}
+          >
+            <option value="">{parentId ? "Vyber podkategorii…" : "Nejdřív vyber hlavní kategorii…"}</option>
+            {subcats.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className="text-sm">
+          SKU
+          <Input className="mt-1" value={sku} onChange={e => setSku(e.target.value)} placeholder="Např. SKLO-001" />
+        </label>
+        <label className="text-sm">
+          Výchozí sklad
+          <Select className="mt-1" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+            <option value="">Bez výchozího skladu</option>
+            {warehouses.map((w: any) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className="text-sm">
+          Dny návratu
+          <Input className="mt-1" type="number" min={0} value={returnDelayDays} onChange={e => setReturnDelayDays(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Master balení
+          <Input className="mt-1" type="number" min={1} value={masterPackageQty} onChange={e => setMasterPackageQty(e.target.value)} placeholder={`Počet ${unit || "ks"}`} />
+        </label>
+        <label className="text-sm">
+          Hmotnost balení
+          <Input className="mt-1" value={masterPackageWeight} onChange={e => setMasterPackageWeight(e.target.value)} placeholder="Např. 12.5" />
+        </label>
+        <label className="text-sm">
+          Objem
+          <Input className="mt-1" value={volume} onChange={e => setVolume(e.target.value)} placeholder="Např. 0.25" />
+        </label>
+        <label className="text-sm">
+          Průměr talíře
+          <Input className="mt-1" value={plateDiameter} onChange={e => setPlateDiameter(e.target.value)} placeholder="Např. 27" />
+        </label>
+        <label className="text-sm md:col-span-2">
+          Poznámky
+          <Input className="mt-1" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Interní poznámka k položce…" />
         </label>
 
         <label className="text-sm">
@@ -485,8 +631,42 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
   };
 
   const downloadTemplate = () => {
-    const headers = ["name", "main_category", "child_category", "unit", "quantity", "active", "sku", "notes", "image_url"];
-    const ex1 = ["Talíř mělký 24cm", "Inventář", "Porcelán", "ks", "100", "1", "TAL24", "Poznámka...", ""];
+    const headers = [
+      "name",
+      "main_category",
+      "child_category",
+      "unit",
+      "quantity",
+      "active",
+      "sku",
+      "notes",
+      "image_url",
+      "qr_code",
+      "return_delay_days",
+      "master_package_qty",
+      "master_package_weight",
+      "volume",
+      "plate_diameter",
+      "warehouse"
+    ];
+    const ex1 = [
+      "Talíř mělký 24cm",
+      "Inventář",
+      "Porcelán",
+      "ks",
+      "100",
+      "1",
+      "TAL24",
+      "Bílý porcelán pro hlavní chod",
+      "",
+      "8591234567890",
+      "0",
+      "10",
+      "8.5",
+      "",
+      "24",
+      "Liboc"
+    ];
     const csvContent = [headers.join(";"), ex1.join(";")].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
