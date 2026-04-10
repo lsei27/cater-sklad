@@ -414,6 +414,7 @@ function EditItemModal({ open, onOpenChange, item, allItems, parents, warehouses
     () =>
       (allItems ?? [])
         .filter((candidate: any) => candidate.id !== item.id)
+        .filter((candidate: any) => !crossSellItemIds.includes(candidate.id))
         .filter((candidate: any) => {
           const query = crossSellSearch.trim().toLowerCase();
           if (!query) return true;
@@ -422,7 +423,16 @@ function EditItemModal({ open, onOpenChange, item, allItems, parents, warehouses
             .some((part: any) => String(part).toLowerCase().includes(query));
         })
         .sort((a: any, b: any) => compareByCategoryParentName(a, b)),
-    [allItems, crossSellSearch, item.id]
+    [allItems, crossSellItemIds, crossSellSearch, item.id]
+  );
+
+  const selectedCrossSellItems = useMemo(
+    () =>
+      crossSellItemIds
+        .map((selectedId) => allItems.find((candidate: any) => candidate.id === selectedId))
+        .filter(Boolean)
+        .sort((a: any, b: any) => compareByCategoryParentName(a, b)),
+    [allItems, crossSellItemIds]
   );
 
   const save = async () => {
@@ -595,50 +605,70 @@ function EditItemModal({ open, onOpenChange, item, allItems, parents, warehouses
               onChange={(e) => setCrossSellSearch(e.target.value)}
               placeholder="Hledej podle názvu, SKU nebo kategorie…"
             />
-            <div className="mt-3 max-h-52 space-y-2 overflow-y-auto pr-1">
-              {crossSellCandidates.slice(0, 40).map((candidate: any) => {
-                const checked = crossSellItemIds.includes(candidate.id);
-                return (
-                  <label key={candidate.id} className="flex items-start gap-3 rounded-lg border border-slate-100 p-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        setCrossSellItemIds((prev) =>
-                          e.target.checked ? [...prev, candidate.id] : prev.filter((id) => id !== candidate.id)
-                        );
-                      }}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-300"
-                    />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-slate-800">{candidate.name}</div>
-                      <div className="truncate text-xs text-slate-500">
-                        {formatCategoryParentLabel(candidate.category?.parent?.name, candidate.category?.name)}
-                        {candidate.sku ? ` • ${candidate.sku}` : ""}
+            <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <div className="text-xs font-semibold text-slate-700">Dostupné produkty k přidání</div>
+                <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {crossSellCandidates.slice(0, 40).map((candidate: any) => (
+                    <div key={candidate.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{candidate.name}</div>
+                        <div className="truncate text-xs text-slate-500">
+                          {formatCategoryParentLabel(candidate.category?.parent?.name, candidate.category?.name)}
+                          {candidate.sku ? ` • ${candidate.sku}` : ""}
+                        </div>
                       </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setCrossSellItemIds((prev) => [...prev, candidate.id])}
+                      >
+                        Přidat
+                      </Button>
                     </div>
-                  </label>
-                );
-              })}
-              {crossSellCandidates.length === 0 ? (
-                <div className="text-xs text-slate-500">Žádné odpovídající položky.</div>
-              ) : null}
-            </div>
-            {crossSellItemIds.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {crossSellItemIds.map((selectedId) => {
-                  const selected = allItems.find((candidate: any) => candidate.id === selectedId);
-                  if (!selected) return null;
-                  return (
-                    <Badge key={selectedId} className="bg-slate-100 text-slate-700">
-                      {selected.name}
-                    </Badge>
-                  );
-                })}
+                  ))}
+                  {crossSellCandidates.length === 0 ? (
+                    <div className="text-xs text-slate-500">Žádné odpovídající položky k přidání.</div>
+                  ) : null}
+                </div>
               </div>
-            ) : (
-              <div className="mt-3 text-xs text-slate-500">Zatím nejsou vybrané žádné cross-sell produkty.</div>
-            )}
+              <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <div className="text-xs font-semibold text-slate-700">Vybrané cross-sell produkty</div>
+                <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {selectedCrossSellItems.length > 0 ? (
+                    selectedCrossSellItems.map((selected: any) => (
+                      <div key={selected.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-slate-800">{selected.name}</div>
+                          <div className="truncate text-xs text-slate-500">
+                            {formatCategoryParentLabel(selected.category?.parent?.name, selected.category?.name)}
+                            {selected.sku ? ` • ${selected.sku}` : ""}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setCrossSellItemIds((prev) => prev.filter((id) => id !== selected.id))}
+                        >
+                          Odebrat
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-slate-500">Zatím nejsou vybrané žádné cross-sell produkty.</div>
+                  )}
+                </div>
+                {selectedCrossSellItems.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedCrossSellItems.map((selected: any) => (
+                      <Badge key={selected.id} className="bg-slate-100 text-slate-700">
+                        {selected.name}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
 
