@@ -243,7 +243,7 @@ export default function InventoryPage() {
             </div>
 
             <div className="md:col-span-3 lg:col-span-2">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Typ</label>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Kategorie</label>
               <Select
                 className="mt-1"
                 value={parentId}
@@ -262,7 +262,7 @@ export default function InventoryPage() {
             </div>
 
             <div className="md:col-span-3 lg:col-span-2">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Kategorie</label>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Podkategorie</label>
               <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId}>
                 <option value="">Vše</option>
                 {subcats.map((c: any) => (

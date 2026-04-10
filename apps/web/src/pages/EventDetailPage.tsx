@@ -810,7 +810,7 @@ function AddItemsPanel(props: {
   const userId = getCurrentUser()?.id;
 
   const subcats = useMemo(() => {
-    const p = parents.find((x) => x.id === parentId);
+    const p = parents.find((x: any) => x.id === parentId);
     return p?.children ?? [];
   }, [parents, parentId]);
 
@@ -997,7 +997,7 @@ function AddItemsPanel(props: {
               <Input className="mt-1" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název…" />
             </label>
             <label className="text-sm">
-              Typ
+              Kategorie
               <Select
                 className="mt-1"
                 value={parentId}
@@ -1016,8 +1016,8 @@ function AddItemsPanel(props: {
               </Select>
             </label>
             <label className="text-sm">
-              Kategorie
-              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId}>
+              Podkategorie
+              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId || isChef}>
                 <option value="">Vše</option>
                 {subcats.map((c: any) => (
                   <option key={c.id} value={c.id}>
