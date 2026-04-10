@@ -14,7 +14,10 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3001),
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(16),
-  STORAGE_DIR: z.string().default("storage")
+  STORAGE_DIR: z.string().default("storage"),
+  BUNNY_STORAGE_ZONE: z.string().optional(),
+  BUNNY_API_KEY: z.string().optional(),
+  BUNNY_CDN_URL: z.string().optional()
 });
 
 const parsed = EnvSchema.parse(process.env);

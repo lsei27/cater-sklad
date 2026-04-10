@@ -21,6 +21,7 @@ enum LedgerReason {
   breakage
   missing
   manual
+  transfer
 }
 
 enum EventStatus {
@@ -40,58 +41,86 @@ enum ReservationState {
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
-  name         String?   @map("name")
+  name         String?  @map("name")
   passwordHash String   @map("password_hash")
   role         Role
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  createdEvents  Event[]          @relation("event_created_by")
-  ledgerEntries  InventoryLedger[]
-  exports        EventExport[]
-  issues         EventIssue[]
-  returns        EventReturn[]
-  auditEntries   AuditLog[]
+  createdEvents       Event[]            @relation("event_created_by")
+  ledgerEntries       InventoryLedger[]
+  exports             EventExport[]
+  issues              EventIssue[]
+  returns             EventReturn[]
+  auditEntries        AuditLog[]
   createdReservations EventReservation[]
-
 
   @@map("users")
 }
 
 model Category {
-  id        String    @id @default(uuid()) @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
   name      String
-  parentId  String?   @map("parent_id") @db.Uuid
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  parentId  String?  @map("parent_id") @db.Uuid
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  parent   Category?  @relation("category_parent", fields: [parentId], references: [id], onDelete: SetNull)
-  children Category[] @relation("category_parent")
+  parent      Category?            @relation("category_parent", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[]           @relation("category_parent")
   activeRoles RoleCategoryAccess[]
-  items    InventoryItem[]
+  items       InventoryItem[]
 
   @@unique([parentId, name])
   @@index([parentId], map: "idx_cat_parent")
   @@map("categories")
 }
 
-model InventoryItem {
-  id              String   @id @default(uuid()) @db.Uuid
-  name            String
-  categoryId      String   @map("category_id") @db.Uuid
-  unit            String   @default("ks")
-  imageUrl        String?  @map("image_url")
-  active          Boolean  @default(true)
-  returnDelayDays Int      @default(0) @map("return_delay_days")
-  sku             String?  @unique
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+model Warehouse {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  address   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  category     Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  ledger       InventoryLedger[]
-  reservations EventReservation[]
-  issues       EventIssue[]
-  returns      EventReturn[]
+  items         InventoryItem[]
+  returnedItems EventReturn[]
+  issuedItems   EventIssue[]
+  ledger        InventoryLedger[]
+  transfersFrom WarehouseTransfer[] @relation("transfer_from")
+  transfersTo   WarehouseTransfer[] @relation("transfer_to")
+
+  @@map("warehouses")
+}
+
+model InventoryItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  name                String
+  categoryId          String   @map("category_id") @db.Uuid
+  unit                String   @default("ks")
+  imageUrl            String?  @map("image_url")
+  active              Boolean  @default(true)
+  returnDelayDays     Int      @default(0) @map("return_delay_days")
+  sku                 String?  @unique
+  notes               String?
+  masterPackageQty    Int?     @map("master_package_qty")
+  masterPackageWeight String?  @map("master_package_weight")
+  volume              String?
+  plateDiameter       String?  @map("plate_diameter")
+  warehouseId         String?  @map("warehouse_id") @db.Uuid
+  qrCode              String?  @map("qr_code")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  category         Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  warehouse        Warehouse?         @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  ledger           InventoryLedger[]
+  reservations     EventReservation[]
+  issues           EventIssue[]
+  returns          EventReturn[]
+  crossSellSources CrossSellLink[]    @relation("cross_sell_source")
+  crossSellTargets CrossSellLink[]    @relation("cross_sell_target")
+  warehouseBlocks  WarehouseBlock[]
 
   @@index([categoryId])
+  @@index([warehouseId])
   @@map("inventory_items")
 }
 
@@ -101,12 +130,14 @@ model InventoryLedger {
   deltaQuantity   Int          @map("delta_quantity")
   reason          LedgerReason
   eventId         String?      @map("event_id") @db.Uuid
+  warehouseId     String?      @map("warehouse_id") @db.Uuid
   note            String?
   createdById     String       @map("created_by") @db.Uuid
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
   item      InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
   event     Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  warehouse Warehouse?    @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   createdBy User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([inventoryItemId], map: "idx_ledger_item")
@@ -125,15 +156,19 @@ model Event {
   status              EventStatus @default(DRAFT)
   exportNeedsRevision Boolean     @default(false) @map("export_needs_revision")
   chefConfirmedAt     DateTime?   @map("chef_confirmed_at") @db.Timestamptz(6)
+  palletCount         Int?        @map("pallet_count")
+  totalWeight         String?     @map("total_weight")
+  dismissedCrossSellIds String[]    @default([]) @map("dismissed_cross_sell_ids")
   createdById         String      @map("created_by") @db.Uuid
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  createdBy    User               @relation("event_created_by", fields: [createdById], references: [id], onDelete: Restrict)
-  reservations EventReservation[]
-  exports      EventExport[]
-  issues       EventIssue[]
-  returns      EventReturn[]
-  ledger       InventoryLedger[]
+  createdBy       User               @relation("event_created_by", fields: [createdById], references: [id], onDelete: Restrict)
+  reservations    EventReservation[]
+  exports         EventExport[]
+  issues          EventIssue[]
+  returns         EventReturn[]
+  ledger          InventoryLedger[]
+  warehouseBlocks WarehouseBlock[]
 
   @@index([deliveryDatetime], map: "idx_events_delivery")
   @@index([pickupDatetime], map: "idx_events_pickup")
@@ -141,12 +176,12 @@ model Event {
 }
 
 model EventReservation {
-  id              String           @id @default(uuid()) @db.Uuid
-  eventId         String           @map("event_id") @db.Uuid
-  inventoryItemId String           @map("inventory_item_id") @db.Uuid
-  reservedQuantity Int             @map("reserved_quantity")
-  state           ReservationState @default(draft)
-  expiresAt       DateTime?        @map("expires_at") @db.Timestamptz(6)
+  id               String           @id @default(uuid()) @db.Uuid
+  eventId          String           @map("event_id") @db.Uuid
+  inventoryItemId  String           @map("inventory_item_id") @db.Uuid
+  reservedQuantity Int              @map("reserved_quantity")
+  state            ReservationState @default(draft)
+  expiresAt        DateTime?        @map("expires_at") @db.Timestamptz(6)
 
   event Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
   item  InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
@@ -195,30 +230,34 @@ model EventIssue {
   issuedQuantity  Int      @map("issued_quantity")
   type            String   @default("issued") // issued, broken, missing
   issuedById      String   @map("issued_by") @db.Uuid
+  warehouseId     String?  @map("warehouse_id") @db.Uuid
   issuedAt        DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
   notes           String?
   idempotencyKey  String   @unique @map("idempotency_key")
 
-  event    Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  item     InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
-  issuedBy User          @relation(fields: [issuedById], references: [id], onDelete: Restrict)
+  event     Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  issuedBy  User          @relation(fields: [issuedById], references: [id], onDelete: Restrict)
+  warehouse Warehouse?    @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@map("event_issues")
 }
 
 model EventReturn {
-  id              String   @id @default(uuid()) @db.Uuid
-  eventId         String   @map("event_id") @db.Uuid
-  inventoryItemId String   @map("inventory_item_id") @db.Uuid
-  returnedQuantity Int     @map("returned_quantity")
-  brokenQuantity  Int      @default(0) @map("broken_quantity")
-  returnedById    String   @map("returned_by") @db.Uuid
-  returnedAt      DateTime @default(now()) @map("returned_at") @db.Timestamptz(6)
-  idempotencyKey  String   @unique @map("idempotency_key")
+  id                String   @id @default(uuid()) @db.Uuid
+  eventId           String   @map("event_id") @db.Uuid
+  inventoryItemId   String   @map("inventory_item_id") @db.Uuid
+  returnedQuantity  Int      @map("returned_quantity")
+  brokenQuantity    Int      @default(0) @map("broken_quantity")
+  returnedById      String   @map("returned_by") @db.Uuid
+  returnedAt        DateTime @default(now()) @map("returned_at") @db.Timestamptz(6)
+  targetWarehouseId String?  @map("target_warehouse_id") @db.Uuid
+  idempotencyKey    String   @unique @map("idempotency_key")
 
-  event      Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  item       InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
-  returnedBy User          @relation(fields: [returnedById], references: [id], onDelete: Restrict)
+  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  item            InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  returnedBy      User          @relation(fields: [returnedById], references: [id], onDelete: Restrict)
+  targetWarehouse Warehouse?    @relation(fields: [targetWarehouseId], references: [id], onDelete: SetNull)
 
   @@map("event_returns")
 }
@@ -236,4 +275,49 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@map("audit_log")
+}
+
+model CrossSellLink {
+  id           String @id @default(uuid()) @db.Uuid
+  sourceItemId String @map("source_item_id") @db.Uuid
+  targetItemId String @map("target_item_id") @db.Uuid
+
+  sourceItem InventoryItem @relation("cross_sell_source", fields: [sourceItemId], references: [id], onDelete: Cascade)
+  targetItem InventoryItem @relation("cross_sell_target", fields: [targetItemId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceItemId, targetItemId])
+  @@map("cross_sell_links")
+}
+
+model WarehouseBlock {
+  id              String   @id @default(uuid()) @db.Uuid
+  eventId         String   @map("event_id") @db.Uuid
+  inventoryItemId String   @map("inventory_item_id") @db.Uuid
+  blockedQuantity Int      @map("blocked_quantity")
+  blockedUntil    DateTime @map("blocked_until") @db.Timestamptz(6)
+  note            String?
+  createdById     String   @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  item  InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, inventoryItemId])
+  @@map("warehouse_blocks")
+}
+
+model WarehouseTransfer {
+  id              String   @id @default(uuid()) @db.Uuid
+  inventoryItemId String   @map("inventory_item_id") @db.Uuid
+  fromWarehouseId String   @map("from_warehouse_id") @db.Uuid
+  toWarehouseId   String   @map("to_warehouse_id") @db.Uuid
+  quantity        Int
+  note            String?
+  transferredById String   @map("transferred_by") @db.Uuid
+  transferredAt   DateTime @default(now()) @map("transferred_at") @db.Timestamptz(6)
+
+  fromWarehouse Warehouse @relation("transfer_from", fields: [fromWarehouseId], references: [id], onDelete: Restrict)
+  toWarehouse   Warehouse @relation("transfer_to", fields: [toWarehouseId], references: [id], onDelete: Restrict)
+
+  @@map("warehouse_transfers")
 }

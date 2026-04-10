@@ -44,6 +44,7 @@ export default function SettingsPage() {
             <Tile to="/settings/items" title="Položky" desc="Názvy, obrázky, aktivita, jednotky." icon={Package} />
             <Tile to="/settings/items?import=true" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
             <Tile to="/settings/users" title="Uživatelé" desc="Role a přístupy." icon={Users} />
+            <Tile to="/settings/warehouses" title="Sklady" desc="Správa fyzických skladů." icon={Layers3} />
           </>
         )}
         <Tile to="/settings/password" title="Změna hesla" desc="Změna přihlašovacího hesla." icon={ShieldAlert} />

@@ -11,6 +11,7 @@ export default function ConfirmDialog(props: {
   confirmText?: string;
   tone?: "danger" | "primary";
   onConfirm: () => Promise<void> | void;
+  children?: React.ReactNode;
 }) {
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
@@ -32,6 +33,9 @@ export default function ConfirmDialog(props: {
               </button>
             </Dialog.Close>
           </div>
+
+          {props.children}
+
           <div className="mt-4 flex justify-end gap-2">
             <Dialog.Close asChild>
               <Button variant="secondary">Zrušit</Button>

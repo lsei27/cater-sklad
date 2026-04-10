@@ -53,15 +53,39 @@ export async function createExportTx(params: {
     });
     if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
 
-    const groupsMap = new Map<string, ExportSnapshot["groups"][number]>();
+    const CATEGORY_SEQUENCE = [
+        "Mobiliář",
+        "Sklo",
+        "Porcelán",
+        "Příbory",
+        "Dekorace",
+        "Prádlo",
+        "Inventář",
+        "Zboží"
+    ];
+
+    const groupsMap = new Map<string, ExportSnapshot["groups"][number] & { sequenceIndex: number; parentSortOrder: number; categorySortOrder: number }>();
     for (const r of reservations) {
         const child = r.item.category;
         const parentName = child.parent?.name ?? "Nezařazeno";
-        const key = `${parentName}||${child.name}`;
+
+        let sequenceIndex = CATEGORY_SEQUENCE.indexOf(parentName);
+        if (sequenceIndex === -1) sequenceIndex = 999;
+
+        const parentSortOrder = child.parent?.sortOrder ?? 999;
+        const categorySortOrder = child.sortOrder ?? 999;
+        const key = `${sequenceIndex}||${parentName}||${child.name}`;
         const group =
             groupsMap.get(key) ??
             (() => {
-                const g = { parentCategory: parentName, category: child.name, items: [] as any[] };
+                const g = { 
+                    parentCategory: parentName, 
+                    category: child.name, 
+                    sequenceIndex,
+                    parentSortOrder, 
+                    categorySortOrder, 
+                    items: [] as any[] 
+                };
                 groupsMap.set(key, g);
                 return g;
             })();
@@ -70,9 +94,23 @@ export async function createExportTx(params: {
             name: r.item.name,
             unit: r.item.unit,
             qty: r.reservedQuantity,
+            masterPackageQty: r.item.masterPackageQty,
             notes: r.item.notes
         });
     }
+
+    // Sort groups: primary by parent category sortOrder, secondary by sub-category sortOrder
+    const sortedGroups = Array.from(groupsMap.values())
+        .map(g => ({
+            ...g,
+            items: g.items.sort((a, b) => a.name.localeCompare(b.name))
+        }))
+        .sort((a, b) => {
+            if (a.sequenceIndex !== b.sequenceIndex) return a.sequenceIndex - b.sequenceIndex;
+            if (a.parentSortOrder !== b.parentSortOrder) return a.parentSortOrder - b.parentSortOrder;
+            return a.categorySortOrder - b.categorySortOrder;
+        })
+        .map(({ sequenceIndex, parentSortOrder, categorySortOrder, ...rest }) => rest);
 
     const exportedAt = new Date();
     const managerName = (ev.manager_name ?? "").trim() || ev.manager_email;
@@ -90,7 +128,7 @@ export async function createExportTx(params: {
             exportedAt: exportedAt.toISOString(),
             managerName
         },
-        groups: Array.from(groupsMap.values())
+        groups: sortedGroups
     };
 
     const exportRow = await tx.eventExport.create({

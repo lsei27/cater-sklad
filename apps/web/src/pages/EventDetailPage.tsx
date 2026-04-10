@@ -7,6 +7,7 @@ import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
 import Skeleton from "../components/ui/Skeleton";
+import Textarea from "../components/ui/Textarea";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
@@ -61,6 +62,8 @@ export default function EventDetailPage() {
   const [chefConfirm, setChefConfirm] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [hardDeleteConfirm, setHardDeleteConfirm] = useState(false);
+  const [crossSellWarnings, setCrossSellWarnings] = useState<any[]>([]);
+  const [editBasicsOpen, setEditBasicsOpen] = useState(false);
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -68,6 +71,11 @@ export default function EventDetailPage() {
     try {
       const res = await api<{ event: any }>(`/events/${id}`);
       setEvent(res.event);
+      if (["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(res.event.status)) {
+        api<{ warnings: any[] }>(`/events/${id}/cross-sell-warnings`)
+          .then((w) => setCrossSellWarnings(w.warnings))
+          .catch(() => {});
+      }
     } catch (e: any) {
       toast.error(humanError(e));
     } finally {
@@ -131,14 +139,24 @@ export default function EventDetailPage() {
       .catch(() => { });
   }, [id, reservationItems.length]);
 
+  const isPast = useMemo(() => {
+    if (!event?.eventDate) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eDate = new Date(event.eventDate);
+    eDate.setHours(0, 0, 0, 0);
+    return eDate.getTime() < today.getTime();
+  }, [event?.eventDate]);
+
   const canEM = ["admin", "event_manager"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
-  const canEditEvent = event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
+  const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
   const canManageEvent = role === "admin" || (role === "event_manager" && isOwner);
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
   const canAddItems =
+    !isPast &&
     ((canManageEvent && ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(event?.status)) || canChef) &&
     canEditEvent;
 
@@ -237,6 +255,63 @@ export default function EventDetailPage() {
         </Card>
       ) : null}
 
+      {crossSellWarnings.length > 0 ? (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <Icons.Alert className="mt-0.5 h-5 w-5 text-blue-800" />
+                <div>
+                  <div className="text-sm font-semibold text-blue-900">Doporučené položky (Cross-sell)</div>
+                  <div className="mt-1 text-sm text-blue-800">
+                    K některým položkám v akci vám doporučujeme zkontrolovat, zda nechybí:
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {crossSellWarnings.map((w) => (
+                      <div key={w.id} className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white p-2">
+                        <span className="text-xs font-medium">{w.name}</span>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setAddInitialSearch(w.name);
+                              setAddFocusItemId(w.id);
+                              setAddOpen(true);
+                            }}
+                          >
+                            Přidat
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-blue-600 hover:bg-blue-100"
+                            onClick={async () => {
+                              try {
+                                await api(`/events/${id}/cross-sell-dismiss`, {
+                                  method: "POST",
+                                  body: JSON.stringify({ inventory_item_id: w.id })
+                                });
+                                setCrossSellWarnings((prev) => prev.filter((x) => x.id !== w.id));
+                                toast.success("Odmítnuto");
+                              } catch (e: any) {
+                                toast.error("Chyba");
+                              }
+                            }}
+                          >
+                            Skrýt
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent>
           <div className="flex items-start justify-between gap-3">
@@ -250,6 +325,18 @@ export default function EventDetailPage() {
               <div className="mt-1 text-sm text-slate-600">{event.location}</div>
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {event.palletCount !== null ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200">
+                    <Icons.Box className="h-3 w-3" /> Palety: {event.palletCount}
+                  </span>
+                ) : null}
+                {event.totalWeight ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200">
+                    <Icons.Sliders className="h-3 w-3" /> Váha: {event.totalWeight}
+                  </span>
+                ) : null}
               </div>
               {event.notes ? (
                 <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-2 text-xs text-slate-700 whitespace-pre-wrap">
@@ -325,6 +412,12 @@ export default function EventDetailPage() {
             {role === "admin" ? (
               <Button variant="danger" onClick={() => setHardDeleteConfirm(true)}>
                 <Icons.Trash className="h-4 w-4" /> Smazat (Admin)
+              </Button>
+            ) : null}
+
+            {canManageEvent ? (
+              <Button variant="secondary" onClick={() => setEditBasicsOpen(true)}>
+                <Icons.Edit className="h-4 w-4" /> Upravit údaje
               </Button>
             ) : null}
 
@@ -498,8 +591,13 @@ export default function EventDetailPage() {
                                       <div className="mt-2 text-xs text-slate-500">Načítám dostupnost…</div>
                                     )}
                                   </div>
-                                  <div className="w-16 shrink-0 flex items-start justify-end">
-                                    <Badge tone={tone as any}>{r.reservedQuantity}</Badge>
+                                  <div className="w-24 shrink-0 flex flex-col items-end gap-1">
+                                    <Badge tone={tone as any}>{r.reservedQuantity} {r.item?.unit}</Badge>
+                                    {r.item?.masterPackageQty && r.item.masterPackageQty > 0 ? (
+                                      <div className="text-[10px] font-medium text-blue-600">
+                                        {Math.ceil(r.reservedQuantity / r.item.masterPackageQty)} bal.
+                                      </div>
+                                    ) : null}
                                     {canDelete ? (
                                       <button
                                         className="ml-2 p-1 text-slate-400 hover:text-red-600"
@@ -685,6 +783,7 @@ function AddItemsPanel(props: {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [crossSells, setCrossSells] = useState<{ sourceItem: any, items: any[] } | null>(null);
   const [availability, setAvailability] = useState<Map<string, StockRow>>(new Map());
   const [categoriesReady, setCategoriesReady] = useState(false);
   const initRef = useRef(false);
@@ -801,19 +900,22 @@ function AddItemsPanel(props: {
 
     setSaving((prev) => ({ ...prev, [params.inventoryItemId]: true }));
     try {
-      await api(`/events/${props.eventId}/reserve`, {
+      const res = await api<{ masterPackageAdjustments?: any[] }>(`/events/${props.eventId}/reserve`, {
         method: "POST",
         body: JSON.stringify({ items: [{ inventory_item_id: params.inventoryItemId, qty: normalizedQty }] })
       });
 
+      const adj = res.masterPackageAdjustments?.find((a) => a.inventoryItemId === params.inventoryItemId);
+      const finalQty = adj ? adj.adjustedQty : normalizedQty;
+
       setCurrentItems((prev) => {
         const found = prev.find((r) => r.inventoryItemId === params.inventoryItemId);
-        if (normalizedQty <= 0) {
+        if (finalQty <= 0) {
           return prev.filter((r) => r.inventoryItemId !== params.inventoryItemId);
         }
         const nextItem = {
           inventoryItemId: params.inventoryItemId,
-          reservedQuantity: normalizedQty,
+          reservedQuantity: finalQty,
           item: params.item ?? found?.item,
           createdById: found?.createdById ?? params.createdById ?? userId
         };
@@ -822,15 +924,35 @@ function AddItemsPanel(props: {
         }
         return [...prev, nextItem];
       });
-      setQty((prev) => ({ ...prev, [params.inventoryItemId]: normalizedQty }));
+      setQty((prev) => ({ ...prev, [params.inventoryItemId]: finalQty }));
 
       void props.onDone();
-      if (normalizedQty <= 0) {
+
+      if (finalQty <= 0) {
         toast.success("Odebráno");
       } else if (existing) {
         toast.success("Aktualizováno");
       } else {
         toast.success("Přidáno");
+      }
+
+      if (adj) {
+        toast.success((t) => (
+          <div>
+            <div className="font-semibold">{params.item?.name}</div>
+            Množství bylo zaokrouhleno z {adj.requestedQty} na <strong className="font-bold">{adj.adjustedQty}</strong> (celá balení).
+          </div>
+        ), { duration: 5000 });
+      }
+
+      if (!existing && finalQty > 0) {
+        api<{ items: any[] }>(`/events/${props.eventId}/cross-sells/${params.inventoryItemId}`)
+          .then((r) => {
+            if (r.items && r.items.length > 0) {
+              setCrossSells({ sourceItem: params.item, items: r.items });
+            }
+          })
+          .catch(() => {});
       }
     } catch (e: any) {
       toast.error(humanError(e));
@@ -842,8 +964,9 @@ function AddItemsPanel(props: {
   const activeItems = currentItems.filter((r) => Number(r.reservedQuantity) > 0);
 
   return (
-    <Modal
-      open={props.open}
+    <>
+      <Modal
+        open={props.open}
       onOpenChange={props.onOpenChange}
       title="Přidat položky"
       description="Zobrazujeme dostupnost pro termín této akce."
@@ -930,6 +1053,11 @@ function AddItemsPanel(props: {
                           <div className="mt-1 text-xs text-slate-600">
                             {i.category?.parent?.name ?? ""} / {i.category?.name}
                           </div>
+                          {i.masterPackageQty && i.masterPackageQty > 0 ? (
+                            <div className="mt-1 text-[10px] font-medium text-blue-600">
+                              Balení: {i.masterPackageQty} {unit}
+                            </div>
+                          ) : null}
                           <div className="mt-2">
                             <div className={cn("text-sm font-semibold", tone === "ok" && "text-emerald-700", tone === "warn" && "text-amber-800", tone === "danger" && "text-red-700")}>
                               K dispozici pro tuto akci: {available} {unit}
@@ -1069,6 +1197,165 @@ function AddItemsPanel(props: {
             )}
           </div>
         </div>
+      </div>
+    </Modal>
+
+    {crossSells && (
+      <Modal
+        open={!!crossSells}
+        onOpenChange={(o) => {
+          if (!o) setCrossSells(null);
+        }}
+        title="Související položky"
+        description={<>K položce <strong>{crossSells.sourceItem?.name ?? "této položce"}</strong> doporučujeme přidat i následující:</>}
+        contentClassName="max-w-2xl"
+      >
+        <div className="grid gap-3 max-h-[60vh] overflow-y-auto pr-1">
+          {crossSells.items.map((i: any) => {
+            const itemId = i.itemId ?? i.id;
+            const available = i.stock?.available ?? 0;
+            const isAdded = currentItems.some(r => r.inventoryItemId === itemId && Number(r.reservedQuantity) > 0);
+            
+            return (
+              <div key={itemId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white flex items-center justify-center border border-slate-100">
+                    {i.imageUrl ? (
+                      <img className="h-full w-full object-cover" src={apiUrl(i.imageUrl)} alt={i.name} />
+                    ) : (
+                      <Icons.Image className="h-4 w-4 text-slate-300" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold">{i.name}</div>
+                    <div className="text-xs text-slate-500">K dispozici: {available} {i.unit ?? "ks"}</div>
+                  </div>
+                </div>
+                <div>
+                  {isAdded ? (
+                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Již přidáno</span>
+                  ) : (
+                    <Button 
+                      size="sm" 
+                      onClick={() => applyReservation({ inventoryItemId: itemId, qty: 1, item: i, createdById: userId })}
+                      disabled={available === 0 || saving[itemId]}
+                    >
+                      Přidat 1 {i.unit ?? "ks"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button variant="secondary" onClick={() => setCrossSells(null)}>
+            Zavřít
+          </Button>
+        </div>
+      </Modal>
+    )}
+    {editBasicsOpen && (
+      <EditBasicsModal
+        open={editBasicsOpen}
+        onOpenChange={setEditBasicsOpen}
+        event={event}
+        onDone={() => load({ silent: true })}
+      />
+    )}
+    </>
+  );
+}
+
+function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) => void; event: any; onDone: () => void }) {
+  const [name, setName] = useState(props.event.name);
+  const [location, setLocation] = useState(props.event.location);
+  const [address, setAddress] = useState(props.event.address || "");
+  const [notes, setNotes] = useState(props.event.notes || "");
+  const [eventDate, setEventDate] = useState(props.event.eventDate ? new Date(props.event.eventDate).toISOString().slice(0, 10) : "");
+  const [delivery, setDelivery] = useState(props.event.deliveryDatetime ? new Date(props.event.deliveryDatetime).toISOString().slice(0, 16) : "");
+  const [pickup, setPickup] = useState(props.event.pickupDatetime ? new Date(props.event.pickupDatetime).toISOString().slice(0, 16) : "");
+  const [palletCount, setPalletCount] = useState<number | "">(props.event.palletCount ?? "");
+  const [totalWeight, setTotalWeight] = useState(props.event.totalWeight || "");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api(`/events/${props.event.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          location,
+          address: address || null,
+          notes: notes.trim() || null,
+          event_date: eventDate ? new Date(eventDate).toISOString() : null,
+          delivery_datetime: new Date(delivery).toISOString(),
+          pickup_datetime: new Date(pickup).toISOString(),
+          pallet_count: palletCount === "" ? null : Number(palletCount),
+          total_weight: totalWeight || null
+        })
+      });
+      toast.success("Uloženo");
+      props.onDone();
+      props.onOpenChange(false);
+    } catch (e: any) {
+      toast.error(humanError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title="Upravit údaje akce"
+      contentClassName="max-w-2xl"
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="text-sm">
+          Název
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Místo konání
+          <Input className="mt-1" value={location} onChange={(e) => setLocation(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Adresa
+          <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} />
+        </label>
+        <div />
+        <label className="text-sm md:col-span-2">
+          Poznámka
+          <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Datum akce
+          <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+        </label>
+        <div />
+        <label className="text-sm">
+          Závoz
+          <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Svoz
+          <Input className="mt-1" type="datetime-local" value={pickup} onChange={(e) => setPickup(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Počet palet
+          <Input className="mt-1" type="number" min={0} value={palletCount} onChange={(e) => setPalletCount(e.target.value ? Number(e.target.value) : "")} />
+        </label>
+        <label className="text-sm">
+          Celková váha
+          <Input className="mt-1" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} />
+        </label>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => props.onOpenChange(false)}>Zrušit</Button>
+        <Button onClick={save} disabled={saving}>{saving ? "Ukládám..." : "Uložit změny"}</Button>
       </div>
     </Modal>
   );

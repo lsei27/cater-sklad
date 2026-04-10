@@ -22,6 +22,7 @@ export type ExportSnapshot = {
       name: string;
       unit: string;
       qty: number;
+      masterPackageQty?: number | null;
       notes?: string | null;
     }>;
   }>;
@@ -158,9 +159,10 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
   yPos -= 20;
 
   // Table Header
-  const colName = 50;
-  const colQty = 380;
-  const colCheck = 480;
+  const colMargin = 50;
+  const colCheck = 50;
+  const colName = 70;
+  const colQty = 420;
 
   // Group snapshot groups by Role (Sklad/Kitchen)
   const sections = [
@@ -179,9 +181,9 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
 
     // Role Section Header
     yPos -= 10;
-    page.drawText(pdfText(s.title), { x: colName, y: yPos, size: 12, font: bold });
+    page.drawText(pdfText(s.title), { x: colMargin, y: yPos, size: 12, font: bold });
     yPos -= 4;
-    page.drawLine({ start: { x: 50, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 1, color: rgb(0.2, 0.2, 0.2) });
+    page.drawLine({ start: { x: colMargin, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 1, color: rgb(0.2, 0.2, 0.2) });
     yPos -= 14;
 
     for (const group of s.groups) {
@@ -191,7 +193,7 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
       }
 
       // Group Header (Category)
-      page.drawText(pdfText(`${group.parentCategory} / ${group.category}`), { x: colName, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
+      page.drawText(pdfText(`${group.parentCategory} / ${group.category}`), { x: colMargin, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
       yPos -= 14;
 
       for (const item of group.items) {
@@ -201,14 +203,19 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
           yPos = height - 50;
         }
 
+        // Checkbox (moved to the left)
+        page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
+
         // Item Name
         page.drawText(pdfText(item.name), { x: colName, y: yPos, size: 10, font });
 
-        // Quantity
-        page.drawText(pdfText(`${item.qty} ${item.unit}`), { x: colQty, y: yPos, size: 10, font });
-
-        // Checkbox
-        page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
+        // Quantity + master package info
+        let qtyLabel = `${item.qty} ${item.unit}`;
+        if (item.masterPackageQty && item.masterPackageQty > 0) {
+          const masterPkgs = Math.ceil(item.qty / item.masterPackageQty);
+          qtyLabel += ` (${masterPkgs} bal.)`;
+        }
+        page.drawText(pdfText(qtyLabel), { x: colQty, y: yPos, size: 10, font });
 
         yPos -= 16;
       }

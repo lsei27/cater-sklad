@@ -8,7 +8,7 @@ export default function Modal(props: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
-  description?: string;
+  description?: ReactNode;
   contentClassName?: string;
   bodyClassName?: string;
   children: ReactNode;

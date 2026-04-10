@@ -37,25 +37,32 @@ physical AS (
   WHERE l.inventory_item_id = ${inventoryItemId}::uuid
 ),
 blocked AS (
-  SELECT COALESCE(SUM(r.reserved_quantity),0) AS blocked_total
+  SELECT COALESCE(SUM(
+    GREATEST(
+      CASE WHEN (
+        e2.status NOT IN ('CLOSED','CANCELLED')
+        AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+        AND e2.delivery_datetime < ti.end_at
+        AND ti.start_at < (e2.pickup_datetime + (item.delay_days || ' days')::interval)
+      ) THEN r.reserved_quantity ELSE 0 END,
+      CASE WHEN (
+        b.blocked_quantity IS NOT NULL
+        AND e2.pickup_datetime < ti.end_at
+        AND ti.start_at < b.blocked_until
+      ) THEN b.blocked_quantity ELSE 0 END
+    )
+  ), 0) AS blocked_total
   FROM event_reservations r
   JOIN events e2 ON e2.id = r.event_id
   CROSS JOIN target_interval ti
   CROSS JOIN item
+  LEFT JOIN (
+    SELECT event_id, inventory_item_id, MAX(blocked_until) AS blocked_until, MAX(blocked_quantity) AS blocked_quantity
+    FROM warehouse_blocks
+    GROUP BY event_id, inventory_item_id
+  ) b ON b.event_id = r.event_id AND b.inventory_item_id = r.inventory_item_id
   WHERE r.inventory_item_id = ${inventoryItemId}::uuid
     AND r.event_id <> ${targetEventId}::uuid
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND (
-      r.state = 'confirmed'
-      OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW())
-    )
-    AND (
-      e2.delivery_datetime < (e2.pickup_datetime + (item.delay_days || ' days')::interval)
-    )
-    AND (
-      e2.delivery_datetime < ti.end_at
-      AND ti.start_at < (e2.pickup_datetime + (item.delay_days || ' days')::interval)
-    )
 )
 SELECT
   COALESCE((SELECT physical_total FROM physical), 0) AS physical_total,

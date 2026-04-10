@@ -10,6 +10,14 @@ export function apiBaseUrl() {
 export function apiUrl(pathOrUrl: string) {
   if (!pathOrUrl) return pathOrUrl;
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  
+  if (pathOrUrl.startsWith("bunny://")) {
+    const cdn = (import.meta as any).env?.VITE_BUNNY_CDN_URL || "https://cater-sklad.b-cdn.net";
+    const cleanCdn = cdn.replace(/\/+$/, "");
+    const relative = pathOrUrl.replace("bunny://", "").replace(/^\/+/, "");
+    return `${cleanCdn}/${relative}`;
+  }
+
   const p = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
   return `${API_BASE_URL}${p}`;
 }

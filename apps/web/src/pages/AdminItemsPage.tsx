@@ -244,6 +244,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
   const [name, setName] = useState(item.name);
   const [categoryId, setCategoryId] = useState(item.category_id);
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? "");
+  const [qrCode, setQrCode] = useState(item.qrCode ?? "");
   const [active, setActive] = useState(item.active ?? true);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -253,6 +254,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
     setName(item.name);
     setCategoryId(item.category_id);
     setImageUrl(item.imageUrl ?? "");
+    setQrCode(item.qrCode ?? "");
     setActive(item.active ?? true);
   }, [open, item]);
 
@@ -261,7 +263,7 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
     try {
       await api(`/admin/items/${item.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, category_id: categoryId, image_url: imageUrl ? imageUrl : null, active })
+        body: JSON.stringify({ name, category_id: categoryId, image_url: imageUrl ? imageUrl : null, qr_code: qrCode ? qrCode : null, active })
       });
       toast.success("Uloženo");
       onSaved();
@@ -326,6 +328,10 @@ function EditItemModal({ open, onOpenChange, item, childCats, onSaved }: any) {
               </Button>
             </div>
           </div>
+        </label>
+        <label className="text-sm">
+          QR Kód / EAN (pro budoucí čtečky)
+          <Input className="mt-1" value={qrCode} onChange={e => setQrCode(e.target.value)} placeholder="Naskenuj nebo zadej kód…" />
         </label>
 
         <label className="flex items-center gap-2 text-sm">

@@ -35,6 +35,8 @@ export default function InventoryPage() {
   const [view, setView] = useState<string>(() => localStorage.getItem("inv_view") ?? "tile");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [warehouseStocks, setWarehouseStocks] = useState<Record<string, Record<string, number>>>({});
 
   const [pickOpen, setPickOpen] = useState(false);
   const [pickItem, setPickItem] = useState<any | null>(null);
@@ -79,8 +81,14 @@ export default function InventoryPage() {
       if (search) q.set("search", search);
       if (parentId) q.set("parent_category_id", parentId);
       if (categoryId) q.set("category_id", categoryId);
-      const res = await api<{ items: any[] }>(`/inventory/items?${q.toString()}`);
+      const [res, whRes, stockRes] = await Promise.all([
+        api<{ items: any[] }>(`/inventory/items?${q.toString()}`),
+        api<{ warehouses: any[] }>("/warehouses"),
+        api<{ stocks: Record<string, Record<string, number>> }>("/inventory/warehouse-stocks")
+      ]);
       setItems(res.items);
+      setWarehouses(whRes.warehouses);
+      setWarehouseStocks(stockRes.stocks);
     } catch (e: any) {
       setError(e?.error?.message ?? "Nepodařilo se načíst sklad.");
     } finally {
@@ -344,6 +352,25 @@ export default function InventoryPage() {
                     </div>
                   </div>
 
+                  {/* Warehouse breakdown */}
+                  {warehouses.length > 1 && (
+                    <div className="mb-4 space-y-1 border-t border-gray-100 pt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1">Po skladech</div>
+                      <div className="grid grid-cols-2 gap-1">
+                        {warehouses.map(w => {
+                          const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
+                          if (stock === 0) return null;
+                          return (
+                            <div key={w.id} className="flex justify-between items-center text-[11px] px-2 py-1 bg-gray-50 rounded">
+                              <span className="truncate text-gray-600 mr-2">{w.name}</span>
+                              <span className="font-semibold text-gray-900">{stock}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <Button variant={canEdit ? "secondary" : "primary"} size="sm" full onClick={() => onPrimaryAction(i)}>
                     {canEdit ? "Upravit" : "Přidat"}
                   </Button>
@@ -362,6 +389,7 @@ export default function InventoryPage() {
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Celkem</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider text-blue-700 bg-blue-50/50">Rezervováno</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider text-green-700 bg-green-50/50">Volné</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rozmístění</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Akce</th>
               </tr>
             </thead>
@@ -400,6 +428,20 @@ export default function InventoryPage() {
                       )}>
                         {i.stock.available}
                       </span>
+                    </td>
+                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                      <div className="flex flex-col gap-0.5">
+                        {warehouses.map(w => {
+                          const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
+                          if (stock === 0) return null;
+                          return (
+                            <div key={w.id} className="text-[10px] flex justify-between gap-2 bg-gray-50 px-1.5 rounded">
+                              <span>{w.name}:</span>
+                              <span className="font-medium">{stock}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-right text-sm">
                       <Button size="sm" variant={canEdit ? "secondary" : "primary"} onClick={() => onPrimaryAction(i)}>

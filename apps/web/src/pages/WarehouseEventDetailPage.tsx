@@ -10,7 +10,11 @@ import Input from "../components/ui/Input";
 import toast from "react-hot-toast";
 import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
+import Modal from "../components/ui/Modal";
 import { Icons } from "../lib/icons";
+import { X, Plus } from "lucide-react";
+
+type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
 
 type Snapshot = {
   event: { version: number };
@@ -27,7 +31,27 @@ export default function WarehouseEventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
-  const [rows, setRows] = useState<Array<{ inventory_item_id: string; name: string; unit: string; requested: number; returned: number; broken: number; total?: number; parentCategory?: string; imageUrl?: string | null }>>([]);
+  const [rows, setRows] = useState<Array<{ 
+    inventory_item_id: string; 
+    name: string; 
+    unit: string; 
+    requested: number; 
+    returned: number; 
+    broken: number; 
+    total?: number; 
+    parentCategory?: string; 
+    imageUrl?: string | null; 
+    target_warehouse_id?: string;
+    masterPackageQty?: number;
+  }>>([]);
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string }>>([]);
+  const [blockModal, setBlockModal] = useState<{ inventoryItemId: string; name: string; maxQty: number } | null>(null);
+  const [blockQty, setBlockQty] = useState("");
+  const [blockUntil, setBlockUntil] = useState("");
+  const [blockNote, setBlockNote] = useState("");
+  const [issueWarehouseId, setIssueWarehouseId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const manager = managerLabel(event?.createdBy);
 
   const load = async () => {
@@ -43,8 +67,25 @@ export default function WarehouseEventDetailPage() {
     }
   };
 
+  const loadBlocks = async () => {
+    if (!id) return;
+    try {
+      const res = await api<{ blocks: Block[] }>(`/events/${id}/blocks`);
+      setBlocks(res.blocks);
+    } catch (e) {}
+  };
+
+  const loadWarehouses = async () => {
+    try {
+      const res = await api<{ warehouses: Array<{ id: string; name: string }> }>("/warehouses");
+      setWarehouses(res.warehouses);
+    } catch (e) {}
+  };
+
   useEffect(() => {
     load();
+    loadBlocks();
+    loadWarehouses();
   }, [id]);
 
   const snapshot: Snapshot | null = useMemo(() => {
@@ -103,7 +144,9 @@ export default function WarehouseEventDetailPage() {
           returned: s?.returned ?? 0,
           broken: s?.broken ?? 0,
           parentCategory: (i as any).parentCategory || "",
-          imageUrl: imageByItemId.get(i.inventoryItemId) ?? null
+          imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
+          target_warehouse_id: undefined,
+          masterPackageQty: (i as any).masterPackageQty
         };
       })
     );
@@ -242,6 +285,26 @@ export default function WarehouseEventDetailPage() {
                   <span className="font-semibold text-slate-600">Poznámka:</span> {event.notes}
                 </div>
               ) : null}
+
+              {(event.palletCount || event.totalWeight) && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {event.palletCount ? (
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 border border-blue-100 text-blue-700 text-[11px] font-bold">
+                      <Icons.Box className="h-3 w-3" /> {event.palletCount} palet
+                    </div>
+                  ) : null}
+                  {event.totalWeight ? (
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-orange-50 border border-orange-100 text-orange-700 text-[11px] font-bold">
+                      <Icons.Scale className="h-3 w-3" /> {event.totalWeight}
+                    </div>
+                  ) : null}
+                  {blocks.length > 0 ? (
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-700 text-[11px] font-bold">
+                      <Icons.Lock className="h-3 w-3" /> {blocks.length} blokací
+                    </div>
+                  ) : null}
+                </div>
+              )}
               {snapshot?.event?.version ? (
                 <div className="mt-2 text-xs text-slate-500">Export verze: v{snapshot.event.version}</div>
               ) : null}
@@ -365,6 +428,50 @@ export default function WarehouseEventDetailPage() {
         <CardHeader>
           <div className="text-sm font-semibold">Položky</div>
           <div className="mt-1 text-sm text-slate-600">Požadované množství je z posledního exportu.</div>
+          
+          {event?.status !== "CLOSED" && warehouseItems.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-4 bg-slate-50 p-2 rounded-xl border border-slate-100">
+              <div className="flex items-center gap-2">
+                <input 
+                  type="checkbox"
+                  className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                  checked={selectedIds.size === warehouseItems.length && warehouseItems.length > 0}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedIds(new Set(warehouseItems.map(i => i.inventoryItemId)));
+                    } else {
+                      setSelectedIds(new Set());
+                    }
+                  }}
+                />
+                <span className="text-xs font-medium text-slate-600">Vybrat vše ({selectedIds.size})</span>
+              </div>
+
+              {selectedIds.size > 0 && warehouses.length > 0 && (
+                <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                  <span className="text-xs font-semibold text-slate-600">Hromadně vrátit na:</span>
+                  <select 
+                    className="block rounded-md border-slate-300 py-1 pl-2 pr-8 text-xs focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const wid = e.target.value || undefined;
+                      if (!wid) return;
+                      setRows(prev => prev.map(r => {
+                        if (selectedIds.has(r.inventory_item_id)) {
+                          return { ...r, target_warehouse_id: wid };
+                        }
+                        return r;
+                      }));
+                      toast.success(`Nastaven sklad pro ${selectedIds.size} položek`);
+                    }}
+                  >
+                    <option value="">(Vybrat sklad...)</option>
+                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {groupedRows.every(s => s.items.length === 0) ? (
@@ -381,10 +488,27 @@ export default function WarehouseEventDetailPage() {
                   <div className="space-y-3">
                     {section.items.map((r) => {
                       const missing = Math.max(0, r.requested - r.returned - r.broken);
+                      const existingBlocks = blocks.filter(b => b.inventoryItemId === r.inventory_item_id);
                       return (
-                        <div key={r.inventory_item_id} className="rounded-2xl border border-slate-200 p-3">
+                        <div key={r.inventory_item_id} className={cn(
+                          "rounded-2xl border p-3 transition-colors",
+                          selectedIds.has(r.inventory_item_id) ? "border-purple-200 bg-purple-50/30" : "border-slate-200"
+                        )}>
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
+                              {event.status !== "CLOSED" && (
+                                <input 
+                                  type="checkbox"
+                                  className="mt-1 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                  checked={selectedIds.has(r.inventory_item_id)}
+                                  onChange={(e) => {
+                                    const next = new Set(selectedIds);
+                                    if (e.target.checked) next.add(r.inventory_item_id);
+                                    else next.delete(r.inventory_item_id);
+                                    setSelectedIds(next);
+                                  }}
+                                />
+                              )}
                               <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
                                 {r.imageUrl ? (
                                   <img className="h-full w-full object-cover" src={apiUrl(r.imageUrl)} alt={r.name} />
@@ -394,12 +518,17 @@ export default function WarehouseEventDetailPage() {
                               </div>
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-semibold">{r.name}</div>
-                                <div className="mt-1 text-xs text-slate-600">
-                                  Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-600">
-                                  Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
-                                </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
+                                    {r.masterPackageQty && r.masterPackageQty > 0 ? (
+                                      <span className="ml-1 text-[10px] font-medium text-blue-600">
+                                        ({Math.ceil(r.requested / r.masterPackageQty)} bal.)
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Celkem skladem: <span className="font-semibold text-slate-900">{r.total ?? "—"}</span> {r.unit}
+                                  </div>
                               </div>
                             </div>
                             <div className="w-20 shrink-0 flex justify-end">
@@ -423,7 +552,7 @@ export default function WarehouseEventDetailPage() {
                           ) : null}
 
                           {event.status !== "CLOSED" ? (
-                            <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                               <label className="text-xs">
                                 Vráceno
                                 <Input
@@ -452,8 +581,74 @@ export default function WarehouseEventDetailPage() {
                                   }}
                                 />
                               </label>
+                              <label className="text-xs col-span-2 sm:col-span-1">
+                                Sklad vrácení
+                                <select 
+                                  className="mt-1 block w-full rounded-md border-slate-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
+                                  value={r.target_warehouse_id || ""}
+                                  onChange={(e) => {
+                                    const v = e.target.value || undefined;
+                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, target_warehouse_id: v } : x)));
+                                  }}
+                                >
+                                  <option value="">Beze skladu</option>
+                                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                                </select>
+                              </label>
                             </div>
                           ) : null}
+
+                          {existingBlocks.length > 0 && (
+                            <div className="mt-3 space-y-1">
+                              {existingBlocks.map(b => (
+                                <div key={b.id} className="flex items-center justify-between text-xs rounded border border-purple-200 bg-purple-50 px-2 py-1.5 text-purple-800">
+                                  <div>
+                                    <span className="font-semibold">{b.blockedQuantity} {r.unit}</span> blokováno do {new Date(b.blockedUntil).toLocaleDateString("cs-CZ")}
+                                    {b.note ? <span className="ml-2 block text-purple-600 sm:inline italic">({b.note})</span> : null}
+                                  </div>
+                                  <button
+                                    className="p-1 hover:text-red-600 transition-colors"
+                                    onClick={async () => {
+                                      if (confirm("Opravdu zrušit tuto manuální blokaci?")) {
+                                        try {
+                                          await api(`/events/${id}/blocks/${b.id}`, { method: "DELETE" });
+                                          toast.success("Blokace zrušena");
+                                          loadBlocks();
+                                        } catch (e: any) {
+                                          toast.error(e?.error?.message ?? "Chyba při rušení blokace.");
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {event.status !== "CLOSED" ? (
+                            <div className="mt-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-purple-700 hover:text-purple-800 hover:bg-purple-50 -ml-2"
+                                onClick={() => {
+                                  setBlockModal({ inventoryItemId: r.inventory_item_id, name: r.name, maxQty: r.requested });
+                                  setBlockQty(String(r.requested));
+                                  const dt = new Date(event.pickupDatetime);
+                                  dt.setDate(dt.getDate() + 1); // Default +1 day
+                                  // format to datetime-local
+                                  dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
+                                  setBlockUntil(dt.toISOString().slice(0, 16));
+                                  setBlockNote("");
+                                }}
+                              >
+                                <Plus className="mr-1 h-3 w-3" /> Manuální blokace
+                              </Button>
+                            </div>
+                          ) : null}
+
                         </div>
                       );
                     })}
@@ -474,14 +669,32 @@ export default function WarehouseEventDetailPage() {
         onConfirm={async () => {
           if (!id) return;
           try {
-            await api(`/events/${id}/issue`, { method: "POST", body: JSON.stringify({ idempotency_key: `issue:${Date.now()}` }) });
+            await api(`/events/${id}/issue`, { 
+              method: "POST", 
+              body: JSON.stringify({ 
+                idempotency_key: `issue:${Date.now()}`,
+                warehouse_id: issueWarehouseId || undefined
+              }) 
+            });
             toast.success("Vydání potvrzeno");
             await load();
           } catch (e: any) {
             toast.error(e?.error?.message ?? "Nepodařilo se potvrdit výdej.");
           }
         }}
-      />
+      >
+        <div className="mt-4">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">Vydáváno ze skladu (nepovinné)</label>
+          <select 
+            className="block w-full rounded-md border-slate-300 py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
+            value={issueWarehouseId}
+            onChange={(e) => setIssueWarehouseId(e.target.value)}
+          >
+            <option value="">(Výchozí / Neurčeno)</option>
+            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmClose}
@@ -500,7 +713,8 @@ export default function WarehouseEventDetailPage() {
                 items: rows.map((r) => ({
                   inventory_item_id: r.inventory_item_id,
                   returned_quantity: r.returned,
-                  broken_quantity: r.broken
+                  broken_quantity: r.broken,
+                  target_warehouse_id: r.target_warehouse_id
                 }))
               })
             });
@@ -511,6 +725,85 @@ export default function WarehouseEventDetailPage() {
           }
         }}
       />
+
+      <Modal open={blockModal !== null} onOpenChange={() => setBlockModal(null)} title="Manuální blokace skladu">
+        {blockModal && (
+          <div className="space-y-4">
+            <div className="text-sm text-slate-600">
+              Nastavujete manuální blokaci pro <span className="font-semibold text-slate-800">{blockModal.name}</span>.
+              Blokované množství bude navíc ke stávajícím pravidlům bráno jako nedostupné pro ostatní akce.
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="text-sm font-medium">
+                Množství
+                <Input
+                  type="number"
+                  min={1}
+                  max={blockModal.maxQty || undefined}
+                  className="mt-1"
+                  value={blockQty}
+                  onChange={(e) => setBlockQty(e.target.value)}
+                />
+              </label>
+              <label className="text-sm font-medium">
+                Blokovat do
+                <Input
+                  type="datetime-local"
+                  className="mt-1"
+                  value={blockUntil}
+                  onChange={(e) => setBlockUntil(e.target.value)}
+                />
+              </label>
+            </div>
+            <label className="text-sm font-medium">
+              Poznámka
+              <Input
+                placeholder="Např. Potřeba čištění"
+                className="mt-1"
+                value={blockNote}
+                onChange={(e) => setBlockNote(e.target.value)}
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setBlockModal(null)}>Zrušit</Button>
+              <Button 
+                onClick={async () => {
+                  try {
+                    const q = Number(blockQty);
+                    if (!q || q <= 0 || !blockUntil) {
+                      toast.error("Vyplňte platné množství a datum.");
+                      return;
+                    }
+                    const d = new Date(blockUntil);
+                    if (isNaN(d.getTime())) {
+                      toast.error("Neplatné datum.");
+                      return;
+                    }
+
+                    await api(`/events/${id}/blocks`, {
+                      method: "POST",
+                      body: JSON.stringify({
+                        inventoryItemId: blockModal.inventoryItemId,
+                        blockedQuantity: q,
+                        blockedUntil: d.toISOString(),
+                        note: blockNote || undefined
+                      })
+                    });
+                    
+                    toast.success("Manuální blokace vytvořena.");
+                    setBlockModal(null);
+                    await loadBlocks();
+                  } catch (e: any) {
+                    toast.error(e?.error?.message ?? "Chyba při tvorbě blokace");
+                  }
+                }}
+              >
+                Uložit blokaci
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div >
   );
 }

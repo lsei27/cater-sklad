@@ -14,6 +14,8 @@ import WarehouseEventDetailPage from "./pages/WarehouseEventDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import HomeRedirect from "./pages/HomeRedirect";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
+import AdminWarehousesPage from "./pages/AdminWarehousesPage";
+import WarehouseTransfersPage from "./pages/WarehouseTransfersPage";
 
 export default function App() {
   return (
@@ -24,6 +26,7 @@ export default function App() {
         <Route path="/events" element={<EventsPage />} />
         <Route path="/events/:id" element={<EventDetailPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/inventory/transfers" element={<WarehouseTransfersPage />} />
         <Route path="/warehouse" element={<WarehouseEventsPage />} />
         <Route path="/warehouse/:id" element={<WarehouseEventDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -33,6 +36,7 @@ export default function App() {
         <Route path="/settings/roles" element={<AdminRoleCategoriesPage />} />
         <Route path="/settings/categories" element={<AdminCategoriesPage />} />
         <Route path="/settings/items" element={<AdminItemsPage />} />
+        <Route path="/settings/warehouses" element={<AdminWarehousesPage />} />
       </Route>
     </Routes>
   );

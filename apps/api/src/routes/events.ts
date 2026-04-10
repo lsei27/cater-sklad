@@ -24,7 +24,9 @@ const EventCreateSchema = z.object({
   notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime(),
-  pickup_datetime: z.string().datetime()
+  pickup_datetime: z.string().datetime(),
+  pallet_count: z.number().int().min(0).optional().nullable(),
+  total_weight: z.string().optional().nullable()
 });
 
 const EventUpdateSchema = z.object({
@@ -34,7 +36,9 @@ const EventUpdateSchema = z.object({
   notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime().optional(),
-  pickup_datetime: z.string().datetime().optional()
+  pickup_datetime: z.string().datetime().optional(),
+  pallet_count: z.number().int().min(0).optional().nullable(),
+  total_weight: z.string().optional().nullable()
 });
 
 export async function eventRoutes(app: FastifyInstance) {
@@ -108,6 +112,8 @@ export async function eventRoutes(app: FastifyInstance) {
         eventDate: body.event_date ? new Date(body.event_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
+        palletCount: body.pallet_count ?? null,
+        totalWeight: body.total_weight ?? null,
         createdById: user.id
       }
     });
@@ -131,6 +137,13 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const existing = await app.prisma.event.findUnique({ where: { id: params.id } });
     if (!existing) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (existing.eventDate && existing.eventDate.getTime() < today.getTime()) {
+      return httpError(reply, 403, "EVENT_IN_PAST", "Akci s datem v minulosti již nelze upravovat.");
+    }
+
     if (user.role === "event_manager" && existing.createdById !== user.id) {
       return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění upravovat cizí akce.");
     }
@@ -147,7 +160,9 @@ export async function eventRoutes(app: FastifyInstance) {
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
         ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
         ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
-        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})
+        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {}),
+        ...(body.pallet_count !== undefined ? { palletCount: body.pallet_count } : {}),
+        ...(body.total_weight !== undefined ? { totalWeight: body.total_weight } : {})
       }
     });
 
@@ -377,6 +392,123 @@ export async function eventRoutes(app: FastifyInstance) {
     return { rows };
   });
 
+  app.get("/events/:id/cross-sells/:itemId", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid(), itemId: z.string().uuid() }).parse(request.params);
+    
+    const links = await app.prisma.crossSellLink.findMany({
+      where: { sourceItemId: params.itemId },
+      select: { targetItemId: true }
+    });
+    if (links.length === 0) return { items: [] };
+
+    const targetItemIds = links.map((l) => l.targetItemId);
+
+    const targetItems = await app.prisma.inventoryItem.findMany({
+      where: { id: { in: targetItemIds }, active: true },
+      include: { category: { include: { parent: true } }, warehouse: true }
+    });
+
+    if (targetItems.length === 0) return { items: [] };
+
+    const rows = await app.prisma.$transaction(async (tx) => {
+      const out: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> = [];
+      for (const tId of targetItemIds) {
+        const a = await getAvailabilityForEventItemTx(tx, params.id, tId);
+        out.push({ inventoryItemId: tId, ...a });
+      }
+      return out;
+    });
+
+    const stockById = new Map(rows.map((r) => [r.inventoryItemId, r]));
+    const dto = targetItems.map((it) => {
+      const s = stockById.get(it.id) ?? { physicalTotal: 0, blockedTotal: 0, available: 0 };
+      return {
+        itemId: it.id,
+        name: it.name,
+        sku: it.sku,
+        unit: it.unit,
+        imageUrl: it.imageUrl,
+        masterPackageQty: it.masterPackageQty,
+        category: {
+          parent: it.category.parent ? { id: it.category.parent.id, name: it.category.parent.name, sortOrder: it.category.parent.sortOrder } : null,
+          sub: { id: it.category.id, name: it.category.name, sortOrder: it.category.sortOrder }
+        },
+        stock: {
+          total: Number(s.physicalTotal),
+          reserved: Number(s.blockedTotal),
+          available: Number(s.available)
+        }
+      };
+    });
+
+    return { items: dto.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
+  });
+
+  app.get("/events/:id/cross-sell-warnings", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager", "chef"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const event = await app.prisma.event.findUnique({
+      where: { id: params.id },
+      include: {
+        reservations: { select: { inventoryItemId: true } }
+      }
+    });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+
+    const reservedIds = new Set(event.reservations.map(r => r.inventoryItemId));
+    const dismissedIds = new Set((event.dismissedCrossSellIds || []) as string[]);
+
+    // Find all cross-sell targets for all items in reservations
+    const links = await app.prisma.crossSellLink.findMany({
+      where: { sourceItemId: { in: Array.from(reservedIds) } },
+      include: { targetItem: { include: { category: { include: { parent: true } } } } }
+    });
+
+    const suggestions = [];
+    const seen = new Set();
+
+    for (const link of links) {
+      const targetId = link.targetItemId;
+      if (!reservedIds.has(targetId) && !dismissedIds.has(targetId) && !seen.has(targetId)) {
+        seen.add(targetId);
+        suggestions.push({
+          itemId: targetId,
+          name: link.targetItem.name,
+          sku: link.targetItem.sku,
+          unit: link.targetItem.unit,
+          category: {
+            parent: link.targetItem.category.parent?.name,
+            sub: link.targetItem.category.name
+          }
+        });
+      }
+    }
+
+    return { suggestions: suggestions.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
+  });
+
+  app.post("/events/:id/cross-sell-dismiss", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ itemId: z.string().uuid() }).parse(request.body);
+
+    const event = await app.prisma.event.findUnique({ where: { id: params.id } });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+
+    const dismissed = new Set((event.dismissedCrossSellIds || []) as string[]);
+    dismissed.add(body.itemId);
+
+    await app.prisma.event.update({
+      where: { id: params.id },
+      data: { dismissedCrossSellIds: Array.from(dismissed) }
+    });
+
+    return { ok: true };
+  });
+
   app.post("/events/:id/reserve", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin", "event_manager", "chef"]);
@@ -395,9 +527,18 @@ export async function eventRoutes(app: FastifyInstance) {
       })
       .parse(request.body);
 
+    const eventCheck = await app.prisma.event.findUnique({ where: { id: params.id }, select: { eventDate: true } });
+    if (!eventCheck) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena");
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (eventCheck.eventDate && eventCheck.eventDate.getTime() < today.getTime()) {
+      return httpError(reply, 403, "EVENT_IN_PAST", "Do akce s datem v minulosti nelze přidávat položky.");
+    }
+
     try {
       const result = await app.prisma.$transaction(async (tx) => {
-        await reserveItemsTx({
+        const reserveResult = await reserveItemsTx({
           tx,
           actor: user,
           eventId: params.id,
@@ -438,14 +579,14 @@ export async function eventRoutes(app: FastifyInstance) {
           }
         });
 
-        return { exportResult };
+        return { exportResult, masterPackageAdjustments: reserveResult.masterPackageAdjustments };
       });
 
       sseBus.emit({ type: "reservation_changed", eventId: params.id });
       if (result.exportResult) {
         sseBus.emit({ type: "export_created", eventId: params.id, version: result.exportResult.snapshot.event.version });
       }
-      return reply.send({ ok: true });
+      return reply.send({ ok: true, masterPackageAdjustments: result.masterPackageAdjustments });
     } catch (e: any) {
       if (e instanceof InsufficientStockError) {
         return httpError(reply, 409, "INSUFFICIENT_STOCK", "Insufficient stock", {
@@ -599,11 +740,13 @@ export async function eventRoutes(app: FastifyInstance) {
     const body = z
       .object({
         idempotency_key: z.string().min(8).optional(),
+        warehouse_id: z.string().uuid().optional(),
         items: z
           .array(
             z.object({
               inventory_item_id: z.string().uuid(),
               issued_quantity: z.number().int().min(0),
+              warehouse_id: z.string().uuid().optional(),
               idempotency_key: z.string().min(8).optional()
             })
           )
@@ -632,7 +775,7 @@ export async function eventRoutes(app: FastifyInstance) {
         });
         if (!latest) throw new Error("NO_EXPORT");
         const snapshot = latest.snapshotJson as any as ExportSnapshot;
-        type IssueItemInput = { inventory_item_id: string; issued_quantity: number; idempotency_key?: string };
+        type IssueItemInput = { inventory_item_id: string; issued_quantity: number; warehouse_id?: string; idempotency_key?: string };
         const defaultItems: IssueItemInput[] =
           body.items && body.items.length > 0
             ? (body.items as IssueItemInput[])
@@ -640,6 +783,7 @@ export async function eventRoutes(app: FastifyInstance) {
               g.items.map((i) => ({
                 inventory_item_id: i.inventoryItemId,
                 issued_quantity: i.qty,
+                warehouse_id: body.warehouse_id,
                 idempotency_key: undefined
               }))
             );
@@ -651,6 +795,7 @@ export async function eventRoutes(app: FastifyInstance) {
           eventId: params.id,
           inventoryItemId: i.inventory_item_id,
           issuedQuantity: i.issued_quantity,
+          warehouseId: i.warehouse_id ?? body.warehouse_id,
           issuedById: user.id,
           idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
         }));
@@ -689,6 +834,7 @@ export async function eventRoutes(app: FastifyInstance) {
               inventory_item_id: z.string().uuid(),
               returned_quantity: z.number().int().min(0),
               broken_quantity: z.number().int().min(0).default(0),
+              target_warehouse_id: z.string().uuid().optional(),
               idempotency_key: z.string().min(8).optional()
             })
           )
@@ -723,6 +869,7 @@ export async function eventRoutes(app: FastifyInstance) {
           inventoryItemId: i.inventory_item_id,
           returnedQuantity: i.returned_quantity,
           brokenQuantity: i.broken_quantity,
+          targetWarehouseId: i.target_warehouse_id,
           returnedById: user.id,
           idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "return"}:${params.id}:${i.inventory_item_id}`
         }));
@@ -761,6 +908,11 @@ export async function eventRoutes(app: FastifyInstance) {
         for (const t of totals) {
           const missing = Math.max(0, Number(t.issued) - Number(t.returned) - Number(t.broken));
           const broken = Math.max(0, Number(t.broken));
+          
+          // Get the warehouse where it was supposed to be returned
+          const targetItem = body.items.find(i => i.inventory_item_id === t.inventory_item_id);
+          const warehouseId = targetItem?.target_warehouse_id;
+
           if (broken > 0) {
             await tx.eventIssue.create({
               data: {
@@ -768,6 +920,7 @@ export async function eventRoutes(app: FastifyInstance) {
                 inventoryItemId: t.inventory_item_id,
                 issuedQuantity: broken,
                 type: "broken",
+                warehouseId: warehouseId,
                 issuedById: user.id,
                 idempotencyKey: `breakage:${params.id}:${t.inventory_item_id}:${Date.now()}`
               }
@@ -778,8 +931,9 @@ export async function eventRoutes(app: FastifyInstance) {
                 deltaQuantity: -broken,
                 reason: "breakage",
                 eventId: params.id,
+                warehouseId: warehouseId,
                 createdById: user.id,
-                note: "Breakage on return/close"
+                note: "Rozbité při návratu"
               }
             });
             changedLedgerItemIds.push(t.inventory_item_id);
@@ -791,6 +945,7 @@ export async function eventRoutes(app: FastifyInstance) {
                 inventoryItemId: t.inventory_item_id,
                 issuedQuantity: missing,
                 type: "missing",
+                warehouseId: warehouseId,
                 issuedById: user.id,
                 idempotencyKey: `missing:${params.id}:${t.inventory_item_id}:${Date.now()}`
               }
@@ -801,8 +956,9 @@ export async function eventRoutes(app: FastifyInstance) {
                 deltaQuantity: -missing,
                 reason: "missing",
                 eventId: params.id,
+                warehouseId: warehouseId,
                 createdById: user.id,
-                note: "Missing on close"
+                note: "Chybějící při uzavření"
               }
             });
             changedLedgerItemIds.push(t.inventory_item_id);
@@ -901,5 +1057,63 @@ export async function eventRoutes(app: FastifyInstance) {
       request.log.error({ err: e }, "delete event failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
+  });
+
+  app.get("/events/:id/blocks", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse", "event_manager", "chef"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const blocks = await app.prisma.warehouseBlock.findMany({
+      where: { eventId: params.id },
+      include: { item: { select: { name: true, unit: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+    return reply.send({ blocks });
+  });
+
+  app.post("/events/:id/blocks", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({
+      inventoryItemId: z.string().uuid(),
+      blockedQuantity: z.number().int().min(1),
+      blockedUntil: z.string().datetime(),
+      note: z.string().optional()
+    }).parse(request.body);
+
+    const event = await app.prisma.event.findUnique({ where: { id: params.id } });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Event not found");
+    if (event.status === "CLOSED" || event.status === "CANCELLED") {
+      // Allow warehouse blocks even if event is closed? Yes, the warehouse might receive dirty items 
+      // after closing and block them. So we do not restrict based on CLOSED status.
+    }
+
+    const block = await app.prisma.warehouseBlock.create({
+      data: {
+        eventId: params.id,
+        inventoryItemId: body.inventoryItemId,
+        blockedQuantity: body.blockedQuantity,
+        blockedUntil: body.blockedUntil,
+        note: body.note,
+        createdById: user.id
+      }
+    });
+    return reply.send({ block });
+  });
+
+  app.delete("/events/:eventId/blocks/:blockId", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ eventId: z.string().uuid(), blockId: z.string().uuid() }).parse(request.params);
+
+    const block = await app.prisma.warehouseBlock.findUnique({ where: { id: params.blockId } });
+    if (!block || block.eventId !== params.eventId) {
+      return httpError(reply, 404, "NOT_FOUND", "Block not found");
+    }
+
+    await app.prisma.warehouseBlock.delete({ where: { id: params.blockId } });
+    return reply.send({ ok: true });
   });
 }
