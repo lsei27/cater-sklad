@@ -8,6 +8,7 @@ import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import Modal from "../components/ui/Modal";
+import ItemDetailModal from "../components/ItemDetailModal";
 import { cn } from "../lib/ui";
 import { formatCategoryParentLabel, statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
@@ -33,6 +34,7 @@ export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [categoryId, setCategoryId] = useState<string>("");
+  const [warehouseId, setWarehouseId] = useState<string>("");
   const [view, setView] = useState<string>(() => localStorage.getItem("inv_view") ?? "tile");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export default function InventoryPage() {
 
   const [pickOpen, setPickOpen] = useState(false);
   const [pickItem, setPickItem] = useState<any | null>(null);
+  const [detailItem, setDetailItem] = useState<any | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventSearch, setEventSearch] = useState("");
@@ -150,9 +153,19 @@ export default function InventoryPage() {
   }, [pickOpen]);
 
   const subcats = useMemo(() => {
-    const p = parents.find((x) => x.id === parentId);
-    return p?.children ?? [];
+    if (parentId) {
+      const p = parents.find((x) => x.id === parentId);
+      return (p?.children ?? []).map((c: any) => ({ ...c, parentName: p?.name ?? "" }));
+    }
+    return parents.flatMap((p: any) =>
+      (p.children ?? []).map((c: any) => ({ ...c, parentName: p.name }))
+    );
   }, [parents, parentId]);
+
+  const visibleItems = useMemo(() => {
+    if (!warehouseId) return items;
+    return items.filter((i) => (warehouseStocks[i.itemId]?.[warehouseId] ?? 0) > 0);
+  }, [items, warehouseId, warehouseStocks]);
 
   const filteredEvents = useMemo(() => {
     const s = eventSearch.trim().toLowerCase();
@@ -263,11 +276,23 @@ export default function InventoryPage() {
 
             <div className="md:col-span-3 lg:col-span-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Podkategorie</label>
-              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId}>
+              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
                 <option value="">Vše</option>
                 {subcats.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {parentId ? c.name : `${c.parentName} / ${c.name}`}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="md:col-span-3 lg:col-span-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sklad</label>
+              <Select className="mt-1" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+                <option value="">Všechny sklady</option>
+                {warehouses.map((w: any) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
                   </option>
                 ))}
               </Select>
@@ -319,17 +344,21 @@ export default function InventoryPage() {
             )
           )}
         </div>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">
           Žádné položky neodpovídají filtrům.
         </div>
       ) : view === "tile" ? (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
-          {items.map((i) => {
+          {visibleItems.map((i) => {
             const tone = stockTone(i.stock.available);
             return (
               <Card key={i.itemId} className="overflow-hidden group hover:shadow-md transition-shadow border-gray-200 hover:border-indigo-300">
-                <div className="aspect-[4/3] w-full overflow-hidden bg-white relative border-b border-gray-100">
+                <button
+                  onClick={() => setDetailItem(i)}
+                  className="block w-full aspect-[4/3] overflow-hidden bg-white relative border-b border-gray-100 text-left"
+                  title="Zobrazit detail"
+                >
                   {i.imageUrl ? (
                     <img className="h-full w-full object-contain transition-transform group-hover:scale-105 p-1" src={apiUrl(i.imageUrl)} alt={i.name} />
                   ) : (
@@ -342,9 +371,15 @@ export default function InventoryPage() {
                       {i.stock.available} ks
                     </Badge>
                   </div>
-                </div>
+                </button>
                 <CardContent className="p-3">
-                  <div className="line-clamp-1 text-sm font-semibold text-gray-900" title={i.name}>{i.name}</div>
+                  <button
+                    onClick={() => setDetailItem(i)}
+                    className="line-clamp-1 text-sm font-semibold text-gray-900 text-left hover:text-indigo-700"
+                    title={i.name}
+                  >
+                    {i.name}
+                  </button>
                   <div className="text-xs text-gray-500 mb-1">
                     {formatCategoryParentLabel(i.category.parent?.name, i.category.sub?.name)}
                   </div>
@@ -399,26 +434,30 @@ export default function InventoryPage() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200 text-xs">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Položka</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kategorie</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Celkem</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider text-blue-700 bg-blue-50/50">Rezervováno</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider text-green-700 bg-green-50/50">Volné</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rozmístění</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Akce</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wide">Položka</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wide">Kategorie</th>
+                <th className="px-2 py-1.5 text-right font-medium text-gray-500 uppercase tracking-wide">Celkem</th>
+                <th className="px-2 py-1.5 text-right font-medium text-blue-700 uppercase tracking-wide bg-blue-50/50">Rez.</th>
+                <th className="px-2 py-1.5 text-right font-medium text-green-700 uppercase tracking-wide bg-green-50/50">Volné</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wide">Sklady</th>
+                <th className="px-2 py-1.5 text-right font-medium text-gray-500 uppercase tracking-wide">Akce</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {items.map((i) => {
+            <tbody className="bg-white divide-y divide-gray-100">
+              {visibleItems.map((i) => {
                 const tone = stockTone(i.stock.available);
                 return (
                   <tr key={i.itemId} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 overflow-hidden rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                    <td className="px-2 py-1.5">
+                      <button
+                        onClick={() => setDetailItem(i)}
+                        className="flex items-center gap-2 text-left w-full hover:text-indigo-700 group/item"
+                        title="Zobrazit detail"
+                      >
+                        <div className="h-8 w-8 overflow-hidden rounded bg-gray-100 flex items-center justify-center shrink-0 border border-gray-200">
                           {i.imageUrl ? (
                             <img className="h-full w-full object-contain p-0.5" src={apiUrl(i.imageUrl)} alt={i.name} />
                           ) : (
@@ -426,46 +465,45 @@ export default function InventoryPage() {
                           )}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-gray-900">{i.name}</div>
-                          <div className="text-xs text-gray-500">{i.unit}</div>
+                          <div className="truncate font-semibold text-gray-900 group-hover/item:text-indigo-700" title={i.name}>{i.name}</div>
+                          <div className="text-[10px] text-gray-500">{i.unit}</div>
                         </div>
-                      </div>
+                      </button>
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">
                       {formatCategoryParentLabel(i.category.parent?.name, i.category.sub?.name)}
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right font-medium bg-gray-50/50">
+                    <td className="px-2 py-1.5 text-right font-medium text-gray-900 bg-gray-50/50 whitespace-nowrap">
                       {i.stock.total}
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-sm text-blue-600 text-right font-medium bg-blue-50/30">
+                    <td className="px-2 py-1.5 text-right font-medium text-blue-600 bg-blue-50/30 whitespace-nowrap">
                       {i.stock.reserved}
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-sm text-right font-bold">
+                    <td className="px-2 py-1.5 text-right font-bold whitespace-nowrap">
                       <span className={cn(
                         tone === 'ok' ? 'text-emerald-600' : tone === 'warn' ? 'text-amber-600' : 'text-red-600'
                       )}>
                         {i.stock.available}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-500 min-w-[140px]">
-                      <div className="flex flex-col gap-0.5">
+                    <td className="px-2 py-1.5 text-gray-500">
+                      <div className="flex flex-wrap gap-1">
                         {warehouses.map(w => {
                           const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
                           if (stock === 0) return null;
                           return (
-                            <div key={w.id} className="text-[10px] flex justify-between gap-2 bg-gray-50 px-1.5 rounded">
-                              <span>{w.name}:</span>
-                              <span className="font-medium">{stock}</span>
-                            </div>
+                            <span key={w.id} className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded whitespace-nowrap">
+                              {w.name}: <span className="font-semibold text-gray-900">{stock}</span>
+                            </span>
                           );
                         })}
                       </div>
                     </td>
-                    <td className="px-6 py-3 whitespace-nowrap text-right text-sm">
-                      <div className="flex justify-end gap-2">
+                    <td className="px-2 py-1.5 whitespace-nowrap text-right">
+                      <div className="flex justify-end gap-1">
                         {canPrint && (
                           <Button size="sm" variant="secondary" title="Tisk štítku" onClick={() => onPrintLabel(i)}>
-                            <Icons.QrCode className="w-4 h-4" />
+                            <Icons.QrCode className="w-3.5 h-3.5" />
                           </Button>
                         )}
                         <Button size="sm" variant={canEdit ? "secondary" : "primary"} onClick={() => onPrimaryAction(i)}>
@@ -550,6 +588,13 @@ export default function InventoryPage() {
           )}
         </div>
       </Modal>
+
+      <ItemDetailModal
+        item={detailItem}
+        warehouses={warehouses}
+        warehouseStocks={warehouseStocks}
+        onClose={() => setDetailItem(null)}
+      />
     </div>
   );
 }

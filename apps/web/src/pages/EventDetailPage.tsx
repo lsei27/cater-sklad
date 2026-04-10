@@ -810,8 +810,13 @@ function AddItemsPanel(props: {
   const userId = getCurrentUser()?.id;
 
   const subcats = useMemo(() => {
-    const p = parents.find((x: any) => x.id === parentId);
-    return p?.children ?? [];
+    if (parentId) {
+      const p = parents.find((x: any) => x.id === parentId);
+      return (p?.children ?? []).map((c: any) => ({ ...c, parentName: p?.name ?? "" }));
+    }
+    return parents.flatMap((p: any) =>
+      (p.children ?? []).map((c: any) => ({ ...c, parentName: p.name }))
+    );
   }, [parents, parentId]);
 
   useEffect(() => {
@@ -1017,11 +1022,11 @@ function AddItemsPanel(props: {
             </label>
             <label className="text-sm">
               Podkategorie
-              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!parentId || isChef}>
+              <Select className="mt-1" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={isChef}>
                 <option value="">Vše</option>
                 {subcats.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {parentId ? c.name : `${c.parentName} / ${c.name}`}
                   </option>
                 ))}
               </Select>

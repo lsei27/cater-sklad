@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
+import { requireRole } from "../lib/rbac.js";
 import { getPhysicalTotal } from "../services/availability.js";
 
 function compareNullableSortOrder(a?: number | null, b?: number | null) {
@@ -324,6 +325,7 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
   });
 
   app.post("/inventory/transfers", { preHandler: [app.authenticate] }, async (request, reply) => {
+    requireRole(request.user!.role, ["warehouse"]);
     const body = z.object({
       inventory_item_id: z.string().uuid(),
       from_warehouse_id: z.string().uuid(),

@@ -83,18 +83,20 @@ export default function AppShell() {
                 <Icons.Box />
                 Sklad
               </button>
-              <button
-                onClick={() => nav("/inventory/transfers")}
-                className={cn(
-                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                  loc.pathname.startsWith("/inventory/transfers")
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                )}
-              >
-                <Icons.History />
-                Přesuny
-              </button>
+              {role === "warehouse" && (
+                <button
+                  onClick={() => nav("/inventory/transfers")}
+                  className={cn(
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                    loc.pathname.startsWith("/inventory/transfers")
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  )}
+                >
+                  <Icons.History />
+                  Přesuny
+                </button>
+              )}
               {isSettingsAllowed && (
                 <button
                   onClick={() => nav("/settings")}

@@ -1,4 +1,6 @@
-import { Route, Routes } from "react-router-dom";
+import type { ReactElement } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { getCurrentUser } from "./lib/api";
 import LoginPage from "./pages/LoginPage";
 import EventsPage from "./pages/EventsPage";
 import EventDetailPage from "./pages/EventDetailPage";
@@ -17,6 +19,12 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import AdminWarehousesPage from "./pages/AdminWarehousesPage";
 import WarehouseTransfersPage from "./pages/WarehouseTransfersPage";
 
+function WarehouseOnly({ children }: { children: ReactElement }) {
+  const role = getCurrentUser()?.role;
+  if (role !== "warehouse") return <Navigate to="/inventory" replace />;
+  return children;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -26,7 +34,14 @@ export default function App() {
         <Route path="/events" element={<EventsPage />} />
         <Route path="/events/:id" element={<EventDetailPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
-        <Route path="/inventory/transfers" element={<WarehouseTransfersPage />} />
+        <Route
+          path="/inventory/transfers"
+          element={
+            <WarehouseOnly>
+              <WarehouseTransfersPage />
+            </WarehouseOnly>
+          }
+        />
         <Route path="/warehouse" element={<WarehouseEventsPage />} />
         <Route path="/warehouse/:id" element={<WarehouseEventDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
