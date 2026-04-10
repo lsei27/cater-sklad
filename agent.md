@@ -61,7 +61,8 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - Kategorie mají stromovou strukturu (`parentId`).
 - **InventoryLedger**: Loguje každou změnu stavu skladu (příjem, výdej, korekce).
   - **Automatizace**: Výdej (`issue`) a návrat (`return`) jsou automaticky logovány při změně stavu akce.
-  - **Důvody**: Rozšířeno o `issue`, `return`, `conversion`, `audit`.
+  - **Důvody**: Aktivně používané enum hodnoty zahrnují `purchase`, `writeoff`, `audit_adjustment`, `breakage`, `missing`, `manual`, `transfer`, `issue`, `return`.
+  - **Pozor na enum drift**: Když se do `schema.prisma` přidá nová hodnota `LedgerReason`, musí existovat i odpovídající SQL migrace pro PostgreSQL enum. Jinak route projde TypeScriptem, ale produkce spadne na `invalid input value for enum "LedgerReason"`.
 
 ### 3. Akce (`Event`)
 - Hlavní entita pro sledování cateringu.
@@ -130,6 +131,7 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 
 ## 💡 Tipy pro vývoj
 - **DB Změny**: Po změně v `schema.prisma` spusťte `npx prisma migrate dev --name <nazev>` (lokálně) nebo se spolehněte na auto-deploy migrace (produkce).
+- **Prisma enumy v kódu**: Pro `LedgerReason` používejte `LedgerReason.<value>` z Prisma klienta místo raw stringů, aby změny enumu byly typově svázané s backendem.
 - **Prisma Generate**: Po změnách v schema nebo po aktualizaci Prisma spusťte `npx prisma generate` v `apps/api` pro regeneraci klienta.
 - **Prisma 7 Importy**: Všechny importy Prisma klienta musí používat relativní cestu s `.js` příponou: `import { PrismaClient } from "../../generated/prisma/client.js"`.
 - **PrismaPg Adapter**: PrismaClient v Prisma 7 vyžaduje adapter v konstruktoru. Používáme `PrismaPg` z `@prisma/adapter-pg` s `pg` Pool instancí.

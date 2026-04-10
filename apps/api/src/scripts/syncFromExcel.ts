@@ -1,4 +1,4 @@
-import { PrismaClient } from "../../generated/prisma/client.js";
+import { LedgerReason, PrismaClient } from "../../generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { env } from "../config.js";
@@ -173,7 +173,7 @@ async function main() {
           data: {
             inventoryItemId: newItem.id,
             deltaQuantity: initialQuantity,
-            reason: "manual",
+            reason: LedgerReason.manual,
             warehouseId,
             createdById: user.id,
             note: "Initial sync from Excel"

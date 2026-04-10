@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EventStatus } from "../../generated/prisma/client.js";
+import { EventStatus, LedgerReason } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
@@ -854,7 +854,7 @@ export async function eventRoutes(app: FastifyInstance) {
             data: {
               inventoryItemId: row.inventoryItemId,
               deltaQuantity: -row.issuedQuantity,
-              reason: "issue",
+              reason: LedgerReason.issue,
               eventId: params.id,
               warehouseId: row.warehouseId,
               createdById: user.id,
@@ -948,7 +948,7 @@ export async function eventRoutes(app: FastifyInstance) {
                 data: {
                   inventoryItemId: row.inventoryItemId,
                   deltaQuantity: row.returnedQuantity,
-                  reason: "return",
+                  reason: LedgerReason.return,
                   eventId: params.id,
                   warehouseId: row.targetWarehouseId,
                   createdById: user.id,
@@ -1011,7 +1011,7 @@ export async function eventRoutes(app: FastifyInstance) {
               data: {
                 inventoryItemId: t.inventory_item_id,
                 deltaQuantity: -broken,
-                reason: "breakage",
+                reason: LedgerReason.breakage,
                 eventId: params.id,
                 warehouseId: warehouseId,
                 createdById: user.id,
@@ -1036,7 +1036,7 @@ export async function eventRoutes(app: FastifyInstance) {
               data: {
                 inventoryItemId: t.inventory_item_id,
                 deltaQuantity: -missing,
-                reason: "missing",
+                reason: LedgerReason.missing,
                 eventId: params.id,
                 warehouseId: warehouseId,
                 createdById: user.id,

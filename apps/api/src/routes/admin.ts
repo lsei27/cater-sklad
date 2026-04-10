@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { parse } from "csv-parse/sync";
+import { LedgerReason } from "../../generated/prisma/client.js";
 import { requireRole } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal } from "../services/availability.js";
@@ -405,7 +406,7 @@ export async function adminRoutes(app: FastifyInstance) {
       data: {
         inventoryItemId: item.id,
         deltaQuantity: body.change,
-        reason: "manual",
+        reason: LedgerReason.manual,
         createdById: actor.id,
         note: body.reason || null,
         warehouseId: item.warehouseId ?? null
@@ -531,7 +532,7 @@ export async function adminRoutes(app: FastifyInstance) {
                 data: {
                   inventoryItemId: item.id,
                   deltaQuantity: delta,
-                  reason: "audit_adjustment",
+                  reason: LedgerReason.audit_adjustment,
                   createdById: actor.id,
                   note: `CSV import set quantity=${quantity} (was ${current})`
                 }

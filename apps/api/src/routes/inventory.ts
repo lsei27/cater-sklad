@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.js";
-import { ReservationState } from "../../generated/prisma/client.js";
+import { LedgerReason, ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { getPhysicalTotal } from "../services/availability.js";
@@ -357,7 +357,7 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
           {
             inventoryItemId: body.inventory_item_id,
             deltaQuantity: -body.quantity,
-            reason: "transfer",
+            reason: LedgerReason.transfer,
             warehouseId: body.from_warehouse_id,
             note: body.note || `Převod do ${body.to_warehouse_id}`,
             createdById: request.user!.id
@@ -365,7 +365,7 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
           {
             inventoryItemId: body.inventory_item_id,
             deltaQuantity: body.quantity,
-            reason: "transfer",
+            reason: LedgerReason.transfer,
             warehouseId: body.to_warehouse_id,
             note: body.note || `Převod z ${body.from_warehouse_id}`,
             createdById: request.user!.id
