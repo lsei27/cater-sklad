@@ -255,7 +255,7 @@ export default function EventDetailPage() {
         </Card>
       ) : null}
 
-      {crossSellWarnings.length > 0 ? (
+      {(crossSellWarnings?.length ?? 0) > 0 ? (
         <Card className="border-blue-200 bg-blue-50">
           <CardContent>
             <div className="flex items-start justify-between gap-3">
@@ -526,7 +526,7 @@ export default function EventDetailPage() {
           <div className="mt-1 text-sm text-slate-600">Seskupeno podle typu a kategorie.</div>
         </CardHeader>
         <CardContent>
-          {grouped.every(s => s.groups.length === 0) ? (
+          {grouped.every(s => (s.groups?.length ?? 0) === 0) ? (
             <div className="text-sm text-slate-600">Zatím bez položek. Přidej je pro tento termín.</div>
           ) : (
             <div className="space-y-8">
@@ -760,12 +760,14 @@ export default function EventDetailPage() {
           }
         }}
       />
-      <EditBasicsModal
-        open={editBasicsOpen}
-        onOpenChange={(v) => setEditBasicsOpen(v)}
-        event={event}
-        onDone={() => load({ silent: true })}
-      />
+      {editBasicsOpen && event && (
+        <EditBasicsModal
+          open={editBasicsOpen}
+          onOpenChange={(v) => setEditBasicsOpen(v)}
+          event={event}
+          onDone={() => load({ silent: true })}
+        />
+      )}
     </div>
 
   );

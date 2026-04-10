@@ -22,6 +22,8 @@ enum LedgerReason {
   missing
   manual
   transfer
+  issue
+  return
 }
 
 enum EventStatus {

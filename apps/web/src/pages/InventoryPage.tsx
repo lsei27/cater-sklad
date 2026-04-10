@@ -27,6 +27,7 @@ export default function InventoryPage() {
   const nav = useNavigate();
   const role = getCurrentUser()?.role ?? "";
   const canEdit = role === "admin";
+  const canPrint = role === "admin" || role === "warehouse";
   const [items, setItems] = useState<any[]>([]);
   const [parents, setParents] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -166,6 +167,11 @@ export default function InventoryPage() {
     }
     setPickItem(item);
     setPickOpen(true);
+  };
+
+  const onPrintLabel = (item: any) => {
+    const url = `${apiUrl(`/inventory/items/${item.itemId}/label-pdf`)}?token=${localStorage.getItem("token")}`;
+    window.open(url, "_blank");
   };
 
   return (
@@ -371,9 +377,16 @@ export default function InventoryPage() {
                     </div>
                   )}
 
-                  <Button variant={canEdit ? "secondary" : "primary"} size="sm" full onClick={() => onPrimaryAction(i)}>
-                    {canEdit ? "Upravit" : "Přidat"}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant={canEdit ? "secondary" : "primary"} size="sm" className="flex-1" onClick={() => onPrimaryAction(i)}>
+                      {canEdit ? "Upravit" : "Přidat"}
+                    </Button>
+                    {canPrint && (
+                      <Button variant="secondary" size="sm" title="Tisk štítku" onClick={() => onPrintLabel(i)}>
+                        <Icons.QrCode className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             );
@@ -444,9 +457,16 @@ export default function InventoryPage() {
                       </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-right text-sm">
-                      <Button size="sm" variant={canEdit ? "secondary" : "primary"} onClick={() => onPrimaryAction(i)}>
-                        {canEdit ? "Upravit" : "Přidat"}
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        {canPrint && (
+                          <Button size="sm" variant="secondary" title="Tisk štítku" onClick={() => onPrintLabel(i)}>
+                            <Icons.QrCode className="w-4 h-4" />
+                          </Button>
+                        )}
+                        <Button size="sm" variant={canEdit ? "secondary" : "primary"} onClick={() => onPrimaryAction(i)}>
+                          {canEdit ? "Upravit" : "Přidat"}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );

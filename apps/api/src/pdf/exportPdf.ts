@@ -333,3 +333,62 @@ export async function buildClosureReportPdf(event: any) {
 
   return pdfDoc.save();
 }
+
+export async function buildItemLabelPdf(item: { id: string; name: string; sku: string | null }) {
+  const { default: QRCode } = await import("qrcode");
+  const pdfDoc = await PDFDocument.create();
+  
+  // 50mm x 30mm at 72dpi: 141.7 x 85 points
+  const width = 141.7;
+  const height = 85.0;
+  const page = pdfDoc.addPage([width, height]);
+  
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  
+  // QR Code
+  // Using the Item ID as the QR data for reliable scanning to the specific item
+  const qrData = item.sku || item.id;
+  const qrBuffer = await QRCode.toBuffer(qrData, {
+    margin: 1,
+    width: 60, // size in pixels
+  });
+  const qrImage = await pdfDoc.embedPng(qrBuffer);
+  
+  // Draw QR
+  page.drawImage(qrImage, {
+    x: width - 65,
+    y: (height - 60) / 2,
+    width: 60,
+    height: 60
+  });
+
+  // Text Info
+  const textX = 10;
+  const maxWidth = width - 75;
+
+  // Name (wrapped)
+  const nameLines = wrapText(item.name, bold, 8, maxWidth);
+  let yPos = height - 15;
+  for (let i = 0; i < Math.min(nameLines.length, 3); i++) {
+    page.drawText(pdfText(nameLines[i]), {
+      x: textX,
+      y: yPos,
+      size: 8,
+      font: bold
+    });
+    yPos -= 10;
+  }
+
+  // SKU
+  if (item.sku) {
+    page.drawText(pdfText(`SKU: ${item.sku}`), {
+      x: textX,
+      y: 15,
+      size: 7,
+      font
+    });
+  }
+
+  return pdfDoc.save();
+}

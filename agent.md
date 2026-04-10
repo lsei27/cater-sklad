@@ -24,6 +24,7 @@ Aplikace je postavena jako **monorepo** s následující strukturou:
 - **Autentizace**: JWT (@fastify/jwt 10.0.0) + Bcrypt 6.0.0 pro hašování hesel.
 - **PDF Generování**: `pdf-lib` 1.17.1 (vytváření exportních dokumentů pro sklad).
 - **Hlášení změn**: SSE (Server-Sent Events) pro real-time aktualizace skladu.
+- **QR Kódy**: `qrcode` 1.5.3 pro generování štítků položek.
 - **TypeScript**: 6.0.2
 - **Prisma Konfigurace**: Prisma 7 vyžaduje `prisma.config.ts` pro datasource konfiguraci a PrismaPg adapter pro PostgreSQL připojení.
 
@@ -59,6 +60,8 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - Položky jsou organizovány do **kategorií** (např. Kuchyň, Mobiliář, Sklo).
 - Kategorie mají stromovou strukturu (`parentId`).
 - **InventoryLedger**: Loguje každou změnu stavu skladu (příjem, výdej, korekce).
+  - **Automatizace**: Výdej (`issue`) a návrat (`return`) jsou automaticky logovány při změně stavu akce.
+  - **Důvody**: Rozšířeno o `issue`, `return`, `conversion`, `audit`.
 
 ### 3. Akce (`Event`)
 - Hlavní entita pro sledování cateringu.
@@ -106,6 +109,14 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - Vytváří snapshot, takže i když se později změní cena nebo název položky, export zůstává historicky věrný.
 - Header obsahuje `Event Manager: <jméno>` (fallback na email).
 - Názvy PDF souborů jsou sanitizované kvůli hlavičkám (ASCII safe).
+- **Inventory Ledger Automation**: Endpointy `/events/:id/issue` a `/events/:id/return-close` automaticky vytvářejí záznamy v ledgeru pro každý řádek položky, čímž zajišťují reálný přehled o stavu skladu.
+
+### QR Kódy & Štítky
+Aplikace umožňuje generování fyzických štítků pro označení inventáře.
+- **Formát**: 50x30mm PDF štítek.
+- **Obsah**: Název položky, SKU a QR kód s unikátním identifikátorem.
+- **Generování**: Knihovna `qrcode` na backendu v rámci služby `exportPdf.ts`.
+- **UI**: Tlačítko 🔳 **Štítek** v `InventoryPage` (dostupné pro role `admin` a `warehouse`).
 
 ---
 
@@ -132,6 +143,8 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - **Seed a demo přihlašování**: Hesla pro seed uživatele bereme z env (`ADMIN_SEED_PASSWORD`, `EM_SEED_PASSWORD`, `CHEF_SEED_PASSWORD`, `WAREHOUSE_SEED_PASSWORD`). Demo přepínače na loginu jsou řízené `VITE_DEMO_USERS`.
 - **Repo hygiene**: `node_modules`, `generated/` (Prisma Client output) a build cache jsou ignorované a nemají být commitované; po čistění stačí znovu spustit `pnpm install` a `npx prisma generate`.
 - **Tailwind CSS 4**: Používá `@tailwindcss/postcss` plugin a `@import "tailwindcss"` v CSS místo `@tailwind` direktiv.
+- **Bunny.net CDN**: Obrázky používají protokol `bunny://`, který frontend v `lib/api.ts` převádí na URL CDN (přednastaveno na `caterskladinventory.b-cdn.net`). Vyžaduje `VITE_BUNNY_CDN_URL` v prostředí Vercelu pro případnou změnu.
+- **Excel Sync**: Skript `scripts/syncFromExcel.ts` je "source of truth". Při spuštění čistí duplicity a synchronizuje kategorie i položky z `Sklad_new.xlsx`.
 
 ---
 
@@ -209,3 +222,25 @@ Aktualizace provedena přes Context7 MCP server pro zjištění nejnovějších 
   - Při psaní názvu se filtruje s 300ms debounce pro optimalizaci
   - Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu)
   - Implementováno pomocí `useCallback` a `useEffect` hooků s refy pro časové parametry
+
+---
+
+## 📦 Aktualizace Závislostí (duben 2026) - Warehouse Ops
+
+Finální fáze integrace skladu a QR logistiky.
+
+### Backend Změny
+- **qrcode**: 1.5.3 (nový)
+- **pdf-lib**: Použita pro generování 50x30mm štítků.
+- **Endpointy**:
+  - `GET /inventory/items/:id/label-pdf`: Streaming PDF štítku.
+  - `POST /events/:id/issue`: Přidána automatická dedukce ze skladu přes Ledger.
+  - `POST /events/:id/return-close`: Přidán automatický návrat do skladu přes Ledger.
+
+### Frontend Změny
+- **Icon Library**: Přidána ikona `QrCode` do globální knihovny Icons.
+- **Inventory UI**: Přidána tlačítka "Štítek" do dlaždicového i tabulkového zobrazení.
+- **CDN API**: Robustnější ošetření `bunny://` fallbacku v `apiUrl`.
+
+### Datová Synchronizace
+- **syncFromExcel.ts**: Optimalizováno pro jednosměrný import z Excelu s automatickým párováním obrázků na Bunny.net (slugify name).

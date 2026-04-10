@@ -310,4 +310,26 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
 
     return { transfer: res };
   });
+
+  app.get("/inventory/items/:id/label-pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const item = await app.prisma.inventoryItem.findUnique({
+      where: { id: params.id }
+    });
+
+    if (!item) return httpError(reply, 404, "NOT_FOUND", "Item not found");
+
+    const { buildItemLabelPdf } = await import("../pdf/exportPdf.js");
+    const pdfBytes = await buildItemLabelPdf({
+      id: item.id,
+      name: item.name,
+      sku: item.sku
+    });
+
+    const safeName = item.sku || item.id;
+    return reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="label-${safeName}.pdf"`)
+      .send(Buffer.from(pdfBytes));
+  });
 }

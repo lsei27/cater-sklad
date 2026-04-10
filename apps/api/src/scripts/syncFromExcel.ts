@@ -9,11 +9,23 @@ const pool = new Pool({ connectionString: env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+function slugify(text: string) {
+  return text
+    .toString()
+    .normalize('NFD')                   // split accented characters into their base characters and diacritical marks
+    .replace(/[\u0300-\u036f]/g, '')   // remove all the accents, which happen to be all in the \u03xx UNICODE block.
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')              // replace spaces with -
+    .replace(/[^\w-]+/g, '')           // remove all non-word chars
+    .replace(/--+/g, '-');             // replace multiple - with single -
+}
+
 async function main() {
   const isDryRun = process.argv.includes("--dry-run");
   
-  console.log("读取 Excel 数据...");
-  const pythonPath = "../../.venv/bin/python3"; // Path to python in root venv
+  console.log("Reading Excel Data...");
+  const pythonPath = "../../.venv/bin/python3"; 
   const scriptPath = "src/scripts/parse_excel.py";
   const excelPath = path.resolve("../../Sklad_new.xlsx");
   
@@ -32,16 +44,18 @@ async function main() {
     console.log("⚠️ DRY RUN: No changes will be applied.");
   } else {
     console.log("🚨 CLEANING DATABASE...");
-    // Order matters for constraints
+    // The order of deletion is important due to foreign key constraints
     await prisma.eventReservation.deleteMany();
     await prisma.inventoryLedger.deleteMany();
     await prisma.eventIssue.deleteMany();
     await prisma.eventReturn.deleteMany();
     await prisma.warehouseBlock.deleteMany();
     await prisma.warehouseTransfer.deleteMany();
+    await prisma.crossSellLink.deleteMany();
     await prisma.inventoryItem.deleteMany();
-    // We keep categories for now, but we will update them
-    console.log("✅ Database cleaned.");
+    await prisma.roleCategoryAccess.deleteMany();
+    await prisma.category.deleteMany();
+    console.log("✅ Database cleaned (including categories).");
   }
 
   // Ensure "Liboc" warehouse exists
@@ -55,84 +69,101 @@ async function main() {
     warehouseId = warehouse.id;
   }
 
-  // Use a map for categories to handle nesting and caching
-  const categoryCache = new Map<string, string>();
+  // Helper to find or create category by name (case-insensitive)
+  const categoryMap = new Map<string, string>(); // slug -> id
+
+  async function getOrCreateCategory(name: string, parentId: string | null = null): Promise<string> {
+    const trimmedName = name.trim();
+    const slug = `${parentId || "root"}:${trimmedName.toLowerCase()}`;
+    
+    if (categoryMap.has(slug)) return categoryMap.get(slug)!;
+
+    let cat = await prisma.category.findFirst({
+      where: { 
+        name: { equals: trimmedName, mode: 'insensitive' },
+        parentId: parentId || null
+      }
+    });
+
+    if (!cat) {
+      if (isDryRun) {
+        return "temp-id";
+      }
+      cat = await prisma.category.create({
+        data: { name: trimmedName, parentId: parentId || null }
+      });
+    }
+
+    categoryMap.set(slug, cat.id);
+    return cat.id;
+  }
 
   console.log("🚀 Syncing items...");
   let count = 0;
+  const skuToId = new Map<string, string>();
 
   for (const item of data) {
     const name = item.name?.trim();
-    const catName = item.category;
+    if (!name) continue;
+
+    const catName = item.category || "Ostatní";
     const parentCatName = item.parent_category;
-    const sku = item.Inventory === "Liboc" ? null : String(item.Inventory); // If Inventory is just location, ignore as SKU
+    const sku = item.sku ? String(item.sku).trim() : null;
     const unit = item.unit || "ks";
     const masterPackageQty = item["master package"] ? parseInt(String(item["master package"])) : null;
     const masterPackageWeight = item["master package weight"];
     const initialQuantity = item.quantity ? parseInt(String(item.quantity)) : 0;
-
-    if (!name) continue;
+    
+    // Auto-image URL from name
+    const imageUrl = `bunny://${slugify(name)}.jpg`;
 
     if (isDryRun) {
-      console.log(` - Would add item: ${name} (Category: ${catName})`);
+      console.log(` - Would add item: ${name} (SKU: ${sku}, Category: ${catName})`);
       count++;
       continue;
     }
 
-    // 1. Get/Create Parent Category if exists
+    // 1. Resolve Categories
     let parentId: string | null = null;
     if (parentCatName) {
-      const parentSlug = `parent:${parentCatName}`;
-      if (categoryCache.has(parentSlug)) {
-        parentId = categoryCache.get(parentSlug)!;
-      } else {
-        let cat = await prisma.category.findFirst({
-          where: { parentId: null, name: parentCatName }
-        });
-        if (!cat) {
-          cat = await prisma.category.create({
-            data: { name: parentCatName, parentId: null }
-          });
+      parentId = await getOrCreateCategory(parentCatName, null);
+    }
+    const categoryId = await getOrCreateCategory(catName, parentId);
+
+    // 2. Create Item
+    let finalSku = sku;
+    if (sku) {
+      if (skuToId.has(sku)) {
+        let suffix = 1;
+        while (skuToId.has(`${sku}-${suffix}`)) {
+          suffix++;
         }
-        parentId = cat.id;
-        categoryCache.set(parentSlug, cat.id);
+        finalSku = `${sku}-${suffix}`;
+        console.log(`⚠️ Duplicate SKU detected: ${sku}. Using ${finalSku} for ${name}.`);
       }
     }
 
-    // 2. Get/Create Child Category
-    let categoryId: string;
-    const catSlug = `${parentId}:${catName || "Ostatní"}`;
-    if (categoryCache.has(catSlug)) {
-      categoryId = categoryCache.get(catSlug)!;
-    } else {
-      let cat = await prisma.category.findFirst({
-        where: { parentId: parentId, name: catName || "Ostatní" }
-      });
-      if (!cat) {
-        cat = await prisma.category.create({
-          data: { name: catName || "Ostatní", parentId: parentId }
-        });
-      }
-      categoryId = cat.id;
-      categoryCache.set(catSlug, cat.id);
-    }
-
-    // 3. Create Item
     const newItem = await prisma.inventoryItem.create({
       data: {
         name,
-        sku: sku || undefined,
+        sku: finalSku || undefined,
         unit,
         categoryId,
         warehouseId,
+        imageUrl,
         masterPackageQty,
         masterPackageWeight: masterPackageWeight ? String(masterPackageWeight) : null,
       }
     });
 
-    // 4. Initial stock entry
+    if (finalSku) skuToId.set(finalSku, newItem.id);
+    if (sku && finalSku !== sku) {
+       // Also track the original sku in a way we can still map cross-sells if they use original
+       // But cross-sell mapping usually uses the EXACT sku.
+    }
+
+    // 3. Initial stock entry
     if (initialQuantity > 0) {
-      // Find a system user or admin for the entry (need to be careful here)
       const user = await prisma.user.findFirst({ where: { role: "admin" } });
       if (user) {
         await prisma.inventoryLedger.create({
@@ -151,6 +182,38 @@ async function main() {
     count++;
   }
 
+  // 4. Link Cross Sells
+  if (!isDryRun) {
+    console.log("🔗 Linking cross-sells...");
+    for (const item of data) {
+      const sourceSku = item.sku ? String(item.sku).trim() : null;
+      if (!sourceSku || !skuToId.has(sourceSku)) continue;
+
+      const sourceId = skuToId.get(sourceSku)!;
+      
+      // Check 10 columns for cross-sells
+      for (let i = 1; i <= 10; i++) {
+        const targetSku = item[`Cross sell ${i}`] || item[`Cross sel ${i}`];
+        if (targetSku && skuToId.has(String(targetSku).trim())) {
+          const targetId = skuToId.get(String(targetSku).trim())!;
+          await prisma.crossSellLink.upsert({
+            where: {
+              sourceItemId_targetItemId: {
+                sourceItemId: sourceId,
+                targetItemId: targetId
+              }
+            },
+            create: {
+              sourceItemId: sourceId,
+              targetItemId: targetId
+            },
+            update: {}
+          });
+        }
+      }
+    }
+  }
+
   console.log(`\n✅ Finished. Total items synced: ${count}`);
   await prisma.$disconnect();
 }
@@ -159,3 +222,4 @@ main().catch(err => {
   console.error("❌ Sync failed:", err);
   process.exit(1);
 });
+

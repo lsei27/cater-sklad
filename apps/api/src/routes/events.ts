@@ -486,7 +486,7 @@ export async function eventRoutes(app: FastifyInstance) {
       }
     }
 
-    return { suggestions: suggestions.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
+    return { warnings: suggestions.sort((a, b) => a.name.localeCompare(b.name, "cs")) };
   });
 
   app.post("/events/:id/cross-sell-dismiss", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -800,6 +800,22 @@ export async function eventRoutes(app: FastifyInstance) {
           idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
         }));
         await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
+        
+        // Add Ledger entries for issued items
+        for (const row of rows) {
+          await tx.inventoryLedger.create({
+            data: {
+              inventoryItemId: row.inventoryItemId,
+              deltaQuantity: -row.issuedQuantity,
+              reason: "issue",
+              eventId: params.id,
+              warehouseId: row.warehouseId,
+              createdById: user.id,
+              note: "Výdej na akci"
+            }
+          });
+        }
+
         const updated = await tx.event.update({ where: { id: params.id }, data: { status: "ISSUED" } });
         await tx.auditLog.create({
           data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "issue", diffJson: { count: rows.length } }
@@ -850,6 +866,8 @@ export async function eventRoutes(app: FastifyInstance) {
         if (!ev) throw new Error("NOT_FOUND");
         if (ev.status === "CLOSED") return { alreadyClosed: true };
         if (ev.status !== "ISSUED") throw new Error("NOT_ISSUED");
+        
+        const changedLedgerItemIds: string[] = [];
 
         const issuedItemIds = await tx.$queryRaw<Array<{ inventory_item_id: string }>>`
           SELECT DISTINCT inventory_item_id::text AS inventory_item_id
@@ -875,6 +893,24 @@ export async function eventRoutes(app: FastifyInstance) {
         }));
         if (rows.length > 0) {
           await tx.eventReturn.createMany({ data: rows, skipDuplicates: true });
+          
+          // Add Ledger entries for returned items
+          for (const row of rows) {
+            if (row.returnedQuantity > 0) {
+              await tx.inventoryLedger.create({
+                data: {
+                  inventoryItemId: row.inventoryItemId,
+                  deltaQuantity: row.returnedQuantity,
+                  reason: "return",
+                  eventId: params.id,
+                  warehouseId: row.targetWarehouseId,
+                  createdById: user.id,
+                  note: "Vráceno z akce"
+                }
+              });
+            }
+            changedLedgerItemIds.push(row.inventoryItemId);
+          }
         }
 
         const totals = await tx.$queryRaw<
@@ -904,7 +940,6 @@ export async function eventRoutes(app: FastifyInstance) {
           ) r ON r.inventory_item_id = ids.inventory_item_id
         `;
 
-        const changedLedgerItemIds: string[] = [];
         for (const t of totals) {
           const missing = Math.max(0, Number(t.issued) - Number(t.returned) - Number(t.broken));
           const broken = Math.max(0, Number(t.broken));

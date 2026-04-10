@@ -12,7 +12,7 @@ export function apiUrl(pathOrUrl: string) {
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   
   if (pathOrUrl.startsWith("bunny://")) {
-    const cdn = (import.meta as any).env?.VITE_BUNNY_CDN_URL || "https://cater-sklad.b-cdn.net";
+    const cdn = (import.meta as any).env?.VITE_BUNNY_CDN_URL || "https://caterskladinventory.b-cdn.net";
     const cleanCdn = cdn.replace(/\/+$/, "");
     const relative = pathOrUrl.replace("bunny://", "").replace(/^\/+/, "");
     return `${cleanCdn}/${relative}`;
