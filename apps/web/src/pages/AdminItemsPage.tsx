@@ -10,7 +10,7 @@ import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import toast from "react-hot-toast";
-import { Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Download, Image as ImageIcon, Plus, Search, Trash2, Upload } from "lucide-react";
 import { compareByCategoryParentName, formatCategoryParentLabel } from "../lib/viewModel";
 
 export default function AdminItemsPage() {
@@ -67,6 +67,74 @@ export default function AdminItemsPage() {
     }
   };
 
+  const exportCsv = () => {
+    if (items.length === 0) {
+      toast.error("Nejsou k dispozici žádné položky k exportu.");
+      return;
+    }
+
+    const escapeCell = (value: unknown) => {
+      const text = value === null || value === undefined ? "" : String(value);
+      if (/[;"\n\r]/.test(text)) {
+        return `"${text.replace(/"/g, "\"\"")}"`;
+      }
+      return text;
+    };
+
+    const headers = [
+      "name",
+      "main_category",
+      "child_category",
+      "unit",
+      "total_quantity",
+      "active",
+      "sku",
+      "notes",
+      "image_url",
+      "qr_code",
+      "return_delay_days",
+      "master_package_qty",
+      "master_package_weight",
+      "volume",
+      "plate_diameter",
+      "warehouse"
+    ];
+
+    const rows = items.map((item) => [
+      item.name,
+      item.category?.parent?.name ?? item.category?.name ?? "",
+      item.category?.parent ? item.category?.name ?? "" : "",
+      item.unit ?? "",
+      item.totalQuantity ?? 0,
+      item.active ? 1 : 0,
+      item.sku ?? "",
+      item.notes ?? "",
+      item.imageUrl ?? "",
+      item.qrCode ?? "",
+      item.returnDelayDays ?? 0,
+      item.masterPackageQty ?? "",
+      item.masterPackageWeight ?? "",
+      item.volume ?? "",
+      item.plateDiameter ?? "",
+      item.warehouse?.name ?? ""
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map(escapeCell).join(";"))
+      .join("\n");
+
+    const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const suffix = search.trim() ? `_${search.trim().replace(/\s+/g, "_")}` : "";
+    link.href = url;
+    link.download = `aktualni_sklad${suffix}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     if (!canManageItems) return;
     load().catch(() => { });
@@ -95,9 +163,14 @@ export default function AdminItemsPage() {
             <div className="flex items-center gap-2 text-sm font-semibold">
               <Plus className="h-4 w-4" /> Nová položka
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="h-4 w-4 mr-2" /> Import CSV
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || items.length === 0}>
+                <Download className="h-4 w-4 mr-2" /> Export CSV
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="h-4 w-4 mr-2" /> Import CSV
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -517,26 +590,49 @@ function EditItemModal({ open, onOpenChange, item, parents, warehouses, onSaved 
 }
 
 function StockModal({ open, onOpenChange, item, onSaved }: any) {
+  const [mode, setMode] = useState<"change" | "set_quantity">("change");
   const [change, setChange] = useState<string>("");
+  const [setQuantity, setSetQuantity] = useState<string>("");
+  const [ledgerReason, setLedgerReason] = useState("manual");
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
 
   const save = async () => {
-    const val = parseInt(change);
-    if (isNaN(val) || val === 0) {
-      toast.error("Zadej platnou změnu (např. 10 nebo -5)");
-      return;
+    const payload: Record<string, unknown> = {
+      ledger_reason: ledgerReason,
+      reason: reason.trim() || undefined
+    };
+
+    if (mode === "change") {
+      const val = parseInt(change);
+      if (isNaN(val) || val === 0) {
+        toast.error("Zadej platnou změnu (např. 10 nebo -5)");
+        return;
+      }
+      payload.change = val;
+    } else {
+      const val = parseInt(setQuantity);
+      if (isNaN(val) || val < 0) {
+        toast.error("Zadej platný skutečný stav.");
+        return;
+      }
+      payload.set_quantity = val;
+      if (!payload.ledger_reason) payload.ledger_reason = "audit_adjustment";
     }
+
     setLoading(true);
     try {
       await api(`/admin/items/${item.id}/stock`, {
         method: "POST",
-        body: JSON.stringify({ change: val, reason })
+        body: JSON.stringify(payload)
       });
       toast.success("Sklad upraven");
       onSaved();
       onOpenChange(false);
+      setMode("change");
       setChange("");
+      setSetQuantity("");
+      setLedgerReason("manual");
       setReason("");
     } catch (e: any) {
       toast.error(e?.error?.message ?? "Nepodařilo se upravit sklad.");
@@ -553,19 +649,42 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
           Aktuální fyzický stav: <span className="font-bold text-slate-900">{item.totalQuantity ?? 0}</span> {item.unit ?? "ks"}
         </div>
         <label className="text-sm">
-          Změna (+ naskladnit, - vyskladnit/manko)
+          Režim úpravy
+          <Select className="mt-1" value={mode} onChange={(e) => {
+            const nextMode = e.target.value as "change" | "set_quantity";
+            setMode(nextMode);
+            setLedgerReason(nextMode === "set_quantity" ? "audit_adjustment" : "manual");
+          }}>
+            <option value="change">Změnit o rozdíl</option>
+            <option value="set_quantity">Nastavit skutečný stav</option>
+          </Select>
+        </label>
+        <label className="text-sm">
+          Typ úpravy
+          <Select className="mt-1" value={ledgerReason} onChange={e => setLedgerReason(e.target.value)}>
+            <option value="manual">Ruční úprava</option>
+            <option value="audit_adjustment">Fyzická inventura</option>
+            <option value="breakage">Poškození</option>
+            <option value="missing">Manko</option>
+            <option value="writeoff">Odpis</option>
+            <option value="purchase">Naskladnění</option>
+          </Select>
+        </label>
+        <label className="text-sm">
+          {mode === "change" ? "Změna (+ naskladnit, - vyskladnit/manko)" : "Skutečný fyzický stav po inventuře"}
           <Input
             className="mt-1"
             type="number"
-            value={change}
-            onChange={e => setChange(e.target.value)}
+            value={mode === "change" ? change : setQuantity}
+            onChange={e => mode === "change" ? setChange(e.target.value) : setSetQuantity(e.target.value)}
             onFocus={(e) => e.target.select()}
-            placeholder="Např. 10"
+            min={mode === "set_quantity" ? 0 : undefined}
+            placeholder={mode === "change" ? "Např. -3 nebo 10" : `Např. ${item.totalQuantity ?? 0}`}
           />
         </label>
         <label className="text-sm">
-          Důvod (nepovinné)
-          <Input className="mt-1" value={reason} onChange={e => setReason(e.target.value)} placeholder="Např. nákup, rozbití..." />
+          Poznámka (nepovinné)
+          <Input className="mt-1" value={reason} onChange={e => setReason(e.target.value)} placeholder="Např. fyzická inventura skladu / poškozeno při manipulaci" />
         </label>
       </div>
     </Modal>

@@ -398,19 +398,45 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
-        change: z.number().int().refine((value) => value !== 0, "Change must not be zero"),
+        change: z.number().int().optional(),
+        set_quantity: z.number().int().min(0).optional(),
+        ledger_reason: z.enum(["purchase", "writeoff", "audit_adjustment", "breakage", "missing", "manual"]).optional(),
         reason: z.string().trim().optional()
       })
       .parse(request.body);
 
+    if (body.change === undefined && body.set_quantity === undefined) {
+      return httpError(reply, 400, "BAD_REQUEST", "Je nutné zadat změnu nebo cílové množství.");
+    }
+    if (body.change !== undefined && body.set_quantity !== undefined) {
+      return httpError(reply, 400, "BAD_REQUEST", "Nelze zadat změnu i cílové množství zároveň.");
+    }
+    if (body.change !== undefined && body.change === 0) {
+      return httpError(reply, 400, "BAD_REQUEST", "Změna nesmí být nula.");
+    }
+
     const item = await app.prisma.inventoryItem.findUnique({ where: { id: params.id } });
     if (!item) return httpError(reply, 404, "NOT_FOUND", "Položka nenalezena.");
+
+    const currentQuantity = await getPhysicalTotal(app.prisma, item.id);
+    const delta =
+      body.change !== undefined
+        ? body.change
+        : Number(body.set_quantity) - currentQuantity;
+
+    if (delta === 0) {
+      return reply.send({ ok: true, unchanged: true, current_quantity: currentQuantity });
+    }
+
+    const ledgerReason =
+      (body.ledger_reason as LedgerReason | undefined) ??
+      (body.set_quantity !== undefined ? LedgerReason.audit_adjustment : LedgerReason.manual);
 
     const ledger = await app.prisma.inventoryLedger.create({
       data: {
         inventoryItemId: item.id,
-        deltaQuantity: body.change,
-        reason: LedgerReason.manual,
+        deltaQuantity: delta,
+        reason: ledgerReason,
         createdById: actor.id,
         note: body.reason || null,
         warehouseId: item.warehouseId ?? null
@@ -423,7 +449,15 @@ export async function adminRoutes(app: FastifyInstance) {
         entityType: "inventory_item",
         entityId: item.id,
         action: "stock_adjustment",
-        diffJson: { change: body.change, reason: body.reason ?? null }
+        diffJson: {
+          mode: body.set_quantity !== undefined ? "set_quantity" : "change",
+          change: delta,
+          set_quantity: body.set_quantity ?? null,
+          previous_quantity: currentQuantity,
+          next_quantity: currentQuantity + delta,
+          ledger_reason: ledgerReason,
+          reason: body.reason ?? null
+        }
       }
     });
 
