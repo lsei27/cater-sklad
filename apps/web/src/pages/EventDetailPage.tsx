@@ -1008,10 +1008,20 @@ function AddItemsPanel(props: {
       }
 
       if (!existing && finalQty > 0) {
+        const presentItemIds = new Set([
+          params.inventoryItemId,
+          ...currentItems
+            .filter((item) => Number(item.reservedQuantity) > 0)
+            .map((item) => item.inventoryItemId)
+        ]);
         api<{ items: any[] }>(`/events/${props.eventId}/cross-sells/${params.inventoryItemId}`)
           .then((r) => {
-            if (r.items && r.items.length > 0) {
-              setCrossSells({ sourceItem: params.item, items: r.items });
+            const missingCrossSells = (r.items ?? []).filter((item: any) => {
+              const itemId = item.itemId ?? item.id;
+              return !presentItemIds.has(itemId);
+            });
+            if (missingCrossSells.length > 0) {
+              setCrossSells({ sourceItem: params.item, items: missingCrossSells });
             }
           })
           .catch(() => {});

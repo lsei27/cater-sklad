@@ -146,6 +146,10 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - Názvy PDF souborů jsou sanitizované kvůli hlavičkám (ASCII safe).
 - **Inventory Ledger Automation**: Endpointy `/events/:id/issue` a `/events/:id/return-close` automaticky vytvářejí záznamy v ledgeru pro každý řádek položky, čímž zajišťují reálný přehled o stavu skladu.
 
+### Cross-sell doporučení
+- Jednorázový popup se souvisejícími položkami po přidání položky se smí zobrazit jen pro skutečně chybějící cross-sell.
+- Pokud už je cílová cross-sell položka v akci přidaná, popup se znovu nesmí otevřít jen proto, že další zdrojová položka má stejné doporučení.
+
 ### QR Kódy & Štítky
 Aplikace umožňuje generování fyzických štítků pro označení inventáře.
 - **Formát**: 50x30mm PDF štítek.
