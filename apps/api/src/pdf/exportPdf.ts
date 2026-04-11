@@ -347,9 +347,8 @@ export async function buildItemLabelPdf(item: { id: string; name: string; sku: s
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   
-  // QR Code
-  // Using the Item ID as the QR data for reliable scanning to the specific item
-  const qrData = item.sku || item.id;
+  // QR Code must stay stable forever, so labels always encode the immutable item ID.
+  const qrData = item.id;
   const qrBuffer = await QRCode.toBuffer(qrData, {
     margin: 1,
     width: 60, // size in pixels

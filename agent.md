@@ -154,6 +154,7 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 Aplikace umožňuje generování fyzických štítků pro označení inventáře.
 - **Formát**: 50x30mm PDF štítek.
 - **Obsah**: Název položky, SKU a QR kód s unikátním identifikátorem.
+- **Stabilita QR**: Vygenerovaný QR na štítku musí vždy obsahovat pouze interní neměnné `item.id`, ne `SKU` ani jiné editovatelné pole. Tím zůstává vytištěný QR kód trvale platný.
 - **Generování**: Knihovna `qrcode` na backendu v rámci služby `exportPdf.ts`.
 - **UI**: Tlačítko 🔳 **Štítek** v `InventoryPage` (dostupné pro role `admin` a `warehouse`).
 
