@@ -9,6 +9,7 @@ import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
+import { returnCloseTx } from "../services/returnClose.js";
 
 function safeFilename(value: string) {
   return value
@@ -919,147 +920,15 @@ export async function eventRoutes(app: FastifyInstance) {
       .parse(request.body);
 
     try {
-      const out = await app.prisma.$transaction(async (tx) => {
-        const [ev] = await tx.$queryRaw<{ status: string }[]>`
-          SELECT status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
-        `;
-        if (!ev) throw new Error("NOT_FOUND");
-        if (ev.status === "CLOSED") return { alreadyClosed: true };
-        if (ev.status !== "ISSUED") throw new Error("NOT_ISSUED");
-        
-        const changedLedgerItemIds: string[] = [];
-
-        const issuedItemIds = await tx.$queryRaw<Array<{ inventory_item_id: string }>>`
-          SELECT DISTINCT inventory_item_id::text AS inventory_item_id
-          FROM event_issues
-          WHERE event_id = ${params.id}::uuid
-        `;
-
-        if (issuedItemIds.length > 0) {
-          if (body.items.length === 0) throw new Error("ITEMS_REQUIRED");
-          const provided = new Set(body.items.map((i) => i.inventory_item_id));
-          const missing = issuedItemIds.map((r) => r.inventory_item_id).filter((id) => !provided.has(id));
-          if (missing.length > 0) throw new Error("ITEMS_INCOMPLETE");
-        }
-
-        const rows = body.items.map((i) => ({
+      const out = await app.prisma.$transaction((tx) =>
+        returnCloseTx({
+          tx,
           eventId: params.id,
-          inventoryItemId: i.inventory_item_id,
-          returnedQuantity: i.returned_quantity,
-          brokenQuantity: i.broken_quantity,
-          targetWarehouseId: i.target_warehouse_id,
-          returnedById: user.id,
-          idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "return"}:${params.id}:${i.inventory_item_id}`
-        }));
-        if (rows.length > 0) {
-          await tx.eventReturn.createMany({ data: rows, skipDuplicates: true });
-          
-          // Add Ledger entries for returned items
-          for (const row of rows) {
-            if (row.returnedQuantity > 0) {
-              await createInventoryLedgerEntry(tx, {
-                inventoryItemId: row.inventoryItemId,
-                deltaQuantity: row.returnedQuantity,
-                reason: LedgerReason.return,
-                eventId: params.id,
-                warehouseId: row.targetWarehouseId,
-                createdById: user.id,
-                note: "Vráceno z akce"
-              });
-            }
-            changedLedgerItemIds.push(row.inventoryItemId);
-          }
-        }
-
-        const totals = await tx.$queryRaw<
-          { inventory_item_id: string; issued: number; returned: number; broken: number }[]
-        >`
-          SELECT 
-            ids.inventory_item_id::text,
-            COALESCE(i.issued, 0)::int as issued,
-            COALESCE(r.returned, 0)::int as returned,
-            COALESCE(r.broken, 0)::int as broken
-          FROM (
-            SELECT DISTINCT inventory_item_id FROM event_issues WHERE event_id = ${params.id}::uuid
-            UNION
-            SELECT DISTINCT inventory_item_id FROM event_returns WHERE event_id = ${params.id}::uuid
-          ) ids
-          LEFT JOIN (
-            SELECT inventory_item_id, SUM(issued_quantity) as issued
-            FROM event_issues
-            WHERE event_id = ${params.id}::uuid AND type = 'issued'
-            GROUP BY inventory_item_id
-          ) i ON i.inventory_item_id = ids.inventory_item_id
-          LEFT JOIN (
-            SELECT inventory_item_id, SUM(returned_quantity) as returned, SUM(broken_quantity) as broken
-            FROM event_returns
-            WHERE event_id = ${params.id}::uuid
-            GROUP BY inventory_item_id
-          ) r ON r.inventory_item_id = ids.inventory_item_id
-        `;
-
-        for (const t of totals) {
-          const missing = Math.max(0, Number(t.issued) - Number(t.returned) - Number(t.broken));
-          const broken = Math.max(0, Number(t.broken));
-          
-          // Get the warehouse where it was supposed to be returned
-          const targetItem = body.items.find(i => i.inventory_item_id === t.inventory_item_id);
-          const warehouseId = targetItem?.target_warehouse_id;
-
-          if (broken > 0) {
-            await tx.eventIssue.create({
-              data: {
-                eventId: params.id,
-                inventoryItemId: t.inventory_item_id,
-                issuedQuantity: broken,
-                type: "broken",
-                warehouseId: warehouseId,
-                issuedById: user.id,
-                idempotencyKey: `breakage:${params.id}:${t.inventory_item_id}:${Date.now()}`
-              }
-            });
-            await createInventoryLedgerEntry(tx, {
-              inventoryItemId: t.inventory_item_id,
-              deltaQuantity: -broken,
-              reason: LedgerReason.breakage,
-              eventId: params.id,
-              warehouseId: warehouseId,
-              createdById: user.id,
-              note: "Rozbité při návratu"
-            });
-            changedLedgerItemIds.push(t.inventory_item_id);
-          }
-          if (missing > 0) {
-            await tx.eventIssue.create({
-              data: {
-                eventId: params.id,
-                inventoryItemId: t.inventory_item_id,
-                issuedQuantity: missing,
-                type: "missing",
-                warehouseId: warehouseId,
-                issuedById: user.id,
-                idempotencyKey: `missing:${params.id}:${t.inventory_item_id}:${Date.now()}`
-              }
-            });
-            await createInventoryLedgerEntry(tx, {
-              inventoryItemId: t.inventory_item_id,
-              deltaQuantity: -missing,
-              reason: LedgerReason.missing,
-              eventId: params.id,
-              warehouseId: warehouseId,
-              createdById: user.id,
-              note: "Chybějící při uzavření"
-            });
-            changedLedgerItemIds.push(t.inventory_item_id);
-          }
-        }
-
-        await tx.event.update({ where: { id: params.id }, data: { status: "CLOSED" } });
-        await tx.auditLog.create({
-          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "return_close", diffJson: { items: body.items } }
-        });
-        return { alreadyClosed: false, changedLedgerItemIds };
-      });
+          userId: user.id,
+          idempotencyKey: body.idempotency_key,
+          items: body.items
+        })
+      );
 
       if (!out.alreadyClosed) {
         sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "CLOSED" });
@@ -1074,6 +943,10 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "NOT_ISSUED") return httpError(reply, 409, "NOT_ISSUED", "Event není ve stavu ISSUED");
       if (e?.message === "ITEMS_REQUIRED") return httpError(reply, 409, "ITEMS_REQUIRED", "Pro uzavření je nutné vyplnit položky (vráceno/rozbito).");
       if (e?.message === "ITEMS_INCOMPLETE") return httpError(reply, 409, "ITEMS_INCOMPLETE", "Nechybí ti v uzavření některé položky z výdeje?");
+      if (e?.message === "DUPLICATE_ITEMS") return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v uzavření jen jednou.");
+      if (e?.message === "ITEMS_UNEXPECTED") return httpError(reply, 409, "ITEMS_UNEXPECTED", "Uzavření obsahuje položky, které nebyly vydané.");
+      if (e?.message === "ITEMS_EXCEED_ISSUED")
+        return httpError(reply, 409, "ITEMS_EXCEED_ISSUED", "Vrácené a rozbité množství nesmí být vyšší než skutečně vydané množství.");
       throw e;
     }
   });

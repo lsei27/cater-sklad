@@ -248,6 +248,25 @@ export default function WarehouseEventDetailPage() {
     setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
   };
 
+  const getIssuedQtyForItem = (inventoryItemId: string, fallbackQty: number) => {
+    return issueData.issuedMap.get(inventoryItemId) ?? fallbackQty;
+  };
+
+  const markItemsAsFullyReturned = (inventoryItemIds: string[]) => {
+    const ids = new Set(inventoryItemIds);
+    setRows((prev) =>
+      prev.map((row) =>
+        ids.has(row.inventory_item_id)
+          ? {
+              ...row,
+              returned: getIssuedQtyForItem(row.inventory_item_id, row.requested),
+              broken: 0
+            }
+          : row
+      )
+    );
+  };
+
   const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
     return (
@@ -569,7 +588,9 @@ export default function WarehouseEventDetailPage() {
                   checked={selectedIds.size === warehouseItems.length && warehouseItems.length > 0}
                   onChange={(e) => {
                     if (e.target.checked) {
-                      setSelectedIds(new Set(warehouseItems.map(i => i.inventoryItemId)));
+                      const allIds = warehouseItems.map((i) => i.inventoryItemId);
+                      setSelectedIds(new Set(allIds));
+                      markItemsAsFullyReturned(allIds);
                     } else {
                       setSelectedIds(new Set());
                     }
@@ -634,8 +655,12 @@ export default function WarehouseEventDetailPage() {
                                   checked={selectedIds.has(r.inventory_item_id)}
                                   onChange={(e) => {
                                     const next = new Set(selectedIds);
-                                    if (e.target.checked) next.add(r.inventory_item_id);
-                                    else next.delete(r.inventory_item_id);
+                                    if (e.target.checked) {
+                                      next.add(r.inventory_item_id);
+                                      markItemsAsFullyReturned([r.inventory_item_id]);
+                                    } else {
+                                      next.delete(r.inventory_item_id);
+                                    }
                                     setSelectedIds(next);
                                   }}
                                 />
