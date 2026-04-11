@@ -12,3 +12,6 @@ storage
 *.log
 .pnpm-store
 generated
+.venv
+venv
+.claude

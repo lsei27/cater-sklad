@@ -1330,8 +1330,6 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
   const [eventDate, setEventDate] = useState(props.event.eventDate ? new Date(props.event.eventDate).toISOString().slice(0, 10) : "");
   const [delivery, setDelivery] = useState(props.event.deliveryDatetime ? new Date(props.event.deliveryDatetime).toISOString().slice(0, 16) : "");
   const [pickup, setPickup] = useState(props.event.pickupDatetime ? new Date(props.event.pickupDatetime).toISOString().slice(0, 16) : "");
-  const [palletCount, setPalletCount] = useState<number | "">(props.event.palletCount ?? "");
-  const [totalWeight, setTotalWeight] = useState(props.event.totalWeight || "");
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -1346,9 +1344,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           notes: notes.trim() || null,
           event_date: eventDate ? new Date(eventDate).toISOString() : null,
           delivery_datetime: new Date(delivery).toISOString(),
-          pickup_datetime: new Date(pickup).toISOString(),
-          pallet_count: palletCount === "" ? null : Number(palletCount),
-          total_weight: totalWeight || null
+          pickup_datetime: new Date(pickup).toISOString()
         })
       });
       toast.success("Uloženo");
@@ -1398,14 +1394,6 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
         <label className="text-sm">
           Svoz
           <Input className="mt-1" type="datetime-local" value={pickup} onChange={(e) => setPickup(e.target.value)} />
-        </label>
-        <label className="text-sm">
-          Počet palet
-          <Input className="mt-1" type="number" min={0} value={palletCount} onChange={(e) => setPalletCount(e.target.value ? Number(e.target.value) : "")} />
-        </label>
-        <label className="text-sm">
-          Celková váha
-          <Input className="mt-1" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} />
         </label>
       </div>
       <div className="mt-6 flex justify-end gap-2">

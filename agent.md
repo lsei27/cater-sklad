@@ -113,6 +113,11 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
   - `Manuální výdej`: zachovává původní workflow s PDF checklistem a následným hromadným potvrzením výdeje.
   - `Digitální výdej`: skladník potvrzuje položky po jedné přímo v UI. Každá položka má dvoukrokový flow `Vydat` -> `Potvrdit`, a finální potvrzení celé akce je dostupné až po potvrzení všech položek.
 - **Backend výdeje** zůstává centralizovaný v `POST /events/:id/issue`; digitální UI pouze pošle explicitní seznam potvrzených položek.
+- **Palety a váha zadává až skladník při výdeji**:
+  - Event Manager tato pole nevyplňuje ani při založení, ani při editaci akce.
+  - Skladník při potvrzení výdeje zadává pouze `Počet palet`.
+  - `Celková váha` se nesmí zadávat ručně; dopočítává se automaticky z vydávaných položek podle `masterPackageQty` a `masterPackageWeight` ve skladu a ukládá se na akci jako provozní údaj z expedice.
+  - `masterPackageWeight` v databázi musí být uložené jen jako čisté číslo v kg bez jednotky (`12.5`, ne `12.5 kg`). Admin zápisy i importy se normalizují při uložení.
 - **Manuální PDF checklisty musí zůstat zachované**: `Otevřít checklist (Sklad / Kuchyň / Kompletní)` je stále podporovaný flow pro reálný provoz.
 
 ### Uzavření akce a návraty (`apps/api/src/services/returnClose.ts`)

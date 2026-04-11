@@ -25,6 +25,23 @@ type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty:
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 
+function parseWeightValue(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.replace(",", ".").trim();
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatWeightKg(value: number) {
+  const normalized = Math.round(value * 100) / 100;
+  return `${new Intl.NumberFormat("cs-CZ", {
+    minimumFractionDigits: normalized % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 2
+  }).format(normalized)} kg`;
+}
+
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
   const { id } = useParams();
@@ -57,6 +74,7 @@ export default function WarehouseEventDetailPage() {
   const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
+  const [issuePalletCount, setIssuePalletCount] = useState<number | "">("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const manager = managerLabel(event?.createdBy);
 
@@ -118,6 +136,10 @@ export default function WarehouseEventDetailPage() {
   }, [event?.status]);
 
   useEffect(() => {
+    setIssuePalletCount(event?.palletCount ?? "");
+  }, [event?.palletCount]);
+
+  useEffect(() => {
     setDigitalIssueStates((prev) => {
       const next: Record<string, DigitalIssueState> = {};
       for (const item of warehouseItems) {
@@ -133,6 +155,17 @@ export default function WarehouseEventDetailPage() {
       return [r.inventoryItemId, imageUrl] as const;
     });
     return new Map<string, string | null>(entries);
+  }, [event?.reservations]);
+
+  const itemPackagingById = useMemo(() => {
+    const entries = (event?.reservations ?? []).map((r: any) => [
+      r.inventoryItemId,
+      {
+        masterPackageQty: r.item?.masterPackageQty ?? null,
+        masterPackageWeight: r.item?.masterPackageWeight ?? null
+      }
+    ] as const);
+    return new Map<string, { masterPackageQty: number | null; masterPackageWeight: string | null }>(entries);
   }, [event?.reservations]);
 
   useEffect(() => {
@@ -245,6 +278,23 @@ export default function WarehouseEventDetailPage() {
       allConfirmed: total > 0 && confirmed === total
     };
   }, [digitalIssueStates, warehouseItems]);
+
+  const computedIssueWeightLabel = useMemo(() => {
+    const itemsForWeight =
+      issueMode === "digital"
+        ? rows.filter((row) => (digitalIssueStates[row.inventory_item_id] ?? "idle") === "confirmed")
+        : rows;
+
+    const totalKg = itemsForWeight.reduce((sum, row) => {
+      const packaging = itemPackagingById.get(row.inventory_item_id);
+      const packageWeightKg = parseWeightValue(packaging?.masterPackageWeight);
+      const packageQty = packaging?.masterPackageQty ?? null;
+      if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
+      return sum + Math.ceil(row.requested / packageQty) * packageWeightKg;
+    }, 0);
+
+    return totalKg > 0 ? formatWeightKg(totalKg) : "Nelze dopočítat";
+  }, [digitalIssueStates, issueMode, itemPackagingById, rows]);
 
   const updateDigitalIssueState = (inventoryItemId: string, nextState: DigitalIssueState) => {
     setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
@@ -925,6 +975,7 @@ export default function WarehouseEventDetailPage() {
               body: JSON.stringify({ 
                 idempotency_key: `${issueMode ?? "issue"}:${Date.now()}`,
                 warehouse_id: issueWarehouseId || undefined,
+                pallet_count: issuePalletCount === "" ? null : Number(issuePalletCount),
                 items:
                   issueMode === "digital"
                     ? rows
@@ -943,16 +994,41 @@ export default function WarehouseEventDetailPage() {
           }
         }}
       >
-        <div className="mt-4">
-          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">Vydáváno ze skladu (nepovinné)</label>
-          <select 
-            className="block w-full rounded-md border-slate-300 py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
-            value={issueWarehouseId}
-            onChange={(e) => setIssueWarehouseId(e.target.value)}
-          >
-            <option value="">(Výchozí / Neurčeno)</option>
-            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+        <div className="mt-4 space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-gray-500">
+              Vydáváno ze skladu (nepovinné)
+            </span>
+            <select 
+              className="block w-full rounded-md border border-slate-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500"
+              value={issueWarehouseId}
+              onChange={(e) => setIssueWarehouseId(e.target.value)}
+            >
+              <option value="">(Výchozí / Neurčeno)</option>
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">
+              Počet palet
+              <Input
+                className="mt-1"
+                type="number"
+                min={0}
+                value={issuePalletCount}
+                onChange={(e) => setIssuePalletCount(e.target.value ? Number(e.target.value) : "")}
+                placeholder="Např. 3"
+              />
+            </label>
+            <label className="text-sm">
+              Celková váha
+              <Input
+                className="mt-1"
+                value={computedIssueWeightLabel}
+                disabled
+              />
+            </label>
+          </div>
         </div>
       </ConfirmDialog>
 

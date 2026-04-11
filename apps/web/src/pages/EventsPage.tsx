@@ -339,8 +339,6 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
   const [eventDate, setEventDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
   const [delivery, setDelivery] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
   const [pickup, setPickup] = useState(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16));
-  const [palletCount, setPalletCount] = useState<number | "">("");
-  const [totalWeight, setTotalWeight] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -365,9 +363,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
                   notes: notes.trim() || null,
                   event_date: eventDate ? new Date(eventDate).toISOString() : null,
                   delivery_datetime: new Date(delivery).toISOString(),
-                  pickup_datetime: new Date(pickup).toISOString(),
-                  pallet_count: palletCount === "" ? null : Number(palletCount),
-                  total_weight: totalWeight || null
+                  pickup_datetime: new Date(pickup).toISOString()
                 })
               });
               toast.success("Akce vytvořena");
@@ -412,14 +408,6 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
           <label className="text-sm">
             Svoz
             <Input className="mt-1" type="datetime-local" value={pickup} onChange={(e) => setPickup(e.target.value)} />
-          </label>
-          <label className="text-sm">
-            Počet palet
-            <Input className="mt-1" type="number" min={0} value={palletCount} onChange={(e) => setPalletCount(e.target.value ? Number(e.target.value) : "")} placeholder="Např. 3" />
-          </label>
-          <label className="text-sm">
-            Celková váha
-            <Input className="mt-1" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} placeholder="Např. 450 kg" />
           </label>
           {error ? <div className="md:col-span-2 text-sm text-red-600">{error}</div> : null}
           <div className="md:col-span-2 flex gap-2">

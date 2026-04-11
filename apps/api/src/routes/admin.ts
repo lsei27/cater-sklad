@@ -21,6 +21,17 @@ function parseBool(v: unknown) {
   return undefined;
 }
 
+function normalizeDecimalString(v: unknown) {
+  if (v === undefined || v === null) return null;
+  const raw = String(v).trim();
+  if (!raw) return null;
+  const normalized = raw.replace(",", ".").replace(/[^0-9.]+/g, "");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return String(parsed);
+}
+
 const EmailSchema = z
   .string()
   .trim()
@@ -277,7 +288,7 @@ export async function adminRoutes(app: FastifyInstance) {
         cross_sell_item_ids: z.array(z.string().uuid()).optional()
       })
       .parse(request.body);
-    const item = await app.prisma.$transaction(async (tx) => {
+        const item = await app.prisma.$transaction(async (tx) => {
       const created = await tx.inventoryItem.create({
         data: {
           name: body.name,
@@ -289,7 +300,7 @@ export async function adminRoutes(app: FastifyInstance) {
           notes: body.notes ?? null,
           returnDelayDays: body.return_delay_days ?? 0,
           masterPackageQty: body.master_package_qty ?? null,
-          masterPackageWeight: body.master_package_weight ?? null,
+          masterPackageWeight: normalizeDecimalString(body.master_package_weight),
           volume: body.volume ?? null,
           plateDiameter: body.plate_diameter ?? null,
           warehouseId: body.warehouse_id ?? null,
@@ -350,7 +361,7 @@ export async function adminRoutes(app: FastifyInstance) {
           ...(body.notes !== undefined ? { notes: body.notes } : {}),
           ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
           ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
-          ...(body.master_package_weight !== undefined ? { masterPackageWeight: body.master_package_weight } : {}),
+          ...(body.master_package_weight !== undefined ? { masterPackageWeight: normalizeDecimalString(body.master_package_weight) } : {}),
           ...(body.volume !== undefined ? { volume: body.volume } : {}),
           ...(body.plate_diameter !== undefined ? { plateDiameter: body.plate_diameter } : {}),
           ...(body.warehouse_id !== undefined ? { warehouseId: body.warehouse_id } : {}),
@@ -567,7 +578,7 @@ export async function adminRoutes(app: FastifyInstance) {
             // New fields
             const masterPackageQtyRaw = (r["master package"] ?? r.master_package_qty ?? "").toString().trim();
             const masterPackageQty = masterPackageQtyRaw ? (Number(masterPackageQtyRaw) || null) : null;
-            const masterPackageWeight = (r["master package weight"] ?? r.master_package_weight ?? "").toString().trim() || null;
+            const masterPackageWeight = normalizeDecimalString(r["master package weight"] ?? r.master_package_weight);
             const volume = (r["volume of glasses"] ?? r.volume ?? "").toString().trim() || null;
             const plateDiameter = (r["plate diameter"] ?? r.plate_diameter ?? "").toString().trim() || null;
             const inventoryName = (r["Inventory"] ?? r.warehouse ?? "").toString().trim() || null;

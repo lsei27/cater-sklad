@@ -47,6 +47,23 @@ function compareByCategoryParentName(a: any, b: any) {
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
 }
 
+function parseWeightValue(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.replace(",", ".").trim();
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatWeightKg(value: number) {
+  const normalized = Math.round(value * 100) / 100;
+  return `${new Intl.NumberFormat("cs-CZ", {
+    minimumFractionDigits: normalized % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 2
+  }).format(normalized)} kg`;
+}
+
 const EventCreateSchema = z.object({
   name: z.string().min(1),
   location: z.string().min(1),
@@ -54,9 +71,7 @@ const EventCreateSchema = z.object({
   notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime(),
-  pickup_datetime: z.string().datetime(),
-  pallet_count: z.number().int().min(0).optional().nullable(),
-  total_weight: z.string().optional().nullable()
+  pickup_datetime: z.string().datetime()
 });
 
 const EventUpdateSchema = z.object({
@@ -66,9 +81,7 @@ const EventUpdateSchema = z.object({
   notes: z.string().optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime().optional(),
-  pickup_datetime: z.string().datetime().optional(),
-  pallet_count: z.number().int().min(0).optional().nullable(),
-  total_weight: z.string().optional().nullable()
+  pickup_datetime: z.string().datetime().optional()
 });
 
 export async function eventRoutes(app: FastifyInstance) {
@@ -151,8 +164,6 @@ export async function eventRoutes(app: FastifyInstance) {
         eventDate: body.event_date ? new Date(body.event_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
-        palletCount: body.pallet_count ?? null,
-        totalWeight: body.total_weight ?? null,
         createdById: user.id
       }
     });
@@ -196,9 +207,7 @@ export async function eventRoutes(app: FastifyInstance) {
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
         ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
         ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
-        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {}),
-        ...(body.pallet_count !== undefined ? { palletCount: body.pallet_count } : {}),
-        ...(body.total_weight !== undefined ? { totalWeight: body.total_weight } : {})
+        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})
       }
     });
 
@@ -806,6 +815,7 @@ export async function eventRoutes(app: FastifyInstance) {
       .object({
         idempotency_key: z.string().min(8).optional(),
         warehouse_id: z.string().uuid().optional(),
+        pallet_count: z.number().int().min(0).optional().nullable(),
         items: z
           .array(
             z.object({
@@ -856,6 +866,23 @@ export async function eventRoutes(app: FastifyInstance) {
         const itemsToIssue = defaultItems.filter((i) => i.issued_quantity > 0);
         if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
 
+        const inventoryItems = itemsToIssue.length
+          ? await tx.inventoryItem.findMany({
+              where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
+              select: { id: true, masterPackageQty: true, masterPackageWeight: true }
+            })
+          : [];
+        const itemMetaById = new Map(
+          inventoryItems.map((item) => [item.id, item] as const)
+        );
+        const computedWeightKg = itemsToIssue.reduce((sum, item) => {
+          const meta = itemMetaById.get(item.inventory_item_id);
+          const packageWeightKg = parseWeightValue(meta?.masterPackageWeight);
+          const packageQty = meta?.masterPackageQty ?? null;
+          if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
+          return sum + Math.ceil(item.issued_quantity / packageQty) * packageWeightKg;
+        }, 0);
+
         const rows = itemsToIssue.map((i) => ({
           eventId: params.id,
           inventoryItemId: i.inventory_item_id,
@@ -879,9 +906,26 @@ export async function eventRoutes(app: FastifyInstance) {
           });
         }
 
-        const updated = await tx.event.update({ where: { id: params.id }, data: { status: "ISSUED" } });
+        const updated = await tx.event.update({
+          where: { id: params.id },
+          data: {
+            status: "ISSUED",
+            ...(body.pallet_count !== undefined ? { palletCount: body.pallet_count } : {}),
+            totalWeight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null
+          }
+        });
         await tx.auditLog.create({
-          data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "issue", diffJson: { count: rows.length } }
+          data: {
+            actorUserId: user.id,
+            entityType: "event",
+            entityId: params.id,
+            action: "issue",
+            diffJson: {
+              count: rows.length,
+              pallet_count: body.pallet_count ?? null,
+              total_weight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null
+            }
+          }
         });
         return { event: updated };
       });

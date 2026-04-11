@@ -537,8 +537,8 @@ function EditItemModal({ open, onOpenChange, item, allItems, parents, warehouses
           <Input className="mt-1" type="number" min={1} value={masterPackageQty} onChange={e => setMasterPackageQty(e.target.value)} placeholder={`Počet ${unit || "ks"}`} />
         </label>
         <label className="text-sm">
-          Hmotnost balení
-          <Input className="mt-1" value={masterPackageWeight} onChange={e => setMasterPackageWeight(e.target.value)} placeholder="Např. 12.5" />
+          Hmotnost balení (kg, bez jednotky)
+          <Input className="mt-1" inputMode="decimal" value={masterPackageWeight} onChange={e => setMasterPackageWeight(e.target.value)} placeholder="Např. 12.5" />
         </label>
         <label className="text-sm">
           Objem
