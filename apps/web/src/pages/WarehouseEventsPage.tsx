@@ -30,7 +30,7 @@ export default function WarehouseEventsPage() {
   const [filters, setFilters] = useState<EventFiltersData>({
     year: new Date().getFullYear(),
   });
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
 
   const load = async () => {
     setLoading(true);
@@ -130,13 +130,13 @@ export default function WarehouseEventsPage() {
         <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
       </div>
 
-      <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="grid grid-cols-2 gap-2 sm:flex">
           <Button
             size="sm"
             variant={viewMode === "grid" ? "primary" : "secondary"}
             onClick={() => setViewMode("grid")}
-            className="flex items-center gap-1"
+            className="flex items-center justify-center gap-1"
           >
             <Icons.Grid className="h-4 w-4" /> Dlaždice
           </Button>
@@ -144,12 +144,12 @@ export default function WarehouseEventsPage() {
             size="sm"
             variant={viewMode === "list" ? "primary" : "secondary"}
             onClick={() => setViewMode("list")}
-            className="flex items-center gap-1"
+            className="flex items-center justify-center gap-1"
           >
             <Icons.List className="h-4 w-4" /> Seznam
           </Button>
         </div>
-        <div className="text-xs text-gray-500 font-medium">
+        <div className="text-xs text-gray-500 font-medium sm:text-right">
           {events.length} {events.length === 1 ? 'akce' : events.length < 5 && events.length > 0 ? 'akce' : 'akcí'}
         </div>
       </div>
@@ -255,9 +255,9 @@ export default function WarehouseEventsPage() {
                   return (
                     <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
                       <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
-                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                        <CardContent className="p-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-1">
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
                               <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
                                 {e.name}
                               </h3>
@@ -270,7 +270,7 @@ export default function WarehouseEventsPage() {
                                 </span>
                               ) : null}
                             </div>
-                            <div className="flex items-center gap-4 text-xs text-slate-500">
+                            <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                               <div className="flex items-center gap-1">
                                 <Icons.MapPin className="h-3 w-3" /> {e.location}
                               </div>
@@ -284,7 +284,9 @@ export default function WarehouseEventsPage() {
                               </div>
                             ) : null}
                           </div>
-                          <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
+                          <div className="mt-3 flex justify-end">
+                            <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
+                          </div>
                         </CardContent>
                       </Card>
                     </Link>

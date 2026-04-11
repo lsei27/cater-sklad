@@ -90,6 +90,10 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - **Automatický deployment**: Každý push do větve `main` spustí build a deploy.
 - **Databáze**: Spravovaná Postgres instance na **Supabase** (přesunuto z Renderu). Backend se připojuje přes Session pooler (IPv4 kompatibilní, connection string v `prisma.config.ts`).
 - **Migrace**: Při buildu se spouští `npx prisma migrate deploy`.
+- **Důležité - nepoužívat holé `pnpm` v Render dashboard commandech**: Render umí spadnout na chybě `Failed to switch pnpm to v10.26.1 ... ENOENT`, pokud je v dashboardu přímo `pnpm ...`. Bezpečná varianta je spouštět build/start přes `npm run ...` wrappery z root `package.json`.
+  - Web build: `npm run render:web-build`
+  - API build: `npm run render:api-build`
+  - API start: `npm run render:api-start`
 
 ### Vercel
 - Frontend lze nasazovat i na Vercel (build: `apps/web`, používá `vercel.json`).
@@ -103,6 +107,31 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - **`availability.ts`**: Počítá dostupnost položky v daném čase. Bere v úvahu celkový fyzický stav a existující rezervace v kolizních časech.
 - **`reserve.ts`**: Zajišťuje transakční zápis rezervací. Obsahuje logiku pro zamykání řádků (`pg_advisory_xact_lock`), aby nedošlo k overbookingu.
 - **Automatický export po změně**: Pokud je akce `SENT_TO_WAREHOUSE` a kuchyň už potvrdila, přidání položek Event Managerem vytvoří nový export (verze se zvyšuje) a přes SSE se propaguje změna.
+
+### Výdej skladu (`apps/web/src/pages/WarehouseEventDetailPage.tsx`, `apps/api/src/routes/events.ts`)
+- **Dva režimy výdeje**:
+  - `Manuální výdej`: zachovává původní workflow s PDF checklistem a následným hromadným potvrzením výdeje.
+  - `Digitální výdej`: skladník potvrzuje položky po jedné přímo v UI. Každá položka má dvoukrokový flow `Vydat` -> `Potvrdit`, a finální potvrzení celé akce je dostupné až po potvrzení všech položek.
+- **Backend výdeje** zůstává centralizovaný v `POST /events/:id/issue`; digitální UI pouze pošle explicitní seznam potvrzených položek.
+- **Manuální PDF checklisty musí zůstat zachované**: `Otevřít checklist (Sklad / Kuchyň / Kompletní)` je stále podporovaný flow pro reálný provoz.
+
+### Uzavření akce a návraty (`apps/api/src/services/returnClose.ts`)
+- **Hlavní invariant skladu**: pokud se nic nerozbije a nic nechybí, musí se po uzavření vrátit přesně tolik kusů, kolik bylo skutečně vydáno.
+- **Backend nesmí dopočítávat „kreativně“**:
+  - vychází pouze ze skutečně vydaného množství v `event_issues` typu `issued`
+  - odmítne položky, které vůbec nebyly vydané
+  - odmítne `returned + broken`, pokud je to víc než skutečně vydané množství
+  - odmítne nekompletní uzavření, pokud některá vydaná položka chybí v payloadu
+- **Ledger logika při uzavření**:
+  - `+returned_quantity` vrací kusy zpět na sklad
+  - `-broken_quantity` odečítá rozbité kusy
+  - `-missing_quantity` odečítá chybějící kusy
+- **UI návratů je výjimkové, ne ruční přepis celého stavu**:
+  - výchozí předpoklad je, že se vše vrátilo
+  - skladník zadává pouze `Rozbité` a `Ztracené / chybí`
+  - `Vráceno automaticky = vydáno - rozbité - ztracené`
+  - checkbox `Vybrat vše` a jednotlivé checkboxy u položek předvyplní „vše vráceno“, tj. nulují ztráty/poškození
+- **Integrační testy**: `apps/api/test/return-close.integration.test.ts` pokrývá přesné obnovení skladu a zákaz pře-vrácení nad skutečně vydané množství.
 
 ### PDF Exporty (`apps/api/src/pdf/exportPdf.ts`)
 - Generuje kompaktní tabulku pro skladníky.
@@ -124,11 +153,18 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 ## 🔐 Bezpečnost & Role
 - **Admin**: Úplný přístup (uživatelé, kategorie, importy).
 - **Event Manager**: Vytváří akce, spravuje položky jen ve svých akcích; může upravovat položky i po potvrzení kuchyně (dokud není ISSUED/CLOSED/CANCELLED). Akce může pouze rušit (jen svoje), mazání je jen pro admina.
+  - **Může potvrdit kuchyň i bez role `chef`**: v detailu své akce může použít stejné potvrzení kuchyně jako kuchař. Tím potvrdí kuchyňské vybavení a připraví akci k vydání skladníkem.
 - **Chef**: Má přístup pouze k položkám v kategorii "Kuchyň". Potvrzuje svou část akce.
 - **Warehouse**: Vidí seznam akcí k vydání/svozu, značí vydání a návraty.
   - **Defaultní výpis skladu**: Hlavní seznam skladu (`/warehouse`) implicitně zahrnuje i `DRAFT` a `READY_FOR_WAREHOUSE`, nejen `SENT_TO_WAREHOUSE` / `ISSUED` / `CLOSED`, aby byly vidět i rozpracované akce bez ručního filtrování na „Koncept“.
   - **Načítání všech stavů ve skladu**: `WarehouseEventsPage` při volbě „Všechny stavy“ explicitně načítá jednotlivé statusy separátně a výsledky skládá na frontendu. Tím není závislá na backendovém default filtru pro warehouse roli a řazení/sekce odpovídají hlavní stránce akcí.
   - **Katalog a sklady**: Role `warehouse` může stejně jako admin spravovat položky (`/settings/items`), spouštět CSV import položek a upravovat fyzické sklady (`/settings/warehouses`).
+  - **Mobile/tablet-first je povinný požadavek**: Veškeré skladové obrazovky a flow pro vydání / návraty musí být navrhované primárně pro tablet a mobil v reálném provozu.
+    - skladník nesmí přehlédnout kritickou informaci ani primární akci
+    - klíčová tlačítka a stavy musí být viditelné bez složitého scrollování do stran
+    - formuláře musí být použitelné dotykem, s dostatečně velkými klikacími plochami
+    - pokud vzniká nový skladový flow, je nutné ho kontrolovat hlavně na malých šířkách; desktop je až druhotný
+    - skladové UI má preferovat jednoduché výjimkové zadávání a jasné potvrzovací kroky před hustými tabulkami a komplexními formuláři
 
 ---
 

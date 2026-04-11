@@ -39,8 +39,8 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
     ];
 
     return (
-        <div className="flex flex-wrap gap-2">
-            <div className="w-full sm:w-48">
+        <div className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-[12rem_10rem_8rem_auto] xl:items-center">
+            <div className="w-full">
                 <Select
                     value={filters.status || ""}
                     onChange={(e) => onChange({ ...filters, status: e.target.value || undefined })}
@@ -54,7 +54,7 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
                 </Select>
             </div>
 
-            <div className="w-full sm:w-40">
+            <div className="w-full">
                 <Select
                     value={filters.month || ""}
                     onChange={(e) => onChange({ ...filters, month: e.target.value ? Number(e.target.value) : undefined })}
@@ -68,7 +68,7 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
                 </Select>
             </div>
 
-            <div className="w-full sm:w-32">
+            <div className="w-full">
                 <Select
                     value={filters.year || ""}
                     onChange={(e) => onChange({ ...filters, year: e.target.value ? Number(e.target.value) : undefined })}
@@ -83,7 +83,7 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
             </div>
 
             {["admin", "event_manager"].includes(activeRole) && (
-                <label className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                <label className="flex min-h-10 items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
                     <input
                         type="checkbox"
                         className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"

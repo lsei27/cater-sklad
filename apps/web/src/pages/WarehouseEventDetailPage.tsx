@@ -337,7 +337,7 @@ export default function WarehouseEventDetailPage() {
 
       <Card>
         <CardContent>
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold">{event.name}</div>
               {manager ? (
@@ -378,16 +378,16 @@ export default function WarehouseEventDetailPage() {
                 <div className="mt-2 text-xs text-slate-500">Export verze: v{snapshot.event.version}</div>
               ) : null}
             </div>
-            <div className="shrink-0 text-right">
+            <div className="flex flex-wrap items-start gap-2 sm:shrink-0 sm:flex-col sm:items-end sm:text-right">
               <Badge className={statusBadgeClass(event.status)}>
                 {statusLabel(event.status)}
               </Badge>
               {event.chefConfirmedAt ? (
-                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-green-700">
+                <div className="flex items-center gap-1 text-[10px] font-medium text-green-700 sm:mt-1 sm:justify-end">
                   <span>✓ Kuchyň potvrzena</span>
                 </div>
               ) : (
-                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-medium text-amber-700">
+                <div className="flex items-center gap-1 text-[10px] font-medium text-amber-700 sm:mt-1 sm:justify-end">
                   <span>⏲ Čeká na kuchyň</span>
                 </div>
               )}
@@ -587,8 +587,8 @@ export default function WarehouseEventDetailPage() {
           <div className="mt-1 text-sm text-slate-600">Požadované množství je z posledního exportu.</div>
           
           {event?.status === "ISSUED" && warehouseItems.length > 0 && (
-            <div className="mt-4 flex flex-wrap items-center gap-4 bg-slate-50 p-2 rounded-xl border border-slate-100">
-              <div className="flex items-center gap-2">
+            <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+              <div className="flex min-h-10 items-center gap-2">
                 <input 
                   type="checkbox"
                   className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
@@ -607,10 +607,10 @@ export default function WarehouseEventDetailPage() {
               </div>
 
               {selectedIds.size > 0 && warehouses.length > 0 && (
-                <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                <div className="flex flex-col gap-2 sm:border-l sm:border-slate-200 sm:pl-4">
                   <span className="text-xs font-semibold text-slate-600">Hromadně vrátit na:</span>
                   <select 
-                    className="block rounded-md border-slate-300 py-1 pl-2 pr-8 text-xs focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
+                    className="block min-h-10 w-full rounded-md border border-slate-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:w-auto sm:min-w-48 sm:py-1 sm:pl-2 sm:text-xs"
                     defaultValue=""
                     onChange={(e) => {
                       const wid = e.target.value || undefined;
@@ -655,7 +655,7 @@ export default function WarehouseEventDetailPage() {
                           "rounded-2xl border p-3 transition-colors",
                           selectedIds.has(r.inventory_item_id) ? "border-purple-200 bg-purple-50/30" : "border-slate-200"
                         )}>
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="flex min-w-0 items-start gap-3">
                               {event.status === "ISSUED" && (
                                 <input 
@@ -696,7 +696,7 @@ export default function WarehouseEventDetailPage() {
                                   </div>
                               </div>
                             </div>
-                            <div className="w-20 shrink-0 flex justify-end">
+                            <div className="flex justify-start sm:w-28 sm:shrink-0 sm:justify-end">
                               <Badge tone={variance > 0 ? "warn" : "ok"}>
                                 {variance > 0 ? `Odchylka: ${variance}` : "V pořádku"}
                               </Badge>
@@ -780,7 +780,7 @@ export default function WarehouseEventDetailPage() {
 
                           {event.status === "ISSUED" ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              <label className="text-xs">
+                              <label className="text-xs col-span-2 sm:col-span-1">
                                 Vráceno automaticky
                                 <Input
                                   className="mt-1"
@@ -827,7 +827,7 @@ export default function WarehouseEventDetailPage() {
                               <label className="text-xs col-span-2 sm:col-span-1">
                                 Sklad vrácení
                                 <select 
-                                  className="mt-1 block w-full rounded-md border-slate-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 border bg-white"
+                                  className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500"
                                   value={r.target_warehouse_id || ""}
                                   onChange={(e) => {
                                     const v = e.target.value || undefined;
@@ -844,13 +844,13 @@ export default function WarehouseEventDetailPage() {
                           {existingBlocks.length > 0 && (
                             <div className="mt-3 space-y-1">
                               {existingBlocks.map(b => (
-                                <div key={b.id} className="flex items-center justify-between text-xs rounded border border-purple-200 bg-purple-50 px-2 py-1.5 text-purple-800">
-                                  <div>
+                                <div key={b.id} className="flex flex-col gap-2 rounded border border-purple-200 bg-purple-50 px-2 py-2 text-xs text-purple-800 sm:flex-row sm:items-center sm:justify-between sm:py-1.5">
+                                  <div className="pr-2">
                                     <span className="font-semibold">{b.blockedQuantity} {r.unit}</span> blokováno do {new Date(b.blockedUntil).toLocaleDateString("cs-CZ")}
                                     {b.note ? <span className="ml-2 block text-purple-600 sm:inline italic">({b.note})</span> : null}
                                   </div>
                                   <button
-                                    className="p-1 hover:text-red-600 transition-colors"
+                                    className="self-end rounded p-1 hover:text-red-600 transition-colors sm:self-auto"
                                     onClick={async () => {
                                       if (confirm("Opravdu zrušit tuto manuální blokaci?")) {
                                         try {
