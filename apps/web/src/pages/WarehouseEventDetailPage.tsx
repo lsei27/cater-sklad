@@ -22,6 +22,8 @@ type Snapshot = {
 };
 
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string };
+type IssueMode = "manual" | "digital";
+type DigitalIssueState = "idle" | "armed" | "confirmed";
 
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
@@ -51,6 +53,8 @@ export default function WarehouseEventDetailPage() {
   const [blockQty, setBlockQty] = useState("");
   const [blockUntil, setBlockUntil] = useState("");
   const [blockNote, setBlockNote] = useState("");
+  const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
+  const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const manager = managerLabel(event?.createdBy);
@@ -105,6 +109,22 @@ export default function WarehouseEventDetailPage() {
     if (fromEvent.length > 0) return fromEvent;
     return snapshotItems as WarehouseItem[];
   }, [event?.warehouseItems, snapshotItems]);
+
+  useEffect(() => {
+    if (event?.status !== "SENT_TO_WAREHOUSE") {
+      setIssueMode(null);
+    }
+  }, [event?.status]);
+
+  useEffect(() => {
+    setDigitalIssueStates((prev) => {
+      const next: Record<string, DigitalIssueState> = {};
+      for (const item of warehouseItems) {
+        next[item.inventoryItemId] = prev[item.inventoryItemId] ?? "idle";
+      }
+      return next;
+    });
+  }, [warehouseItems]);
 
   const imageByItemId = useMemo(() => {
     const entries = (event?.reservations ?? []).map((r: any) => {
@@ -208,6 +228,25 @@ export default function WarehouseEventDetailPage() {
     sections.forEach((section) => section.items.sort(compareByCategoryParentName));
     return sections;
   }, [rows]);
+
+  const digitalIssueSummary = useMemo(() => {
+    let confirmed = 0;
+    for (const item of warehouseItems) {
+      const state = digitalIssueStates[item.inventoryItemId] ?? "idle";
+      if (state === "confirmed") confirmed += 1;
+    }
+    const total = warehouseItems.length;
+    return {
+      total,
+      confirmed,
+      remaining: Math.max(0, total - confirmed),
+      allConfirmed: total > 0 && confirmed === total
+    };
+  }, [digitalIssueStates, warehouseItems]);
+
+  const updateDigitalIssueState = (inventoryItemId: string, nextState: DigitalIssueState) => {
+    setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
+  };
 
   const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
@@ -344,40 +383,6 @@ export default function WarehouseEventDetailPage() {
             </div>
           ) : null}
 
-          {snapshot?.event?.version ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  const token = localStorage.getItem("token");
-                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}`, "_blank");
-                }}
-              >
-                Otevřít Balení (Sklad)
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  const token = localStorage.getItem("token");
-                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}`, "_blank");
-                }}
-              >
-                Otevřít Balení (Kuchyň)
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  const token = localStorage.getItem("token");
-                  window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
-                }}
-              >
-                Otevřít Balení (Kompletní)
-              </Button>
-            </div>
-          ) : null}
         </CardContent>
       </Card>
       {event.status === "CLOSED" ? (
@@ -410,20 +415,142 @@ export default function WarehouseEventDetailPage() {
         <Card>
           <CardHeader>
             <div className="text-sm font-semibold">Akce</div>
-            <div className="mt-1 text-sm text-slate-600">Dvě hlavní operace pro sklad.</div>
+            <div className="mt-1 text-sm text-slate-600">
+              {event.status === "SENT_TO_WAREHOUSE"
+                ? "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."
+                : "Po vydání lze akci už jen uzavřít a zapsat vrácené / rozbité kusy."}
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-2 md:grid-cols-2">
-              <Button full disabled={issueDisabled} onClick={() => setConfirmIssue(true)}>
-                Potvrdit vydání
-              </Button>
-              <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
-                Uzavřít akci
-              </Button>
-            </div>
-            <div className="mt-2 text-xs text-slate-600">
-              Uzavření provede odepsání rozbitého a chybějícího množství.
-            </div>
+            {event.status === "SENT_TO_WAREHOUSE" ? (
+              <div className="space-y-4">
+                <div className="grid gap-2 md:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={issueDisabled}
+                    onClick={() => setIssueMode("manual")}
+                    className={cn(
+                      "rounded-2xl border p-4 text-left transition",
+                      issueMode === "manual"
+                        ? "border-indigo-300 bg-indigo-50 shadow-sm"
+                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
+                      issueDisabled && "cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Manuální výdej</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Otevře checklist v PDF, skladník si položky odškrtá na papíře a pak hromadně potvrdí výdej.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={issueDisabled}
+                    onClick={() => setIssueMode("digital")}
+                    className={cn(
+                      "rounded-2xl border p-4 text-left transition",
+                      issueMode === "digital"
+                        ? "border-emerald-300 bg-emerald-50 shadow-sm"
+                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
+                      issueDisabled && "cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Digitální výdej</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Položky se potvrzují v aplikaci po jedné. Každá položka má krok „Vydat“ a následné „Potvrdit“.
+                    </div>
+                  </button>
+                </div>
+
+                {issueMode === "manual" ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-sm font-semibold text-slate-900">Manuální checklist</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Nejprve otevři PDF podle potřeby, po fyzickém odškrtnutí položek potvrď celé vydání.
+                    </div>
+                    {snapshot?.event?.version ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const token = localStorage.getItem("token");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                          }}
+                        >
+                          Otevřít checklist (Sklad)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const token = localStorage.getItem("token");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                          }}
+                        >
+                          Otevřít checklist (Kuchyň)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const token = localStorage.getItem("token");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
+                          }}
+                        >
+                          Otevřít checklist (Kompletní)
+                        </Button>
+                      </div>
+                    ) : null}
+                    <div className="mt-4">
+                      <Button full disabled={issueDisabled} onClick={() => setConfirmIssue(true)}>
+                        Potvrdit manuální vydání
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {issueMode === "digital" ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Digitální checklist</div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          U každé položky nejprve klikni na „Vydat“, pak na „Potvrdit“. Finální tlačítko se zpřístupní až po potvrzení všech položek.
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                          Potvrzeno: {digitalIssueSummary.confirmed}/{digitalIssueSummary.total}
+                        </span>
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
+                          K potvrzení: {digitalIssueSummary.remaining}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <Button full disabled={issueDisabled || !digitalIssueSummary.allConfirmed} onClick={() => setConfirmIssue(true)}>
+                        Potvrdit digitální vydání
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {!issueMode ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    Vyber režim vydání. Manuální ponechá práci s PDF checklistem, digitální zobrazí odškrtávání přímo u položek níže.
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
+                  Uzavřít akci
+                </Button>
+                <div className="mt-2 text-xs text-slate-600">
+                  Uzavření provede odepsání rozbitého a chybějícího množství.
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}
@@ -433,7 +560,7 @@ export default function WarehouseEventDetailPage() {
           <div className="text-sm font-semibold">Položky</div>
           <div className="mt-1 text-sm text-slate-600">Požadované množství je z posledního exportu.</div>
           
-          {event?.status !== "CLOSED" && warehouseItems.length > 0 && (
+          {event?.status === "ISSUED" && warehouseItems.length > 0 && (
             <div className="mt-4 flex flex-wrap items-center gap-4 bg-slate-50 p-2 rounded-xl border border-slate-100">
               <div className="flex items-center gap-2">
                 <input 
@@ -500,7 +627,7 @@ export default function WarehouseEventDetailPage() {
                         )}>
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
-                              {event.status !== "CLOSED" && (
+                              {event.status === "ISSUED" && (
                                 <input 
                                   type="checkbox"
                                   className="mt-1 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
@@ -555,7 +682,62 @@ export default function WarehouseEventDetailPage() {
                             </div>
                           ) : null}
 
-                          {event.status !== "CLOSED" ? (
+                          {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
+                            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-emerald-900">
+                                  Digitální výdej
+                                </div>
+                                <Badge
+                                  tone={
+                                    (digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed"
+                                      ? "ok"
+                                      : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
+                                        ? "warn"
+                                        : "neutral"
+                                  }
+                                >
+                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed"
+                                    ? "Potvrzeno"
+                                    : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
+                                      ? "Čeká na potvrzení"
+                                      : "Nepotvrzeno"}
+                                </Badge>
+                              </div>
+                              <div className="mt-2 text-xs text-emerald-900/80">
+                                1. klikni na „Vydat“, 2. klikni na „Potvrdit“. Teprve pak je položka připravená k finálnímu potvrzení celé akce.
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  variant={(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "primary" : "secondary"}
+                                  onClick={() => {
+                                    const current = digitalIssueStates[r.inventory_item_id] ?? "idle";
+                                    updateDigitalIssueState(
+                                      r.inventory_item_id,
+                                      current === "idle" ? "armed" : "idle"
+                                    );
+                                  }}
+                                >
+                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle"
+                                    ? "Vydat"
+                                    : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
+                                      ? "Zrušit"
+                                      : "Vrátit zpět"}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={(digitalIssueStates[r.inventory_item_id] ?? "idle") !== "armed"}
+                                  onClick={() => updateDigitalIssueState(r.inventory_item_id, "confirmed")}
+                                >
+                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed" ? "Potvrzeno" : "Potvrdit"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {event.status === "ISSUED" ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                               <label className="text-xs">
                                 Vráceno
@@ -668,19 +850,36 @@ export default function WarehouseEventDetailPage() {
         open={confirmIssue}
         onOpenChange={setConfirmIssue}
         title="Potvrdit vydání?"
-        description="Výdej uzamkne akci pro běžné úpravy."
-        confirmText="Potvrdit výdej"
+        description={
+          issueMode === "digital"
+            ? "Digitální checklist je kompletní. Tímto krokem se skutečně odečtou položky ze skladu a akce se přepne do stavu Vydáno."
+            : "Výdej uzamkne akci pro běžné úpravy."
+        }
+        confirmText={issueMode === "digital" ? "Potvrdit digitální výdej" : "Potvrdit výdej"}
         onConfirm={async () => {
           if (!id) return;
+          if (issueMode === "digital" && !digitalIssueSummary.allConfirmed) {
+            toast.error("Nejdřív potvrď všechny položky v digitálním checklistu.");
+            return;
+          }
           try {
             await api(`/events/${id}/issue`, { 
               method: "POST", 
               body: JSON.stringify({ 
-                idempotency_key: `issue:${Date.now()}`,
-                warehouse_id: issueWarehouseId || undefined
+                idempotency_key: `${issueMode ?? "issue"}:${Date.now()}`,
+                warehouse_id: issueWarehouseId || undefined,
+                items:
+                  issueMode === "digital"
+                    ? rows
+                        .filter((row) => (digitalIssueStates[row.inventory_item_id] ?? "idle") === "confirmed")
+                        .map((row) => ({
+                          inventory_item_id: row.inventory_item_id,
+                          issued_quantity: row.requested
+                        }))
+                    : undefined
               }) 
             });
-            toast.success("Vydání potvrzeno");
+            toast.success(issueMode === "digital" ? "Digitální vydání potvrzeno" : "Vydání potvrzeno");
             await load();
           } catch (e: any) {
             toast.error(e?.error?.message ?? "Nepodařilo se potvrdit výdej.");
