@@ -652,16 +652,17 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/confirm-chef", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "chef"]);
+    requireRole(user.role, ["admin", "chef", "event_manager"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
       const result = await app.prisma.$transaction(async (tx) => {
         const row = await tx.event.findUnique({
           where: { id: params.id },
-          select: { id: true, status: true }
+          select: { id: true, status: true, createdById: true }
         });
         if (!row) throw new Error("NOT_FOUND");
+        if (user.role === "event_manager" && row.createdById !== user.id) throw new Error("FORBIDDEN");
         if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
 
         await tx.eventReservation.updateMany({
@@ -700,6 +701,7 @@ export async function eventRoutes(app: FastifyInstance) {
       return reply.send({ event: result.event });
     } catch (e: any) {
       if (e.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e.message === "FORBIDDEN") return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění potvrdit cizí akci.");
       if (e.message === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze potvrdit.");
       throw e;
     }

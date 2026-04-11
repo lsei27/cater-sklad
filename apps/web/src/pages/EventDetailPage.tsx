@@ -162,6 +162,7 @@ export default function EventDetailPage() {
   const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
   const canManageEvent = role === "admin" || (role === "event_manager" && isOwner);
+  const canConfirmKitchen = canChef || canManageEvent;
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
   const canAddItems =
@@ -380,14 +381,18 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
-            {canChef ? (
+            {canConfirmKitchen ? (
               <Button
                 variant={event.chefConfirmedAt ? "ghost" : "secondary"}
                 onClick={() => setChefConfirm(true)}
                 disabled={!canEditEvent}
               >
                 <Wand2 className="h-4 w-4" />
-                {event.chefConfirmedAt ? "Kuchyň potvrzena (znovu)" : "Potvrdit kuchyň"}
+                {event.chefConfirmedAt
+                  ? "Kuchyň potvrzena (znovu)"
+                  : role === "event_manager"
+                    ? "Potvrdit kuchyň a předat skladu"
+                    : "Potvrdit kuchyň"}
               </Button>
             ) : null}
 
@@ -748,7 +753,11 @@ export default function EventDetailPage() {
         open={chefConfirm}
         onOpenChange={setChefConfirm}
         title="Potvrdit kuchyň?"
-        description="Tím se akce označí jako připravená pro sklad. Rozpracované rezervace se potvrdí."
+        description={
+          role === "event_manager"
+            ? "Tím se kuchyňské vybavení potvrdí a akce se připraví k vydání skladníkem. Rozpracované rezervace se potvrdí."
+            : "Tím se akce označí jako připravená pro sklad. Rozpracované rezervace se potvrdí."
+        }
         confirmText="Potvrdit"
         onConfirm={async () => {
           if (!id) return;
