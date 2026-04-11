@@ -30,7 +30,7 @@ services:
           type: web
           name: cater-sklad-api
           property: url
-    buildCommand: npm install -g pnpm && pnpm install && pnpm --filter @cater-sklad/shared build && pnpm --filter @cater-sklad/web build
+    buildCommand: corepack enable && corepack prepare pnpm@10.26.1 --activate && pnpm install --frozen-lockfile --prod=false && pnpm --filter @cater-sklad/shared build && pnpm --filter @cater-sklad/web build
     publishDir: apps/web/dist
     routes:
       - type: rewrite
