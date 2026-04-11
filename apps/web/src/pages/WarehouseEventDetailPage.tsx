@@ -40,6 +40,7 @@ export default function WarehouseEventDetailPage() {
     requested: number; 
     returned: number; 
     broken: number; 
+    lost: number;
     total?: number; 
     parentCategory?: string; 
     category?: string;
@@ -137,7 +138,6 @@ export default function WarehouseEventDetailPage() {
   useEffect(() => {
     if (!warehouseItems.length) return;
 
-    // Aggregation of historical returns/issues from server
     const serverReturns = new Map<string, { returned: number, broken: number }>();
     if (event?.returns) {
       for (const r of event.returns) {
@@ -147,12 +147,13 @@ export default function WarehouseEventDetailPage() {
         serverReturns.set(r.inventoryItemId, current);
       }
     }
+    const serverLost = new Map<string, number>();
     if (event?.issues) {
-      // Missing items are recorded as issues with type "missing". 
-      // The warehouse UI check badge "Chybí" logic: Math.max(0, r.requested - r.returned - r.broken)
-      // So we don't need to add issues to "broken" unless they are specifically of type "broken".
-      // But actually, in the report we aggregated brokenQty from issues too.
-      // Let's stick to reconciliation of returned/broken from the actual return records first.
+      for (const issue of event.issues) {
+        if (issue.type === "missing") {
+          serverLost.set(issue.inventoryItemId, (serverLost.get(issue.inventoryItemId) || 0) + (issue.issuedQuantity || 0));
+        }
+      }
     }
 
     setRows(
@@ -165,6 +166,7 @@ export default function WarehouseEventDetailPage() {
           requested: i.qty,
           returned: s?.returned ?? 0,
           broken: s?.broken ?? 0,
+          lost: serverLost.get(i.inventoryItemId) ?? 0,
           parentCategory: (i as any).parentCategory || "",
           category: (i as any).category || "",
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
@@ -173,7 +175,7 @@ export default function WarehouseEventDetailPage() {
         };
       })
     );
-  }, [warehouseItems, event?.returns, imageByItemId]);
+  }, [warehouseItems, event?.returns, event?.issues, imageByItemId]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
@@ -252,6 +254,10 @@ export default function WarehouseEventDetailPage() {
     return issueData.issuedMap.get(inventoryItemId) ?? fallbackQty;
   };
 
+  const getComputedReturnedQty = (row: { inventory_item_id: string; requested: number; broken: number; lost: number }) => {
+    return Math.max(0, getIssuedQtyForItem(row.inventory_item_id, row.requested) - row.broken - row.lost);
+  };
+
   const markItemsAsFullyReturned = (inventoryItemIds: string[]) => {
     const ids = new Set(inventoryItemIds);
     setRows((prev) =>
@@ -260,7 +266,8 @@ export default function WarehouseEventDetailPage() {
           ? {
               ...row,
               returned: getIssuedQtyForItem(row.inventory_item_id, row.requested),
-              broken: 0
+              broken: 0,
+              lost: 0
             }
           : row
       )
@@ -639,7 +646,9 @@ export default function WarehouseEventDetailPage() {
                   </div>
                   <div className="space-y-3">
                     {section.items.map((r) => {
-                      const missing = Math.max(0, r.requested - r.returned - r.broken);
+                      const issuedQty = getIssuedQtyForItem(r.inventory_item_id, r.requested);
+                      const computedReturned = getComputedReturnedQty(r);
+                      const variance = r.broken + r.lost;
                       const existingBlocks = blocks.filter(b => b.inventoryItemId === r.inventory_item_id);
                       return (
                         <div key={r.inventory_item_id} className={cn(
@@ -688,7 +697,9 @@ export default function WarehouseEventDetailPage() {
                               </div>
                             </div>
                             <div className="w-20 shrink-0 flex justify-end">
-                              <Badge tone={missing > 0 ? "warn" : "ok"}>Chybí: {missing}</Badge>
+                              <Badge tone={variance > 0 ? "warn" : "ok"}>
+                                {variance > 0 ? `Odchylka: ${variance}` : "V pořádku"}
+                              </Badge>
                             </div>
                           </div>
 
@@ -697,6 +708,11 @@ export default function WarehouseEventDetailPage() {
                               {issueData.issuedMap.has(r.inventory_item_id) ? (
                                 <div className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
                                   Vydáno: {issueData.issuedMap.get(r.inventory_item_id)} {r.unit}
+                                </div>
+                              ) : null}
+                              {event.status === "ISSUED" ? (
+                                <div className="text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">
+                                  Vrátí se: {computedReturned} {r.unit}
                                 </div>
                               ) : null}
                               {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
@@ -763,19 +779,15 @@ export default function WarehouseEventDetailPage() {
                           ) : null}
 
                           {event.status === "ISSUED" ? (
-                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                               <label className="text-xs">
-                                Vráceno
+                                Vráceno automaticky
                                 <Input
                                   className="mt-1"
                                   type="number"
                                   min={0}
-                                  value={r.returned}
-                                  onFocus={(e) => e.target.select()}
-                                  onChange={(e) => {
-                                    const v = Math.max(0, Number(e.target.value));
-                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, returned: v } : x)));
-                                  }}
+                                  value={computedReturned}
+                                  disabled
                                 />
                               </label>
                               <label className="text-xs">
@@ -787,8 +799,28 @@ export default function WarehouseEventDetailPage() {
                                   value={r.broken}
                                   onFocus={(e) => e.target.select()}
                                   onChange={(e) => {
-                                    const v = Math.max(0, Number(e.target.value));
-                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, broken: v } : x)));
+                                    const requestedValue = Math.max(0, Number(e.target.value));
+                                    const nextBroken = Math.min(requestedValue, Math.max(0, issuedQty - r.lost));
+                                    setRows((prev) =>
+                                      prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, broken: nextBroken } : x))
+                                    );
+                                  }}
+                                />
+                              </label>
+                              <label className="text-xs">
+                                Ztracené / chybí
+                                <Input
+                                  className="mt-1"
+                                  type="number"
+                                  min={0}
+                                  value={r.lost}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const requestedValue = Math.max(0, Number(e.target.value));
+                                    const nextLost = Math.min(requestedValue, Math.max(0, issuedQty - r.broken));
+                                    setRows((prev) =>
+                                      prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, lost: nextLost } : x))
+                                    );
                                   }}
                                 />
                               </label>
@@ -929,7 +961,7 @@ export default function WarehouseEventDetailPage() {
         onOpenChange={setConfirmClose}
         tone="danger"
         title="Uzavřít akci?"
-        description="Prověříme vrácené/rozbité kusy a dopočítáme chybějící. Chybějící a rozbité se odečte ze stavu skladu."
+        description="Výchozí stav je, že se vše vrátilo. Zadávají se jen rozbité a ztracené kusy, vrácené množství dopočítáme automaticky ze skutečně vydaného počtu."
         confirmText="Uzavřít"
         onConfirm={async () => {
           if (!id) return;
@@ -940,7 +972,7 @@ export default function WarehouseEventDetailPage() {
                 idempotency_key: `close:${Date.now()}`,
                 items: rows.map((r) => ({
                   inventory_item_id: r.inventory_item_id,
-                  returned_quantity: r.returned,
+                  returned_quantity: getComputedReturnedQty(r),
                   broken_quantity: r.broken,
                   target_warehouse_id: r.target_warehouse_id
                 }))
