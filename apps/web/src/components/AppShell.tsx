@@ -83,7 +83,7 @@ export default function AppShell() {
                 <Icons.Box />
                 Sklad
               </button>
-              {role === "warehouse" && (
+              {(role === "warehouse" || role === "admin") && (
                 <button
                   onClick={() => nav("/inventory/transfers")}
                   className={cn(
@@ -167,6 +167,18 @@ export default function AppShell() {
             <Icons.Box />
             <span className="text-[10px] font-medium">Sklad</span>
           </button>
+          {(role === "warehouse" || role === "admin") && (
+            <button
+              onClick={() => nav("/inventory/transfers")}
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-full space-y-1",
+                loc.pathname.startsWith("/inventory/transfers") ? "text-indigo-600" : "text-gray-500"
+              )}
+            >
+              <Icons.History />
+              <span className="text-[10px] font-medium">Přesuny</span>
+            </button>
+          )}
           {isSettingsAllowed && (
             <button
               onClick={() => nav("/settings")}

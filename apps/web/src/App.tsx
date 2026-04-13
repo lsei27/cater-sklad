@@ -21,7 +21,7 @@ import WarehouseTransfersPage from "./pages/WarehouseTransfersPage";
 
 function WarehouseOnly({ children }: { children: ReactElement }) {
   const role = getCurrentUser()?.role;
-  if (role !== "warehouse") return <Navigate to="/inventory" replace />;
+  if (role !== "warehouse" && role !== "admin") return <Navigate to="/inventory" replace />;
   return children;
 }
 

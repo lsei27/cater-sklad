@@ -621,11 +621,6 @@ export default function WarehouseEventDetailPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="mt-4">
-                      <Button full disabled={issueDisabled || !digitalIssueSummary.allConfirmed} onClick={() => setConfirmIssue(true)}>
-                        Potvrdit digitální vydání
-                      </Button>
-                    </div>
                   </div>
                 ) : null}
 
@@ -978,6 +973,31 @@ export default function WarehouseEventDetailPage() {
               ))}
             </div>
           )}
+          {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
+            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Finální potvrzení výdeje</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Až projdeš celý seznam výše, potvrď tady celé digitální vydání akce.
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                    Potvrzeno: {digitalIssueSummary.confirmed}/{digitalIssueSummary.total}
+                  </span>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
+                    K potvrzení: {digitalIssueSummary.remaining}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-4">
+                <Button full disabled={issueDisabled || !digitalIssueSummary.allConfirmed} onClick={() => setConfirmIssue(true)}>
+                  Potvrdit digitální vydání
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

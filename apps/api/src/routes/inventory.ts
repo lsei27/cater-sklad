@@ -463,7 +463,7 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
   });
 
   app.post("/inventory/transfers", { preHandler: [app.authenticate] }, async (request, reply) => {
-    requireRole(request.user!.role, ["warehouse"]);
+    requireRole(request.user!.role, ["warehouse", "admin"]);
     const body = z
       .object({
         inventory_item_id: z.string().uuid(),
@@ -504,7 +504,7 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
   });
 
   app.post("/inventory/transfers/bulk", { preHandler: [app.authenticate] }, async (request, reply) => {
-    requireRole(request.user!.role, ["warehouse"]);
+    requireRole(request.user!.role, ["warehouse", "admin"]);
     const body = TransferRequestSchema.parse(request.body);
 
     try {
