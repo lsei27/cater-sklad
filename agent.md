@@ -113,12 +113,17 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
   - `Manuální výdej`: zachovává původní workflow s PDF checklistem a následným hromadným potvrzením výdeje.
   - `Digitální výdej`: skladník potvrzuje položky po jedné přímo v UI. Každá položka má dvoukrokový flow `Vydat` -> `Potvrdit`, a finální potvrzení celé akce je dostupné až po potvrzení všech položek.
 - **Backend výdeje** zůstává centralizovaný v `POST /events/:id/issue`; digitální UI pouze pošle explicitní seznam potvrzených položek.
+- **Finální CTA digitálního výdeje je dole pod seznamem položek**: kvůli tablet/mobile workflow nesmí být poslední potvrzení celé akce jen nahoře. Skladník má po projetí checklistu potvrdit výdej až na konci seznamu.
 - **Palety a váha zadává až skladník při výdeji**:
   - Event Manager tato pole nevyplňuje ani při založení, ani při editaci akce.
   - Skladník při potvrzení výdeje zadává pouze `Počet palet`.
   - `Celková váha` se nesmí zadávat ručně; dopočítává se automaticky z vydávaných položek podle `masterPackageQty` a `masterPackageWeight` ve skladu a ukládá se na akci jako provozní údaj z expedice.
   - `masterPackageWeight` v databázi musí být uložené jen jako čisté číslo v kg bez jednotky (`12.5`, ne `12.5 kg`). Admin zápisy i importy se normalizují při uložení.
 - **Manuální PDF checklisty musí zůstat zachované**: `Otevřít checklist (Sklad / Kuchyň / Kompletní)` je stále podporovaný flow pro reálný provoz.
+- **Warehouse je povinný pro skutečný výdej**:
+  - `POST /events/:id/issue` musí mít pro každou položku vyřešený sklad.
+  - backend bere prioritu `item.warehouse_id z payloadu -> body.warehouse_id -> defaultní warehouse položky`.
+  - pokud sklad nejde určit, request musí skončit řízenou chybou `WAREHOUSE_REQUIRED`, ne zapsat `NULL` do `event_issues` nebo `inventory_ledger`.
 
 ### Uzavření akce a návraty (`apps/api/src/services/returnClose.ts`)
 - **Hlavní invariant skladu**: pokud se nic nerozbije a nic nechybí, musí se po uzavření vrátit přesně tolik kusů, kolik bylo skutečně vydáno.
@@ -131,12 +136,44 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
   - `+returned_quantity` vrací kusy zpět na sklad
   - `-broken_quantity` odečítá rozbité kusy
   - `-missing_quantity` odečítá chybějící kusy
+- **Rozdíl mezi plánovací dostupností a fyzickým návratem je záměrný**:
+  - pro rezervace a planning se používá `virtual_returns` v `availability.ts`; vydané kusy se berou jako dostupné pro další akci už od momentu, kdy `pickup_datetime` předchozí akce je před startem nové akce
+  - pro fyzický stav skladu a rozpis po skladech se kusy vrátí až při skutečném `return-close`, tj. až po ručním potvrzení skladníkem
+  - jinými slovy: pro plánování se zboží „vrací virtuálně podle času svozu“, pro skladové přesuny a warehouse stock až podle ledger zápisu při uzavření
 - **UI návratů je výjimkové, ne ruční přepis celého stavu**:
   - výchozí předpoklad je, že se vše vrátilo
   - skladník zadává pouze `Rozbité` a `Ztracené / chybí`
   - `Vráceno automaticky = vydáno - rozbité - ztracené`
   - checkbox `Vybrat vše` a jednotlivé checkboxy u položek předvyplní „vše vráceno“, tj. nulují ztráty/poškození
+- **Warehouse je povinný pro návrat / ztráty / poškození**:
+  - `POST /events/:id/return-close` musí mít pro každou položku vyřešený `targetWarehouseId`
+  - backend bere prioritu `item.target_warehouse_id -> defaultní warehouse položky`
+  - stejný resolved sklad se musí použít konzistentně pro `return`, `breakage` i `missing`; nesmí vzniknout stav, kdy vrácené kusy sklad mají, ale loss řádky skončí s `NULL warehouse`
 - **Integrační testy**: `apps/api/test/return-close.integration.test.ts` pokrývá přesné obnovení skladu a zákaz pře-vrácení nad skutečně vydané množství.
+
+### Převody mezi sklady (`apps/web/src/pages/WarehouseTransfersPage.tsx`, `apps/api/src/routes/inventory.ts`)
+- **Převody umí `warehouse` i `admin`**: oprávnění není jen pro skladníka, admin má mít stejný přístup k `/inventory/transfers` i k backend endpointům.
+- **Bulk transfer je první-class flow**:
+  - backend podporuje `POST /inventory/transfers/bulk`
+  - více položek se převádí v jedné DB transakci
+  - pokud selže jediná položka, nesmí se provést částečný převod
+- **Kontrola množství je proti zdrojovému skladu, ne proti celkovému součtu přes všechny sklady**:
+  - převod nesmí pustit `quantity > stock(from_warehouse_id)`
+  - backend vrací `INSUFFICIENT_WAREHOUSE_STOCK`
+  - frontend může validovat dopředu, ale rozhodující je backend kontrola
+- **Warehouse transfer UI**:
+  - stránka umí filtrovat seznam položek podle skladu
+  - umí hromadně přidat vyfiltrované položky do převodu
+  - umí hromadně nastavit fixní množství nebo maximum podle dostupného stavu na zdrojovém skladu
+  - invalidní položky (víc než je stav na zdroji) se mají v UI zvýraznit a finální submit se musí zablokovat
+
+### Mazání uživatelů (`apps/api/src/routes/admin.ts`)
+- **Smazání uživatele nesmí blokovat jen jeho vlastní audit logy**:
+  - před `user.delete` se mažou `audit_log` záznamy, kde je uživatel vedený jako `actorUserId`
+  - typický reálný případ: akce už jsou pryč, ale uživatel stále nejde smazat jen kvůli historickým auditům
+- **Přesnější diagnostika blockerů**:
+  - pokud smazání i tak spadne na FK constraint, endpoint má vrátit konkrétní `blockers`
+  - sledujeme minimálně: `events_created`, `ledger_entries`, `exports`, `issues`, `returns`, `audit_logs`, `reservations_created`
 
 ### PDF Exporty (`apps/api/src/pdf/exportPdf.ts`)
 - Generuje kompaktní tabulku pro skladníky.
@@ -193,6 +230,13 @@ Aplikace umožňuje generování fyzických štítků pro označení inventáře
 - **Automatické filtrování ve skladu**: Filtry na stránce skladu (`InventoryPage`) fungují automaticky - při změně kategorie (Typ/Kategorie) nebo při psaní názvu se výsledky načítají okamžitě bez nutnosti klikat na tlačítko. Vyhledávání má 300ms debounce pro optimalizaci API volání. Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu).
 - **Admin/warehouse item management**: Formuláře pro vytvoření i editaci položky používají oddělený výběr `Hlavní kategorie` -> `Podkategorie`. Edit modal umí upravit všechny běžně spravované sloupce `InventoryItem` včetně jednotky, SKU, poznámek, výchozího skladu, QR kódu, `returnDelayDays` a parametrů balení.
 - **CSV import položek**: Šablona importu v admin UI zahrnuje i `qr_code`, `return_delay_days`, `master_package_qty`, `master_package_weight`, `volume`, `plate_diameter` a `warehouse`; backend `POST /admin/import/csv` tyto sloupce mapuje přímo do `InventoryItem`.
+- **CSV import a warehouse consistency**:
+  - import nesmí zahazovat existující `warehouseId` u už založené položky jen proto, že v řádku není vyplněný sklad
+  - ledger adjustment z CSV importu musí zapisovat správný `warehouseId`
+  - import rozpoznává i varianty názvu sloupce skladu (`Inventory`, `inventory`, `warehouse`, `warehouse_name`)
+- **Historický backfill warehouse dat**:
+  - migrace `20260413110000_backfill_missing_warehouse_ids` doplnila chybějící `warehouse_id` do `event_issues`, `event_returns` a `inventory_ledger`
+  - po podobných změnách warehouse logiky je potřeba myslet nejen na nový kód, ale i na opravu starých dat v DB
 - **Hesla v adminu a nastavení**: V admin UI a na stránce změny hesla je toggle pro zobrazení/skrývání hesla při zadávání.
 - **Seed a demo přihlašování**: Hesla pro seed uživatele bereme z env (`ADMIN_SEED_PASSWORD`, `EM_SEED_PASSWORD`, `CHEF_SEED_PASSWORD`, `WAREHOUSE_SEED_PASSWORD`). Demo přepínače na loginu jsou řízené `VITE_DEMO_USERS`.
 - **Repo hygiene**: `node_modules`, `generated/` (Prisma Client output) a build cache jsou ignorované a nemají být commitované; po čistění stačí znovu spustit `pnpm install` a `npx prisma generate`.
