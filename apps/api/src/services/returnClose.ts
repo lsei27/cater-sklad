@@ -115,7 +115,7 @@ export async function returnCloseTx(params: {
   const returnedByItemId = new Map(
     returnedTotals.map((row) => [row.inventory_item_id, { returned: Number(row.returned), broken: Number(row.broken) }])
   );
-  const targetWarehouseByItemId = new Map(items.map((item) => [item.inventory_item_id, item.target_warehouse_id]));
+  const targetWarehouseByItemId = new Map(rows.map((row) => [row.inventoryItemId, row.targetWarehouseId]));
 
   for (const [inventoryItemId, issued] of issuedByItemId.entries()) {
     const returned = returnedByItemId.get(inventoryItemId)?.returned ?? 0;
