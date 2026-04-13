@@ -38,13 +38,17 @@ export default function WarehouseTransfersPage() {
   const [stocks, setStocks] = useState<Record<string, Record<string, number>>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [filterWarehouseId, setFilterWarehouseId] = useState("");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
 
   const [fromWh, setFromWh] = useState("");
   const [toWh, setToWh] = useState("");
   const [transferItems, setTransferItems] = useState<{ itemId: string; name: string; qty: number }[]>([]);
   const [note, setNote] = useState("");
+  const [bulkQty, setBulkQty] = useState("1");
   const [submitting, setSubmitting] = useState(false);
+
+  const itemById = useMemo(() => new Map(items.map((item) => [item.itemId, item])), [items]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,6 +72,11 @@ export default function WarehouseTransfersPage() {
     load();
   }, [load]);
 
+  const stockForWarehouse = useCallback(
+    (itemId: string, warehouseId: string) => stocks[itemId]?.[warehouseId] ?? 0,
+    [stocks]
+  );
+
   const filteredItems = useMemo(
     () =>
       items
@@ -78,16 +87,26 @@ export default function WarehouseTransfersPage() {
             (i.category.parent?.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
             (i.category.sub?.name ?? "").toLowerCase().includes(search.toLowerCase())
         )
+        .filter((i) => (filterWarehouseId ? stockForWarehouse(i.itemId, filterWarehouseId) > 0 : true))
         .sort(compareByCategoryParentName),
-    [items, search]
+    [filterWarehouseId, items, search, stockForWarehouse]
   );
 
   const totalStock = (itemId: string) =>
     warehouses.reduce((sum, w) => sum + (stocks[itemId]?.[w.id] ?? 0), 0);
 
+  const sourceStock = useCallback(
+    (itemId: string) => (fromWh ? stockForWarehouse(itemId, fromWh) : totalStock(itemId)),
+    [fromWh, stockForWarehouse, warehouses, stocks]
+  );
+
   const addItemToTransfer = (i: Item) => {
     if (transferItems.find((x) => x.itemId === i.itemId)) {
       toast("Již přidáno");
+      return;
+    }
+    if (fromWh && sourceStock(i.itemId) <= 0) {
+      toast.error(`Na zdrojovém skladu není pro ${i.name} žádný dostupný kus`);
       return;
     }
     setTransferItems([...transferItems, { itemId: i.itemId, name: i.name, qty: 1 }]);
@@ -99,8 +118,69 @@ export default function WarehouseTransfersPage() {
   };
 
   const updateQty = (itemId: string, qty: number) => {
-    setTransferItems(transferItems.map((x) => (x.itemId === itemId ? { ...x, qty: Math.max(1, qty) } : x)));
+    const normalizedQty = Number.isFinite(qty) ? Math.max(1, qty) : 1;
+    setTransferItems(
+      transferItems.map((x) => {
+        if (x.itemId !== itemId) return x;
+        const maxQty = fromWh ? sourceStock(itemId) : null;
+        if (typeof maxQty === "number" && maxQty > 0) {
+          return { ...x, qty: Math.min(normalizedQty, maxQty) };
+        }
+        return { ...x, qty: normalizedQty };
+      })
+    );
   };
+
+  const addFilteredItemsToTransfer = () => {
+    if (!fromWh) {
+      toast.error("Nejdřív vyberte zdrojový sklad");
+      return;
+    }
+    const existingIds = new Set(transferItems.map((item) => item.itemId));
+    const candidates = filteredItems.filter((item) => !existingIds.has(item.itemId) && sourceStock(item.itemId) > 0);
+    if (candidates.length === 0) {
+      toast("Ve filtru nejsou žádné další položky dostupné na zdrojovém skladu");
+      return;
+    }
+    setTransferItems((prev) => [
+      ...prev,
+      ...candidates.map((item) => ({ itemId: item.itemId, name: item.name, qty: 1 }))
+    ]);
+    toast.success(`Přidáno ${candidates.length} položek`);
+  };
+
+  const applyBulkQty = (mode: "fixed" | "max") => {
+    if (transferItems.length === 0) {
+      toast.error("Nejdřív přidejte položky k převodu");
+      return;
+    }
+    if (!fromWh) {
+      toast.error("Nejdřív vyberte zdrojový sklad");
+      return;
+    }
+
+    const parsedBulkQty = Math.max(1, Number.parseInt(bulkQty, 10) || 1);
+    setTransferItems((prev) =>
+      prev.map((item) => {
+        const available = sourceStock(item.itemId);
+        if (available <= 0) return item;
+        return {
+          ...item,
+          qty: mode === "max" ? available : Math.min(parsedBulkQty, available)
+        };
+      })
+    );
+  };
+
+  const invalidTransferItems = useMemo(
+    () =>
+      transferItems.filter((item) => {
+        if (!fromWh) return false;
+        const available = sourceStock(item.itemId);
+        return available <= 0 || item.qty > available;
+      }),
+    [fromWh, sourceStock, transferItems]
+  );
 
   const handleTransfer = async () => {
     if (!fromWh || !toWh) {
@@ -115,21 +195,31 @@ export default function WarehouseTransfersPage() {
       toast.error("Přidejte položky k převodu");
       return;
     }
+    if (invalidTransferItems.length > 0) {
+      const firstInvalid = invalidTransferItems[0];
+      const available = sourceStock(firstInvalid.itemId);
+      toast.error(
+        available <= 0
+          ? `Položka ${firstInvalid.name} není na zdrojovém skladu dostupná`
+          : `Položka ${firstInvalid.name} má na zdrojovém skladu jen ${available} ks`
+      );
+      return;
+    }
 
     setSubmitting(true);
     try {
-      for (const item of transferItems) {
-        await api("/inventory/transfers", {
-          method: "POST",
-          body: JSON.stringify({
+      await api("/inventory/transfers/bulk", {
+        method: "POST",
+        body: JSON.stringify({
+          from_warehouse_id: fromWh,
+          to_warehouse_id: toWh,
+          note,
+          items: transferItems.map((item) => ({
             inventory_item_id: item.itemId,
-            from_warehouse_id: fromWh,
-            to_warehouse_id: toWh,
-            quantity: item.qty,
-            note: note
-          })
-        });
-      }
+            quantity: item.qty
+          }))
+        })
+      });
       toast.success("Převod byl úspěšně proveden");
       setTransferItems([]);
       setNote("");
@@ -155,16 +245,31 @@ export default function WarehouseTransfersPage() {
         <div className="lg:col-span-2 space-y-4">
           <Card className="shadow-sm">
             <CardHeader className="p-4 border-b border-gray-100">
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                  <Icons.Search className="w-4 h-4" />
+              <div className="space-y-3">
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                    <Icons.Search className="w-4 h-4" />
+                  </div>
+                  <Input
+                    className="pl-10"
+                    placeholder="Hledat položku, SKU, kategorii..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
-                <Input
-                  className="pl-10"
-                  placeholder="Hledat položku, SKU, kategorii..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <Select value={filterWarehouseId} onChange={(e) => setFilterWarehouseId(e.target.value)}>
+                    <option value="">Všechny sklady</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        Jen sklad: {w.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button size="sm" variant="secondary" onClick={addFilteredItemsToTransfer} disabled={!fromWh || loading}>
+                    Přidat vyfiltrované
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -176,6 +281,8 @@ export default function WarehouseTransfersPage() {
                 <div className="divide-y divide-gray-100 max-h-[calc(100vh-220px)] overflow-y-auto">
                   {filteredItems.map((i) => {
                     const alreadyAdded = transferItems.some((x) => x.itemId === i.itemId);
+                    const filteredWarehouseStock = filterWarehouseId ? stockForWarehouse(i.itemId, filterWarehouseId) : null;
+                    const sourceWarehouseStock = fromWh ? sourceStock(i.itemId) : null;
                     return (
                       <div
                         key={i.itemId}
@@ -207,6 +314,16 @@ export default function WarehouseTransfersPage() {
                               {formatCategoryParentLabel(i.category.parent?.name, i.category.sub?.name)}
                               {i.sku ? ` · ${i.sku}` : ""}
                             </div>
+                            {filterWarehouseId ? (
+                              <div className="mt-1 text-[11px] font-medium text-indigo-700">
+                                Ve filtru skladu: {filteredWarehouseStock} {i.unit}
+                              </div>
+                            ) : null}
+                            {fromWh ? (
+                              <div className="mt-1 text-[11px] text-slate-600">
+                                Na zdrojovém skladu: <span className="font-semibold text-slate-900">{sourceWarehouseStock}</span> {i.unit}
+                              </div>
+                            ) : null}
                             <div className="flex flex-wrap gap-1 mt-1">
                               {warehouses.map((w) => {
                                 const s = stocks[i.itemId]?.[w.id] ?? 0;
@@ -226,7 +343,9 @@ export default function WarehouseTransfersPage() {
                         </button>
                         <div className="shrink-0 flex items-center gap-2">
                           <div className="text-xs text-gray-500 text-right">
-                            <div className="font-semibold text-gray-900">{totalStock(i.itemId)}</div>
+                            <div className="font-semibold text-gray-900">
+                              {fromWh ? sourceStock(i.itemId) : totalStock(i.itemId)}
+                            </div>
                             <div className="text-[10px]">{i.unit}</div>
                           </div>
                           <Button
@@ -292,6 +411,11 @@ export default function WarehouseTransfersPage() {
                   <Icons.Box className="w-3 h-3" />
                   Položky ({transferItems.length})
                 </div>
+                {invalidTransferItems.length > 0 ? (
+                  <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
+                    Některé položky nemají na zdrojovém skladu dost kusů. Upravte množství nebo změňte sklad.
+                  </div>
+                ) : null}
                 {transferItems.length === 0 ? (
                   <div className="py-4 text-center text-xs text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
                     Vyberte položky v seznamu
@@ -301,10 +425,21 @@ export default function WarehouseTransfersPage() {
                     {transferItems.map((ti) => (
                       <div
                         key={ti.itemId}
-                        className="flex items-center gap-2 bg-gray-50 p-2 rounded border border-gray-200"
+                        className={`flex items-center gap-2 p-2 rounded border ${
+                          fromWh && (sourceStock(ti.itemId) <= 0 || ti.qty > sourceStock(ti.itemId))
+                            ? "border-amber-300 bg-amber-50"
+                            : "border-gray-200 bg-gray-50"
+                        }`}
                       >
-                        <div className="flex-1 text-xs font-medium text-gray-900 truncate" title={ti.name}>
-                          {ti.name}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium text-gray-900 truncate" title={ti.name}>
+                            {ti.name}
+                          </div>
+                          {fromWh ? (
+                            <div className="text-[10px] text-gray-500">
+                              Na zdroji: {sourceStock(ti.itemId)} {itemById.get(ti.itemId)?.unit ?? "ks"}
+                            </div>
+                          ) : null}
                         </div>
                         <Input
                           type="number"
@@ -325,6 +460,37 @@ export default function WarehouseTransfersPage() {
                 )}
               </div>
 
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Hromadné nastavení
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    value={bulkQty}
+                    onChange={(e) => setBulkQty(e.target.value)}
+                    placeholder="Množství pro všechny"
+                  />
+                  <Button size="sm" variant="secondary" onClick={() => applyBulkQty("fixed")} disabled={transferItems.length === 0}>
+                    Nastavit všem
+                  </Button>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => applyBulkQty("max")} disabled={transferItems.length === 0}>
+                    Vyplnit maximum
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setTransferItems([])}
+                    disabled={transferItems.length === 0}
+                  >
+                    Vyčistit
+                  </Button>
+                </div>
+              </div>
+
               <div className="mb-4">
                 <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
                   Poznámka
@@ -342,7 +508,7 @@ export default function WarehouseTransfersPage() {
                 variant="primary"
                 full
                 onClick={handleTransfer}
-                disabled={submitting || transferItems.length === 0}
+                disabled={submitting || transferItems.length === 0 || invalidTransferItems.length > 0}
               >
                 {submitting ? "Provádím..." : "Potvrdit převod"}
               </Button>

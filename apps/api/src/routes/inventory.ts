@@ -6,6 +6,7 @@ import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { getPhysicalTotal } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
+import { sseBus } from "../lib/sse.js";
 
 function compareNullableSortOrder(a?: number | null, b?: number | null) {
   if (typeof a === "number" && typeof b === "number") return a - b;
@@ -39,6 +40,117 @@ function compareInventoryDtoByCategory(a: any, b: any) {
   if (byChildName !== 0) return byChildName;
 
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
+}
+
+const TransferItemSchema = z.object({
+  inventory_item_id: z.string().uuid(),
+  quantity: z.number().int().positive(),
+  note: z.string().optional()
+});
+
+const TransferRequestSchema = z.object({
+  from_warehouse_id: z.string().uuid(),
+  to_warehouse_id: z.string().uuid(),
+  note: z.string().optional(),
+  items: z.array(TransferItemSchema).min(1)
+});
+
+async function getWarehouseStocksForItemsTx(
+  tx: Prisma.TransactionClient,
+  params: { warehouseId: string; itemIds: string[] }
+) {
+  if (params.itemIds.length === 0) return new Map<string, number>();
+  const rows = await tx.inventoryLedger.groupBy({
+    by: ["inventoryItemId"],
+    where: {
+      inventoryItemId: { in: params.itemIds },
+      warehouseId: params.warehouseId
+    },
+    _sum: { deltaQuantity: true }
+  });
+  return new Map(rows.map((row) => [row.inventoryItemId, row._sum.deltaQuantity ?? 0]));
+}
+
+async function createWarehouseTransfersTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    actorUserId: string;
+    fromWarehouseId: string;
+    toWarehouseId: string;
+    note?: string;
+    items: Array<{ inventoryItemId: string; quantity: number; note?: string }>;
+  }
+) {
+  const { actorUserId, fromWarehouseId, toWarehouseId, note, items } = params;
+  if (fromWarehouseId === toWarehouseId) throw new Error("SAME_WAREHOUSE");
+
+  const duplicateIds = items
+    .map((item) => item.inventoryItemId)
+    .filter((id, index, arr) => arr.indexOf(id) !== index);
+  if (duplicateIds.length > 0) throw new Error("DUPLICATE_ITEMS");
+
+  const itemIds = items.map((item) => item.inventoryItemId);
+  const inventoryItems = await tx.inventoryItem.findMany({
+    where: { id: { in: itemIds } },
+    select: { id: true, name: true }
+  });
+  if (inventoryItems.length !== itemIds.length) throw new Error("ITEM_NOT_FOUND");
+
+  const stockByItemId = await getWarehouseStocksForItemsTx(tx, {
+    warehouseId: fromWarehouseId,
+    itemIds
+  });
+  const itemById = new Map(inventoryItems.map((item) => [item.id, item]));
+
+  const transfers = [];
+  for (const item of items) {
+    const available = stockByItemId.get(item.inventoryItemId) ?? 0;
+    if (available < item.quantity) {
+      const row = itemById.get(item.inventoryItemId);
+      const error = new Error("INSUFFICIENT_WAREHOUSE_STOCK") as Error & {
+        inventoryItemId?: string;
+        itemName?: string;
+        available?: number;
+      };
+      error.inventoryItemId = item.inventoryItemId;
+      error.itemName = row?.name;
+      error.available = available;
+      throw error;
+    }
+
+    const transferNote = item.note ?? note;
+    const transfer = await tx.warehouseTransfer.create({
+      data: {
+        inventoryItemId: item.inventoryItemId,
+        fromWarehouseId,
+        toWarehouseId,
+        quantity: item.quantity,
+        note: transferNote,
+        transferredById: actorUserId
+      }
+    });
+
+    await createInventoryLedgerEntry(tx, {
+      inventoryItemId: item.inventoryItemId,
+      deltaQuantity: -item.quantity,
+      reason: LedgerReason.transfer,
+      warehouseId: fromWarehouseId,
+      note: transferNote || `Převod do ${toWarehouseId}`,
+      createdById: actorUserId
+    });
+    await createInventoryLedgerEntry(tx, {
+      inventoryItemId: item.inventoryItemId,
+      deltaQuantity: item.quantity,
+      reason: LedgerReason.transfer,
+      warehouseId: toWarehouseId,
+      note: transferNote || `Převod z ${fromWarehouseId}`,
+      createdById: actorUserId
+    });
+
+    transfers.push(transfer);
+  }
+
+  return transfers;
 }
 
 export async function inventoryRoutes(app: FastifyInstance) {
@@ -352,53 +464,86 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
 
   app.post("/inventory/transfers", { preHandler: [app.authenticate] }, async (request, reply) => {
     requireRole(request.user!.role, ["warehouse"]);
-    const body = z.object({
-      inventory_item_id: z.string().uuid(),
-      from_warehouse_id: z.string().uuid(),
-      to_warehouse_id: z.string().uuid(),
-      quantity: z.number().int().positive(),
-      note: z.string().optional()
-    }).parse(request.body);
+    const body = z
+      .object({
+        inventory_item_id: z.string().uuid(),
+        from_warehouse_id: z.string().uuid(),
+        to_warehouse_id: z.string().uuid(),
+        quantity: z.number().int().positive(),
+        note: z.string().optional()
+      })
+      .parse(request.body);
 
-    if (body.from_warehouse_id === body.to_warehouse_id) {
-      return httpError(reply, 400, "BAD_REQUEST", "Zdrojový a cílový sklad musí být odlišné");
-    }
-
-    const res = await app.prisma.$transaction(async (tx) => {
-      // Create transfer record
-      const transfer = await tx.warehouseTransfer.create({
-        data: {
-          inventoryItemId: body.inventory_item_id,
+    try {
+      const [transfer] = await app.prisma.$transaction((tx) =>
+        createWarehouseTransfersTx(tx, {
+          actorUserId: request.user!.id,
           fromWarehouseId: body.from_warehouse_id,
           toWarehouseId: body.to_warehouse_id,
-          quantity: body.quantity,
           note: body.note,
-          transferredById: request.user!.id
-        }
-      });
+          items: [{ inventoryItemId: body.inventory_item_id, quantity: body.quantity }]
+        })
+      );
+      sseBus.emit({ type: "ledger_changed", inventoryItemId: body.inventory_item_id });
+      return { transfer };
+    } catch (e: any) {
+      if (e?.message === "SAME_WAREHOUSE") {
+        return httpError(reply, 400, "BAD_REQUEST", "Zdrojový a cílový sklad musí být odlišné");
+      }
+      if (e?.message === "ITEM_NOT_FOUND") {
+        return httpError(reply, 404, "NOT_FOUND", "Položka nebyla nalezena");
+      }
+      if (e?.message === "INSUFFICIENT_WAREHOUSE_STOCK") {
+        return httpError(reply, 409, "INSUFFICIENT_WAREHOUSE_STOCK", "Na zdrojovém skladu není dostatek kusů", {
+          inventory_item_id: e.inventoryItemId,
+          available: e.available ?? 0
+        });
+      }
+      throw e;
+    }
+  });
 
-      // Create ledger entries
-      await createInventoryLedgerEntry(tx, {
-        inventoryItemId: body.inventory_item_id,
-        deltaQuantity: -body.quantity,
-        reason: LedgerReason.transfer,
-        warehouseId: body.from_warehouse_id,
-        note: body.note || `Převod do ${body.to_warehouse_id}`,
-        createdById: request.user!.id
-      });
-      await createInventoryLedgerEntry(tx, {
-        inventoryItemId: body.inventory_item_id,
-        deltaQuantity: body.quantity,
-        reason: LedgerReason.transfer,
-        warehouseId: body.to_warehouse_id,
-        note: body.note || `Převod z ${body.from_warehouse_id}`,
-        createdById: request.user!.id
-      });
+  app.post("/inventory/transfers/bulk", { preHandler: [app.authenticate] }, async (request, reply) => {
+    requireRole(request.user!.role, ["warehouse"]);
+    const body = TransferRequestSchema.parse(request.body);
 
-      return transfer;
-    });
+    try {
+      const transfers = await app.prisma.$transaction((tx) =>
+        createWarehouseTransfersTx(tx, {
+          actorUserId: request.user!.id,
+          fromWarehouseId: body.from_warehouse_id,
+          toWarehouseId: body.to_warehouse_id,
+          note: body.note,
+          items: body.items.map((item) => ({
+            inventoryItemId: item.inventory_item_id,
+            quantity: item.quantity,
+            note: item.note
+          }))
+        })
+      );
 
-    return { transfer: res };
+      for (const item of body.items) {
+        sseBus.emit({ type: "ledger_changed", inventoryItemId: item.inventory_item_id });
+      }
+      return { transfers, count: transfers.length };
+    } catch (e: any) {
+      if (e?.message === "SAME_WAREHOUSE") {
+        return httpError(reply, 400, "BAD_REQUEST", "Zdrojový a cílový sklad musí být odlišné");
+      }
+      if (e?.message === "DUPLICATE_ITEMS") {
+        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v hromadném převodu jen jednou");
+      }
+      if (e?.message === "ITEM_NOT_FOUND") {
+        return httpError(reply, 404, "NOT_FOUND", "Některá položka nebyla nalezena");
+      }
+      if (e?.message === "INSUFFICIENT_WAREHOUSE_STOCK") {
+        return httpError(reply, 409, "INSUFFICIENT_WAREHOUSE_STOCK", "Na zdrojovém skladu není dostatek kusů", {
+          inventory_item_id: e.inventoryItemId,
+          available: e.available ?? 0
+        });
+      }
+      throw e;
+    }
   });
 
   app.get("/inventory/items/:id/label-pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
