@@ -77,6 +77,36 @@ async function getOrCreateCategory(params: {
 }
 
 export async function adminRoutes(app: FastifyInstance) {
+  async function getUserDeleteBlockers(tx: any, userId: string) {
+    const [
+      eventsCreated,
+      ledgerEntries,
+      exportsCount,
+      issuesCount,
+      returnsCount,
+      auditLogs,
+      reservationsCreated
+    ] = await Promise.all([
+      tx.event.count({ where: { createdById: userId } }),
+      tx.inventoryLedger.count({ where: { createdById: userId } }),
+      tx.eventExport.count({ where: { exportedById: userId } }),
+      tx.eventIssue.count({ where: { issuedById: userId } }),
+      tx.eventReturn.count({ where: { returnedById: userId } }),
+      tx.auditLog.count({ where: { actorUserId: userId } }),
+      tx.eventReservation.count({ where: { createdById: userId } })
+    ]);
+
+    return {
+      events_created: eventsCreated,
+      ledger_entries: ledgerEntries,
+      exports: exportsCount,
+      issues: issuesCount,
+      returns: returnsCount,
+      audit_logs: auditLogs,
+      reservations_created: reservationsCreated
+    };
+  }
+
   app.post("/admin/categories", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
     requireRole(actor.role, ["admin"]);
@@ -195,8 +225,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
     try {
       await app.prisma.$transaction(async (tx) => {
-        // Check if user has related entities that prevent deletion (restrict)
-        // Or rely on foreign keys. Let's try direct delete and catch FK errors.
+        await tx.auditLog.deleteMany({ where: { actorUserId: params.id } });
         await tx.user.delete({ where: { id: params.id } });
         await tx.auditLog.create({
           data: { actorUserId: actor.id, entityType: "user", entityId: params.id, action: "delete" }
@@ -205,7 +234,8 @@ export async function adminRoutes(app: FastifyInstance) {
       return reply.send({ ok: true });
     } catch (e: any) {
       if (e?.code === "P2003") { // Foreign key constraint failed
-        return httpError(reply, 409, "CONFLICT", "Uživatel má navázaná data (akce, exporty, atd.) a nelze ho smazat.");
+        const blockers = await getUserDeleteBlockers(app.prisma, params.id);
+        return httpError(reply, 409, "CONFLICT", "Uživatel má navázaná data a nelze ho smazat.", { blockers });
       }
       if (e?.code === "P2025") { // Record not found
         return httpError(reply, 404, "NOT_FOUND", "Uživatel nenalezen.");
