@@ -10,6 +10,7 @@ import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { returnCloseTx } from "../services/returnClose.js";
+import { requireWarehouseId } from "../services/warehouse.js";
 
 function safeFilename(value: string) {
   return value
@@ -869,12 +870,15 @@ export async function eventRoutes(app: FastifyInstance) {
         const inventoryItems = itemsToIssue.length
           ? await tx.inventoryItem.findMany({
               where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
-              select: { id: true, masterPackageQty: true, masterPackageWeight: true }
+              select: { id: true, masterPackageQty: true, masterPackageWeight: true, warehouseId: true }
             })
           : [];
         const itemMetaById = new Map(
           inventoryItems.map((item) => [item.id, item] as const)
         );
+        if (inventoryItems.length !== new Set(itemsToIssue.map((item) => item.inventory_item_id)).size) {
+          throw new Error("ITEM_NOT_FOUND");
+        }
         const computedWeightKg = itemsToIssue.reduce((sum, item) => {
           const meta = itemMetaById.get(item.inventory_item_id);
           const packageWeightKg = parseWeightValue(meta?.masterPackageWeight);
@@ -883,14 +887,22 @@ export async function eventRoutes(app: FastifyInstance) {
           return sum + Math.ceil(item.issued_quantity / packageQty) * packageWeightKg;
         }, 0);
 
-        const rows = itemsToIssue.map((i) => ({
-          eventId: params.id,
-          inventoryItemId: i.inventory_item_id,
-          issuedQuantity: i.issued_quantity,
-          warehouseId: i.warehouse_id ?? body.warehouse_id,
-          issuedById: user.id,
-          idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
-        }));
+        const rows = itemsToIssue.map((i) => {
+          const meta = itemMetaById.get(i.inventory_item_id);
+          if (!meta) throw new Error("ITEM_NOT_FOUND");
+          const warehouseId = requireWarehouseId({
+            explicitWarehouseId: i.warehouse_id ?? body.warehouse_id,
+            itemWarehouseId: meta.warehouseId
+          });
+          return {
+            eventId: params.id,
+            inventoryItemId: i.inventory_item_id,
+            issuedQuantity: i.issued_quantity,
+            warehouseId,
+            issuedById: user.id,
+            idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
+          };
+        });
         await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
         
         // Add Ledger entries for issued items
@@ -939,6 +951,9 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "NEEDS_REVISION") return httpError(reply, 409, "NEEDS_REVISION", "Akce byla po předání změněna. Je nutný nový export.");
       if (e?.message === "NO_EXPORT") return httpError(reply, 409, "NO_EXPORT", "Akce nemá export. Nejdřív ji předej skladu.");
       if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Export neobsahuje žádné položky k výdeji.");
+      if (e?.message === "ITEM_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
+      if (e?.message === "WAREHOUSE_REQUIRED")
+        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
       request.log.error({ err: e }, "issue failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
@@ -993,6 +1008,8 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "ITEMS_UNEXPECTED") return httpError(reply, 409, "ITEMS_UNEXPECTED", "Uzavření obsahuje položky, které nebyly vydané.");
       if (e?.message === "ITEMS_EXCEED_ISSUED")
         return httpError(reply, 409, "ITEMS_EXCEED_ISSUED", "Vrácené a rozbité množství nesmí být vyšší než skutečně vydané množství.");
+      if (e?.message === "WAREHOUSE_REQUIRED")
+        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vracená nebo ztrátová položka musí mít určený cílový sklad.");
       throw e;
     }
   });

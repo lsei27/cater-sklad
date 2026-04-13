@@ -5,6 +5,7 @@ import { LedgerReason } from "../../generated/prisma/client.js";
 import { requireRole } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal } from "../services/availability.js";
+import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { sseBus } from "../lib/sse.js";
 import path from "node:path";
 import { createWriteStream } from "node:fs";
@@ -493,15 +494,13 @@ export async function adminRoutes(app: FastifyInstance) {
       (body.ledger_reason as LedgerReason | undefined) ??
       (body.set_quantity !== undefined ? LedgerReason.audit_adjustment : LedgerReason.manual);
 
-    const ledger = await app.prisma.inventoryLedger.create({
-      data: {
-        inventoryItemId: item.id,
-        deltaQuantity: delta,
-        reason: ledgerReason,
-        createdById: actor.id,
-        note: body.reason || null,
-        warehouseId: item.warehouseId ?? null
-      }
+    const ledger = await createInventoryLedgerEntry(app.prisma, {
+      inventoryItemId: item.id,
+      deltaQuantity: delta,
+      reason: ledgerReason,
+      createdById: actor.id,
+      note: body.reason || null,
+      warehouseId: item.warehouseId ?? null
     });
 
     await app.prisma.auditLog.create({
@@ -581,15 +580,18 @@ export async function adminRoutes(app: FastifyInstance) {
             const masterPackageWeight = normalizeDecimalString(r["master package weight"] ?? r.master_package_weight);
             const volume = (r["volume of glasses"] ?? r.volume ?? "").toString().trim() || null;
             const plateDiameter = (r["plate diameter"] ?? r.plate_diameter ?? "").toString().trim() || null;
-            const inventoryName = (r["Inventory"] ?? r.warehouse ?? "").toString().trim() || null;
+            const inventoryName = (r["Inventory"] ?? r.inventory ?? r.warehouse ?? r.warehouse_name ?? "").toString().trim() || null;
 
             if (!name || !parentName || !subName) throw new Error("Missing name/main_category/child_category");
 
             const parent = await getOrCreateCategory({ tx, parentId: null, name: parentName });
             const child = await getOrCreateCategory({ tx, parentId: parent.id, name: subName });
 
-            // Resolve warehouse
-            let warehouseId: string | null = null;
+            const existing = sku
+              ? await tx.inventoryItem.findUnique({ where: { sku } })
+              : await tx.inventoryItem.findFirst({ where: { name, categoryId: child.id } });
+
+            let warehouseId = existing?.warehouseId ?? null;
             if (inventoryName) {
               let warehouse = await tx.warehouse.findUnique({ where: { name: inventoryName } });
               if (!warehouse) {
@@ -598,16 +600,12 @@ export async function adminRoutes(app: FastifyInstance) {
               warehouseId = warehouse.id;
             }
 
-            const existing = sku
-              ? await tx.inventoryItem.findUnique({ where: { sku } })
-              : await tx.inventoryItem.findFirst({ where: { name, categoryId: child.id } });
-
             const itemData = {
               name, categoryId: child.id, unit, notes, imageUrl, active,
               qrCode,
               returnDelayDays,
               masterPackageQty, masterPackageWeight, volume, plateDiameter,
-              warehouseId,
+              ...(existing || inventoryName ? { warehouseId } : {}),
               sku: sku ?? undefined
             };
 
@@ -636,14 +634,13 @@ export async function adminRoutes(app: FastifyInstance) {
             const current = await getPhysicalTotal(tx, item.id);
             const delta = quantity - current;
             if (delta !== 0) {
-              await tx.inventoryLedger.create({
-                data: {
-                  inventoryItemId: item.id,
-                  deltaQuantity: delta,
-                  reason: LedgerReason.audit_adjustment,
-                  createdById: actor.id,
-                  note: `CSV import set quantity=${quantity} (was ${current})`
-                }
+              await createInventoryLedgerEntry(tx, {
+                inventoryItemId: item.id,
+                deltaQuantity: delta,
+                reason: LedgerReason.audit_adjustment,
+                createdById: actor.id,
+                warehouseId: item.warehouseId ?? warehouseId ?? null,
+                note: `CSV import set quantity=${quantity} (was ${current})`
               });
               report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta });
               changedItemIds.add(item.id);

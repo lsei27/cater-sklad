@@ -1,5 +1,6 @@
 import { EventStatus, LedgerReason, Prisma } from "../../generated/prisma/client.js";
 import { createInventoryLedgerEntry } from "./ledger.js";
+import { requireWarehouseId } from "./warehouse.js";
 
 type ReturnCloseTxClient = Prisma.TransactionClient;
 
@@ -41,6 +42,15 @@ export async function returnCloseTx(params: {
 
   const issuedByItemId = new Map(issuedTotals.map((row) => [row.inventory_item_id, Number(row.issued)]));
   const issuedItemIds = Array.from(issuedByItemId.keys());
+  const relevantItemIds = Array.from(new Set([...issuedItemIds, ...items.map((item) => item.inventory_item_id)]));
+  const inventoryItems =
+    relevantItemIds.length > 0
+      ? await tx.inventoryItem.findMany({
+          where: { id: { in: relevantItemIds } },
+          select: { id: true, warehouseId: true }
+        })
+      : [];
+  const itemWarehouseByItemId = new Map(inventoryItems.map((item) => [item.id, item.warehouseId]));
 
   if (issuedItemIds.length > 0) {
     if (items.length === 0) throw new Error("ITEMS_REQUIRED");
@@ -66,7 +76,10 @@ export async function returnCloseTx(params: {
     inventoryItemId: item.inventory_item_id,
     returnedQuantity: item.returned_quantity,
     brokenQuantity: item.broken_quantity,
-    targetWarehouseId: item.target_warehouse_id,
+    targetWarehouseId: requireWarehouseId({
+      explicitWarehouseId: item.target_warehouse_id,
+      itemWarehouseId: itemWarehouseByItemId.get(item.inventory_item_id) ?? null
+    }),
     returnedById: userId,
     idempotencyKey: item.idempotency_key ?? `${idempotencyKey ?? "return"}:${eventId}:${item.inventory_item_id}`
   }));

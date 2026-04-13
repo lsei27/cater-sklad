@@ -1025,14 +1025,14 @@ export default function WarehouseEventDetailPage() {
         <div className="mt-4 space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-gray-500">
-              Vydáváno ze skladu (nepovinné)
+              Vydáváno ze skladu
             </span>
             <select 
               className="block w-full rounded-md border border-slate-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500"
               value={issueWarehouseId}
               onChange={(e) => setIssueWarehouseId(e.target.value)}
             >
-              <option value="">(Výchozí / Neurčeno)</option>
+              <option value="">(Výchozí sklad položky)</option>
               {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </label>
