@@ -189,6 +189,10 @@ export default function WarehouseEventDetailPage() {
       }
     }
 
+    const defaultWarehouseId = warehouses.find(
+      (w) => w.name.toLowerCase().includes("liboc")
+    )?.id;
+
     setRows(
       warehouseItems.map((i) => {
         const s = serverReturns.get(i.inventoryItemId);
@@ -203,12 +207,12 @@ export default function WarehouseEventDetailPage() {
           parentCategory: (i as any).parentCategory || "",
           category: (i as any).category || "",
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
-          target_warehouse_id: undefined,
+          target_warehouse_id: defaultWarehouseId,
           masterPackageQty: (i as any).masterPackageQty
         };
       })
     );
-  }, [warehouseItems, event?.returns, event?.issues, imageByItemId]);
+  }, [warehouseItems, event?.returns, event?.issues, imageByItemId, warehouses]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
@@ -249,18 +253,32 @@ export default function WarehouseEventDetailPage() {
   }, [event?.issues]);
 
   const groupedRows = useMemo(() => {
-    const sections: Array<{ title: string; items: typeof rows }> = [
-      { title: "Event Manager", items: [] },
-      { title: "Kuchyň", items: [] }
+    type CatGroup = { parent: string; sub: string; items: typeof rows };
+    const sections: Array<{ title: string; groups: CatGroup[] }> = [
+      { title: "Event Manager", groups: [] },
+      { title: "Kuchyň", groups: [] }
     ];
+    const groupMap = new Map<string, CatGroup>();
     for (const r of rows) {
-      if (r.parentCategory?.toLowerCase() === "kuchyň" || r.parentCategory?.toLowerCase() === "kuchyn") {
-        sections[1].items.push(r);
+      const parent = r.parentCategory || "Ostatní";
+      const sub = r.category || "Nezařazeno";
+      const key = `${parent}||${sub}`;
+      const g = groupMap.get(key) ?? { parent, sub, items: [] as typeof rows };
+      g.items.push(r);
+      groupMap.set(key, g);
+    }
+    const sortedGroups = Array.from(groupMap.values()).sort((a, b) => compareByCategoryParentName(
+      { parentCategory: a.parent, category: a.sub },
+      { parentCategory: b.parent, category: b.sub }
+    ));
+    for (const g of sortedGroups) {
+      const isKitchen = g.parent.toLowerCase() === "kuchyň" || g.parent.toLowerCase() === "kuchyn";
+      if (isKitchen) {
+        sections[1].groups.push(g);
       } else {
-        sections[0].items.push(r);
+        sections[0].groups.push(g);
       }
     }
-    sections.forEach((section) => section.items.sort(compareByCategoryParentName));
     return sections;
   }, [rows]);
 
@@ -683,19 +701,26 @@ export default function WarehouseEventDetailPage() {
           )}
         </CardHeader>
         <CardContent>
-          {groupedRows.every(s => s.items.length === 0) ? (
+          {groupedRows.every(s => s.groups.length === 0) ? (
             <div className="text-sm text-slate-600">Pro tuto akci nejsou žádné položky.</div>
           ) : (
             <div className="space-y-8">
-              {groupedRows.filter(s => s.items.length > 0).map((section) => (
+              {groupedRows.filter(s => s.groups.length > 0).map((section) => (
                 <div key={section.title}>
                   <div className="mb-4 flex items-center gap-3">
                     <div className="h-px flex-1 bg-slate-200" />
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">{section.title}</h3>
                     <div className="h-px flex-1 bg-slate-200" />
                   </div>
-                  <div className="space-y-3">
-                    {section.items.map((r) => {
+                  <div className="space-y-4">
+                    {section.groups.map((g) => (
+                      <div key={`${g.parent}/${g.sub}`}>
+                        <div className="mb-2 flex items-center gap-2">
+                          <Badge>{g.parent}</Badge>
+                          <Badge tone="neutral">{g.sub}</Badge>
+                        </div>
+                        <div className="space-y-3">
+                    {g.items.map((r) => {
                       const issuedQty = getIssuedQtyForItem(r.inventory_item_id, r.requested);
                       const computedReturned = getComputedReturnedQty(r);
                       const variance = r.broken + r.lost;
@@ -945,6 +970,9 @@ export default function WarehouseEventDetailPage() {
                         </div>
                       );
                     })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}

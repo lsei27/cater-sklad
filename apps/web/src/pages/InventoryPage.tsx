@@ -162,10 +162,45 @@ export default function InventoryPage() {
     );
   }, [parents, parentId]);
 
+  // Normalize per-warehouse stocks so they sum to the physical total
+  const normalizedStocks = useMemo(() => {
+    const result: Record<string, Record<string, number>> = {};
+    for (const item of items) {
+      const total = item.stock?.total ?? 0;
+      const raw = warehouseStocks[item.itemId] ?? {};
+      const rawSum = Object.values(raw).reduce((s: number, v: number) => s + v, 0);
+
+      if (rawSum === 0 || total <= 0) {
+        result[item.itemId] = {};
+        continue;
+      }
+      if (rawSum === total) {
+        result[item.itemId] = raw;
+        continue;
+      }
+      // Scale proportionally so the sum matches the physical total
+      const normalized: Record<string, number> = {};
+      const entries = Object.entries(raw).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      let remaining = total;
+      for (let i = 0; i < entries.length; i++) {
+        const [wId, rawVal] = entries[i];
+        if (i === entries.length - 1) {
+          normalized[wId] = Math.max(0, remaining);
+        } else {
+          const scaled = Math.round((rawVal / rawSum) * total);
+          normalized[wId] = Math.max(0, Math.min(scaled, remaining));
+          remaining -= normalized[wId];
+        }
+      }
+      result[item.itemId] = normalized;
+    }
+    return result;
+  }, [items, warehouseStocks]);
+
   const visibleItems = useMemo(() => {
     if (!warehouseId) return items;
-    return items.filter((i) => (warehouseStocks[i.itemId]?.[warehouseId] ?? 0) > 0);
-  }, [items, warehouseId, warehouseStocks]);
+    return items.filter((i) => (normalizedStocks[i.itemId]?.[warehouseId] ?? 0) > 0);
+  }, [items, warehouseId, normalizedStocks]);
 
   const filteredEvents = useMemo(() => {
     const s = eventSearch.trim().toLowerCase();
@@ -404,7 +439,7 @@ export default function InventoryPage() {
                       <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1">Po skladech</div>
                       <div className="grid grid-cols-2 gap-1">
                         {warehouses.map(w => {
-                          const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
+                          const stock = normalizedStocks[i.itemId]?.[w.id] ?? 0;
                           if (stock === 0) return null;
                           return (
                             <div key={w.id} className="flex justify-between items-center text-[11px] px-2 py-1 bg-gray-50 rounded">
@@ -489,7 +524,7 @@ export default function InventoryPage() {
                     <td className="px-2 py-1.5 text-gray-500">
                       <div className="flex flex-wrap gap-1">
                         {warehouses.map(w => {
-                          const stock = warehouseStocks[i.itemId]?.[w.id] ?? 0;
+                          const stock = normalizedStocks[i.itemId]?.[w.id] ?? 0;
                           if (stock === 0) return null;
                           return (
                             <span key={w.id} className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded whitespace-nowrap">
@@ -592,7 +627,7 @@ export default function InventoryPage() {
       <ItemDetailModal
         item={detailItem}
         warehouses={warehouses}
-        warehouseStocks={warehouseStocks}
+        warehouseStocks={normalizedStocks}
         onClose={() => setDetailItem(null)}
       />
     </div>

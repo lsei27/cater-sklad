@@ -125,6 +125,18 @@ physical AS (
   WHERE inventory_item_id = ANY(${itemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
+-- Virtual returns: items from ISSUED events whose pickup is before our window start
+virtual_returns AS (
+  SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
+  FROM event_issues ei
+  JOIN events e ON e.id = ei.event_id
+  CROSS JOIN params p
+  WHERE ei.inventory_item_id = ANY(${itemIds}::uuid[])
+    AND e.status = 'ISSUED'
+    AND ei.type = 'issued'
+    AND e.pickup_datetime <= p.t_start
+  GROUP BY ei.inventory_item_id
+),
 -- Per item+event: take GREATEST of reservation vs manual warehouse block
 per_event_blocked AS (
   SELECT
@@ -157,11 +169,12 @@ blocked AS (
 )
 SELECT
   i.id::text AS inventory_item_id,
-  COALESCE(p.physical_total,0)::int AS physical_total,
+  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0))::int AS physical_total,
   COALESCE(b.blocked_total,0)::int AS blocked_total,
-  (COALESCE(p.physical_total,0) - COALESCE(b.blocked_total,0))::int AS available
+  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0) - COALESCE(b.blocked_total,0))::int AS available
 FROM items i
 LEFT JOIN physical p ON p.inventory_item_id = i.id
+LEFT JOIN virtual_returns vr ON vr.inventory_item_id = i.id
 LEFT JOIN blocked b ON b.inventory_item_id = i.id;
       `;
     });
@@ -236,6 +249,17 @@ physical AS (
   WHERE inventory_item_id = ANY(${targetItemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
+virtual_returns AS (
+  SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
+  FROM event_issues ei
+  JOIN events e ON e.id = ei.event_id
+  CROSS JOIN params p
+  WHERE ei.inventory_item_id = ANY(${targetItemIds}::uuid[])
+    AND e.status = 'ISSUED'
+    AND ei.type = 'issued'
+    AND e.pickup_datetime <= p.t_start
+  GROUP BY ei.inventory_item_id
+),
 per_event_blocked AS (
   SELECT
     i.id AS inventory_item_id,
@@ -267,11 +291,12 @@ blocked AS (
 )
 SELECT
   i.id::text AS inventory_item_id,
-  COALESCE(p.physical_total,0)::int AS physical_total,
+  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0))::int AS physical_total,
   COALESCE(b.blocked_total,0)::int AS blocked_total,
-  (COALESCE(p.physical_total,0) - COALESCE(b.blocked_total,0))::int AS available
+  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0) - COALESCE(b.blocked_total,0))::int AS available
 FROM items i
 LEFT JOIN physical p ON p.inventory_item_id = i.id
+LEFT JOIN virtual_returns vr ON vr.inventory_item_id = i.id
 LEFT JOIN blocked b ON b.inventory_item_id = i.id;
       `;
     });

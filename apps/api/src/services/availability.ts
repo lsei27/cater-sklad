@@ -21,6 +21,18 @@ physical AS (
   FROM inventory_ledger l
   WHERE l.inventory_item_id = ${inventoryItemId}::uuid
 ),
+-- Virtual returns: items from ISSUED events whose pickup is before our window start
+-- These items are expected back and should count as available
+virtual_returns AS (
+  SELECT COALESCE(SUM(ei.issued_quantity), 0) AS virtual_qty
+  FROM event_issues ei
+  JOIN events e ON e.id = ei.event_id
+  CROSS JOIN target t
+  WHERE ei.inventory_item_id = ${inventoryItemId}::uuid
+    AND e.status = 'ISSUED'
+    AND ei.type = 'issued'
+    AND e.pickup_datetime <= t.t_start
+),
 -- Per-event: take GREATEST of reservation vs manual block, then sum across events
 per_event_blocked AS (
   SELECT
@@ -47,9 +59,12 @@ per_event_blocked AS (
   GROUP BY e2.id
 )
 SELECT
-  COALESCE((SELECT physical_total FROM physical), 0) AS physical_total,
+  (COALESCE((SELECT physical_total FROM physical), 0)
+   + COALESCE((SELECT virtual_qty FROM virtual_returns), 0)) AS physical_total,
   COALESCE((SELECT SUM(blocked_qty) FROM per_event_blocked), 0) AS blocked_total,
-  (COALESCE((SELECT physical_total FROM physical), 0) - COALESCE((SELECT SUM(blocked_qty) FROM per_event_blocked), 0)) AS available;
+  ((COALESCE((SELECT physical_total FROM physical), 0)
+    + COALESCE((SELECT virtual_qty FROM virtual_returns), 0))
+   - COALESCE((SELECT SUM(blocked_qty) FROM per_event_blocked), 0)) AS available;
   `;
 
   const row = rows[0] ?? { physical_total: 0, blocked_total: 0, available: 0 };
