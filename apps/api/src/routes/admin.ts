@@ -566,7 +566,8 @@ export async function adminRoutes(app: FastifyInstance) {
       delimiter: ";",
       columns: true,
       skip_empty_lines: true,
-      trim: true
+      trim: true,
+      bom: true
     }) as Array<Record<string, string>>;
 
     const report = {
@@ -594,7 +595,7 @@ export async function adminRoutes(app: FastifyInstance) {
             const name = (r.name ?? "").trim();
             const parentName = (r.main_category ?? r.parent_category ?? "").trim();
             const subName = (r.child_category ?? r.category ?? "").trim();
-            const quantity = Number(String(r.quantity ?? "0").trim());
+            const quantity = Number(String(r.total_quantity ?? r.quantity ?? "0").trim());
             const unit = (r.unit ?? "ks").trim() || "ks";
             const sku = (r.sku ?? "").trim() || null;
             const notes = (r.notes ?? "").trim() || null;

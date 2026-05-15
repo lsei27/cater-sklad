@@ -865,7 +865,7 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
       "main_category",
       "child_category",
       "unit",
-      "quantity",
+      "total_quantity",
       "active",
       "sku",
       "notes",
