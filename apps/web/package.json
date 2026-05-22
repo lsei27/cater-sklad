@@ -14,23 +14,23 @@
     "@radix-ui/react-dialog": "^1.1.15",
     "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.14.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-hot-toast": "^2.6.0",
-    "react-router-dom": "^7.14.2",
-    "tailwind-merge": "^3.5.0"
+    "react-router-dom": "^7.15.1",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.4",
-    "@types/node": "^25.6.0",
-    "@types/react": "^19.2.14",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.12",
-    "tailwindcss": "^4.2.4",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.14"
   }
 }
