@@ -86,3 +86,15 @@ export async function getPhysicalTotal(
   `;
   return Number(rows[0]?.physical_total ?? 0);
 }
+
+export async function getWarehouseQuantity(
+  prisma: PrismaClient | Prisma.TransactionClient,
+  inventoryItemId: string,
+  warehouseId: string | null
+) {
+  const result = await prisma.inventoryLedger.aggregate({
+    where: { inventoryItemId, warehouseId },
+    _sum: { deltaQuantity: true }
+  });
+  return result._sum.deltaQuantity ?? 0;
+}

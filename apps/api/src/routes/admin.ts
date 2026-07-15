@@ -4,7 +4,7 @@ import { parse } from "csv-parse/sync";
 import { LedgerReason } from "../../generated/prisma/client.js";
 import { requireRole } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
-import { getPhysicalTotal } from "../services/availability.js";
+import { getPhysicalTotal, getWarehouseQuantity } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { sseBus } from "../lib/sse.js";
 import path from "node:path";
@@ -570,6 +570,14 @@ export async function adminRoutes(app: FastifyInstance) {
       bom: true
     }) as Array<Record<string, string>>;
 
+    // Per-warehouse export columns look like "warehouse_<name>" (plus a "warehouse_unassigned"
+    // bucket for stock without a warehouse). When present, they drive stock per warehouse instead
+    // of the legacy single total_quantity/warehouse columns. "warehouse_name" is excluded because
+    // it's a pre-existing legacy alias for the single "warehouse" column, not a per-warehouse column.
+    const warehouseColumnKeys = records.length > 0
+      ? Object.keys(records[0]!).filter((k) => k.startsWith("warehouse_") && k !== "warehouse_name")
+      : [];
+
     const report = {
       created_parents: [] as string[],
       created_subcats: [] as string[],
@@ -662,19 +670,55 @@ export async function adminRoutes(app: FastifyInstance) {
               crossSellQueue.push({ itemId: item.id, refs: crossSellRefs });
             }
 
-            const current = await getPhysicalTotal(tx, item.id);
-            const delta = quantity - current;
-            if (delta !== 0) {
-              await createInventoryLedgerEntry(tx, {
-                inventoryItemId: item.id,
-                deltaQuantity: delta,
-                reason: LedgerReason.audit_adjustment,
-                createdById: actor.id,
-                warehouseId: item.warehouseId ?? warehouseId ?? null,
-                note: `CSV import set quantity=${quantity} (was ${current})`
-              });
-              report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta });
-              changedItemIds.add(item.id);
+            if (warehouseColumnKeys.length > 0) {
+              // Per-warehouse columns: adjust stock warehouse by warehouse instead of as one lump sum.
+              // A blank cell means "leave this warehouse's stock untouched".
+              for (const columnKey of warehouseColumnKeys) {
+                const rawQty = (r[columnKey] ?? "").toString().trim();
+                if (rawQty === "") continue;
+                const targetQty = Number(rawQty);
+                if (!Number.isFinite(targetQty)) continue;
+
+                const columnWarehouseName = columnKey.slice("warehouse_".length);
+                let columnWarehouseId: string | null = null;
+                if (columnWarehouseName !== "unassigned") {
+                  let columnWarehouse = await tx.warehouse.findUnique({ where: { name: columnWarehouseName } });
+                  if (!columnWarehouse) {
+                    columnWarehouse = await tx.warehouse.create({ data: { name: columnWarehouseName } });
+                  }
+                  columnWarehouseId = columnWarehouse.id;
+                }
+
+                const currentForWarehouse = await getWarehouseQuantity(tx, item.id, columnWarehouseId);
+                const warehouseDelta = targetQty - currentForWarehouse;
+                if (warehouseDelta !== 0) {
+                  await createInventoryLedgerEntry(tx, {
+                    inventoryItemId: item.id,
+                    deltaQuantity: warehouseDelta,
+                    reason: LedgerReason.audit_adjustment,
+                    createdById: actor.id,
+                    warehouseId: columnWarehouseId,
+                    note: `CSV import set ${columnKey}=${targetQty} (was ${currentForWarehouse})`
+                  });
+                  report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta: warehouseDelta });
+                  changedItemIds.add(item.id);
+                }
+              }
+            } else {
+              const current = await getPhysicalTotal(tx, item.id);
+              const delta = quantity - current;
+              if (delta !== 0) {
+                await createInventoryLedgerEntry(tx, {
+                  inventoryItemId: item.id,
+                  deltaQuantity: delta,
+                  reason: LedgerReason.audit_adjustment,
+                  createdById: actor.id,
+                  warehouseId: item.warehouseId ?? warehouseId ?? null,
+                  note: `CSV import set quantity=${quantity} (was ${current})`
+                });
+                report.ledger_adjustments.push({ sku: sku ?? undefined, name, delta });
+                changedItemIds.add(item.id);
+              }
             }
           } catch (e: any) {
             report.errors.push({ row: idx + 1, error: e?.message ?? String(e) });

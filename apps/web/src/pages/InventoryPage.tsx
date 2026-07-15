@@ -9,6 +9,7 @@ import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import Modal from "../components/ui/Modal";
 import ItemDetailModal from "../components/ItemDetailModal";
+import EditItemModal from "../components/EditItemModal";
 import { cn } from "../lib/ui";
 import { formatCategoryParentLabel, statusBadgeClass, statusLabel, stockTone } from "../lib/viewModel";
 import { Icons } from "../lib/icons";
@@ -44,6 +45,9 @@ export default function InventoryPage() {
   const [pickOpen, setPickOpen] = useState(false);
   const [pickItem, setPickItem] = useState<any | null>(null);
   const [detailItem, setDetailItem] = useState<any | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editItem, setEditItem] = useState<any | null>(null);
+  const [editAllItems, setEditAllItems] = useState<any[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventSearch, setEventSearch] = useState("");
@@ -208,9 +212,21 @@ export default function InventoryPage() {
     return events.filter((e) => e.name.toLowerCase().includes(s) || e.location.toLowerCase().includes(s));
   }, [events, eventSearch]);
 
-  const onPrimaryAction = (item: any) => {
+  const onPrimaryAction = async (item: any) => {
     if (canEdit) {
-      nav(`/settings/items?search=${encodeURIComponent(item.name)}`);
+      try {
+        const res = await api<{ items: any[] }>("/admin/items");
+        const full = res.items.find((x: any) => x.id === item.itemId);
+        if (!full) {
+          toast.error("Položku se nepodařilo najít.");
+          return;
+        }
+        setEditAllItems(res.items);
+        setEditItem(full);
+        setEditOpen(true);
+      } catch (e: any) {
+        toast.error(e?.error?.message ?? "Nepodařilo se načíst položku.");
+      }
       return;
     }
     setPickItem(item);
@@ -630,6 +646,18 @@ export default function InventoryPage() {
         warehouseStocks={normalizedStocks}
         onClose={() => setDetailItem(null)}
       />
+
+      {editItem && (
+        <EditItemModal
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          item={editItem}
+          allItems={editAllItems}
+          parents={parents}
+          warehouses={warehouses}
+          onSaved={() => load()}
+        />
+      )}
     </div>
   );
 }
