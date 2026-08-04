@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, getCurrentUser } from "../lib/api";
 import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -8,6 +8,7 @@ import Skeleton from "../components/ui/Skeleton";
 import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 import { Icons } from "../lib/icons";
+import { CreateEventButton } from "./EventsPage";
 
 type EventRow = {
   id: string;
@@ -24,6 +25,7 @@ type EventRow = {
 export default function WarehouseEventsPage() {
   const allStatuses = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CANCELLED", "CLOSED"] as const;
   const role = getCurrentUser()?.role ?? "";
+  const nav = useNavigate();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,7 +129,10 @@ export default function WarehouseEventsPage() {
           <h1 className="text-xl font-semibold">Sklad</h1>
           <div className="text-sm text-slate-600">Akce připravené k výdeji nebo uzavření.</div>
         </div>
-        <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
+        <div className="flex flex-col gap-2 sm:items-end">
+          <CreateEventButton onCreated={(eventId) => nav(`/events/${eventId}`)} />
+          <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">

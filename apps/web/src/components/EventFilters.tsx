@@ -82,7 +82,7 @@ export default function EventFilters({ activeRole, filters, onChange }: Props) {
                 </Select>
             </div>
 
-            {["admin", "event_manager"].includes(activeRole) && (
+            {["admin", "event_manager", "warehouse"].includes(activeRole) && (
                 <label className="flex min-h-10 items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
                     <input
                         type="checkbox"

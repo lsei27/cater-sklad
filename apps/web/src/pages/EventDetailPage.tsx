@@ -105,7 +105,7 @@ export default function EventDetailPage() {
       toast.error("Akce je už uzamčená (vydaná nebo uzavřená).");
       return;
     }
-    if (role === "event_manager" && !isOwner) {
+    if (["event_manager", "warehouse"].includes(role) && !isOwner) {
       deepLinkHandled.current = true;
       toast.error("Nemáte oprávnění přidávat položky do cizí akce.");
       return;
@@ -157,11 +157,11 @@ export default function EventDetailPage() {
     return eDate.getTime() < today.getTime();
   }, [event?.eventDate]);
 
-  const canEM = ["admin", "event_manager"].includes(role);
+  const canEM = ["admin", "event_manager", "warehouse"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
-  const canManageEvent = role === "admin" || (role === "event_manager" && isOwner);
+  const canManageEvent = role === "admin" || (["event_manager", "warehouse"].includes(role) && isOwner);
   const canConfirmKitchen = canChef || canManageEvent;
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
@@ -455,7 +455,7 @@ export default function EventDetailPage() {
 
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <>
-                {["admin", "event_manager"].includes(role) ? (
+                {["admin", "event_manager", "warehouse"].includes(role) ? (
                   <Button
                     variant="secondary"
                     onClick={() =>
@@ -562,7 +562,7 @@ export default function EventDetailPage() {
                             const canDelete =
                               canEditEvent &&
                               (role === "admin" ||
-                                (role === "event_manager" && r.createdById === getCurrentUser()?.id) ||
+                                (["event_manager", "warehouse"].includes(role) && r.createdById === getCurrentUser()?.id) ||
                                 (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
 
                             return (
@@ -1199,7 +1199,7 @@ function AddItemsPanel(props: {
                   const isKitchenItem = String(r.item?.category?.parent?.name ?? "").toLowerCase() === "kuchyň";
                   const canModify =
                     props.role === "admin" ||
-                    (props.role === "event_manager" && (!r.createdById || r.createdById === userId)) ||
+                    (["event_manager", "warehouse"].includes(props.role) && (!r.createdById || r.createdById === userId)) ||
                     (props.role === "chef" && isKitchenItem);
                   const availableForItem = availability.get(r.inventoryItemId)?.available;
                   const reservedValue = qty[r.inventoryItemId] ?? Number(r.reservedQuantity);
