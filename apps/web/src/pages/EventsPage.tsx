@@ -135,7 +135,7 @@ export default function EventsPage() {
                 className="pl-10 h-10"
               />
             </div>
-            {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={load} /> : null}
+            {["admin", "event_manager"].includes(role) ? <CreateEventButton onCreated={() => load()} /> : null}
           </div>
           <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
         </div>
@@ -318,12 +318,12 @@ export default function EventsPage() {
   );
 }
 
-function CreateEventButton(props: { onCreated: () => void }) {
+export function CreateEventButton(props: { onCreated: (eventId: string) => void; label?: string }) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
       <Button onClick={() => setOpen(true)}>
-        <Icons.Plus /> Nová akce
+        <Icons.Plus /> {props.label ?? "Nová akce"}
       </Button>
     );
   }
@@ -331,7 +331,7 @@ function CreateEventButton(props: { onCreated: () => void }) {
   return <CreateEventForm onClose={() => setOpen(false)} onCreated={props.onCreated} />;
 }
 
-function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) {
+function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: string) => void }) {
   const [name, setName] = useState("Akce");
   const [location, setLocation] = useState("Praha");
   const [address, setAddress] = useState("");
@@ -354,7 +354,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
             e.preventDefault();
             setError(null);
             try {
-              await api("/events", {
+              const res = await api<{ event: { id: string } }>("/events", {
                 method: "POST",
                 body: JSON.stringify({
                   name,
@@ -368,7 +368,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: () => void }) 
               });
               toast.success("Akce vytvořena");
               props.onClose();
-              props.onCreated();
+              props.onCreated(res.event.id);
             } catch (e: any) {
               const msg = e?.error?.message ?? "Nepodařilo se vytvořit akci.";
               setError(msg);

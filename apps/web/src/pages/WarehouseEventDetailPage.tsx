@@ -377,9 +377,17 @@ export default function WarehouseEventDetailPage() {
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
-        Zpět na seznam
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
+          Zpět na seznam
+        </Button>
+        {(role === "admin" || event.createdBy?.id === getCurrentUser()?.id) &&
+        !["ISSUED", "CLOSED", "CANCELLED"].includes(event.status) ? (
+          <Button variant="secondary" size="sm" onClick={() => nav(`/events/${id}`)}>
+            <Icons.Edit className="h-4 w-4" /> Upravit akci a položky
+          </Button>
+        ) : null}
+      </div>
 
       {event.status === "SENT_TO_WAREHOUSE" && warehouseItems.length === 0 ? (
         <Card className="border-amber-200 bg-amber-50">

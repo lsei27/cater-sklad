@@ -154,7 +154,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const body = EventCreateSchema.parse(request.body);
     const event = await app.prisma.event.create({
       data: {
@@ -182,7 +182,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.patch("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = EventUpdateSchema.parse(request.body);
 
@@ -221,7 +221,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/cancel", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
@@ -230,7 +230,7 @@ export async function eventRoutes(app: FastifyInstance) {
           SELECT id, status::text, created_by::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
         `;
         if (!row) throw new Error("NOT_FOUND");
-        if (user.role === "event_manager" && row.created_by !== user.id) throw new Error("FORBIDDEN");
+        if (["event_manager", "warehouse"].includes(user.role) && row.created_by !== user.id) throw new Error("FORBIDDEN");
         if (row.status === "CLOSED") throw new Error("READ_ONLY");
         if (row.status === "ISSUED") throw new Error("ALREADY_ISSUED");
         if (row.status === "CANCELLED") return row;
@@ -492,7 +492,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.get("/events/:id/cross-sell-warnings", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "chef"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const event = await app.prisma.event.findUnique({
@@ -537,7 +537,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/cross-sell-dismiss", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "chef"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({
       itemId: z.string().uuid().optional(),
@@ -562,7 +562,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/reserve", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "chef"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
 
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
@@ -608,7 +608,7 @@ export async function eventRoutes(app: FastifyInstance) {
         if (!eventRow) throw new Error("EVENT_NOT_FOUND");
 
         let exportResult = null;
-        if (["admin", "event_manager"].includes(user.role) && eventRow?.status === "SENT_TO_WAREHOUSE" && eventRow.chefConfirmedAt) {
+        if (["admin", "event_manager", "warehouse"].includes(user.role) && eventRow?.status === "SENT_TO_WAREHOUSE" && eventRow.chefConfirmedAt) {
           const count = await tx.eventReservation.count({
             where: { eventId: params.id, reservedQuantity: { gt: 0 } }
           });
@@ -662,7 +662,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/confirm-chef", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "chef", "event_manager"]);
+    requireRole(user.role, ["admin", "chef", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
@@ -672,7 +672,7 @@ export async function eventRoutes(app: FastifyInstance) {
           select: { id: true, status: true, createdById: true }
         });
         if (!row) throw new Error("NOT_FOUND");
-        if (user.role === "event_manager" && row.createdById !== user.id) throw new Error("FORBIDDEN");
+        if (["event_manager", "warehouse"].includes(user.role) && row.createdById !== user.id) throw new Error("FORBIDDEN");
         if (row.status === "ISSUED" || row.status === "CLOSED" || row.status === "CANCELLED") throw new Error("READ_ONLY");
 
         await tx.eventReservation.updateMany({
@@ -720,7 +720,7 @@ export async function eventRoutes(app: FastifyInstance) {
   // Export preview - returns what would be in the export WITHOUT creating a new version
   app.get("/events/:id/export-preview", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const ev = await app.prisma.event.findUnique({
@@ -784,7 +784,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/export", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager"]);
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
