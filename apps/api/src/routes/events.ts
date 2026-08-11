@@ -70,6 +70,7 @@ const EventCreateSchema = z.object({
   location: z.string().min(1),
   address: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  registration_number: z.string().max(64).optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime(),
   pickup_datetime: z.string().datetime()
@@ -80,6 +81,7 @@ const EventUpdateSchema = z.object({
   location: z.string().min(1).optional(),
   address: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  registration_number: z.string().max(64).optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime().optional(),
   pickup_datetime: z.string().datetime().optional()
@@ -162,6 +164,7 @@ export async function eventRoutes(app: FastifyInstance) {
         location: body.location,
         address: body.address ?? null,
         notes: body.notes ?? null,
+        registrationNumber: body.registration_number ?? null,
         eventDate: body.event_date ? new Date(body.event_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
@@ -206,6 +209,7 @@ export async function eventRoutes(app: FastifyInstance) {
         ...(body.location !== undefined ? { location: body.location } : {}),
         ...(body.address !== undefined ? { address: body.address } : {}),
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(body.registration_number !== undefined ? { registrationNumber: body.registration_number } : {}),
         ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
         ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
         ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})

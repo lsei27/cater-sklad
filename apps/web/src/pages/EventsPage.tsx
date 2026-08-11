@@ -335,6 +335,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
   const [name, setName] = useState("Akce");
   const [location, setLocation] = useState("Praha");
   const [address, setAddress] = useState("");
+  const [registrationNumber, setRegistrationNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [eventDate, setEventDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
   const [delivery, setDelivery] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
@@ -360,6 +361,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
                   name,
                   location,
                   address: address || null,
+                  registration_number: registrationNumber.trim() || null,
                   notes: notes.trim() || null,
                   event_date: eventDate ? new Date(eventDate).toISOString() : null,
                   delivery_datetime: new Date(delivery).toISOString(),
@@ -387,6 +389,16 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
           <label className="text-sm">
             Adresa
             <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Ulice, město" />
+          </label>
+          <label className="text-sm">
+            Evidenční číslo akce <span className="text-slate-400">(nepovinné)</span>
+            <Input
+              className="mt-1"
+              value={registrationNumber}
+              onChange={(e) => setRegistrationNumber(e.target.value)}
+              placeholder="Např. 2026-0142"
+            />
+            <span className="mt-1 block text-xs text-slate-500">Číslo akce z nabídkové aplikace.</span>
           </label>
           <label className="text-sm md:col-span-2">
             Poznámka

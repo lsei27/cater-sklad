@@ -330,6 +330,11 @@ export default function EventDetailPage() {
                 </div>
               ) : null}
               <div className="mt-1 text-sm text-slate-600">{event.location}</div>
+              {event.registrationNumber ? (
+                <div className="mt-1 text-xs text-slate-500" title="Číslo akce z nabídkové aplikace">
+                  Evidenční číslo: <span className="font-medium text-slate-700">{event.registrationNumber}</span>
+                </div>
+              ) : null}
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
               </div>
@@ -1336,6 +1341,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
   const [name, setName] = useState(props.event.name);
   const [location, setLocation] = useState(props.event.location);
   const [address, setAddress] = useState(props.event.address || "");
+  const [registrationNumber, setRegistrationNumber] = useState(props.event.registrationNumber || "");
   const [notes, setNotes] = useState(props.event.notes || "");
   const [eventDate, setEventDate] = useState(props.event.eventDate ? new Date(props.event.eventDate).toISOString().slice(0, 10) : "");
   const [delivery, setDelivery] = useState(props.event.deliveryDatetime ? new Date(props.event.deliveryDatetime).toISOString().slice(0, 16) : "");
@@ -1351,6 +1357,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           name,
           location,
           address: address || null,
+          registration_number: registrationNumber.trim() || null,
           notes: notes.trim() || null,
           event_date: eventDate ? new Date(eventDate).toISOString() : null,
           delivery_datetime: new Date(delivery).toISOString(),
@@ -1387,7 +1394,16 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           Adresa
           <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} />
         </label>
-        <div />
+        <label className="text-sm">
+          Evidenční číslo akce <span className="text-slate-400">(nepovinné)</span>
+          <Input
+            className="mt-1"
+            value={registrationNumber}
+            onChange={(e) => setRegistrationNumber(e.target.value)}
+            placeholder="Např. 2026-0142"
+          />
+          <span className="mt-1 block text-xs text-slate-500">Číslo akce z nabídkové aplikace.</span>
+        </label>
         <label className="text-sm md:col-span-2">
           Poznámka
           <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />

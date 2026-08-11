@@ -422,6 +422,11 @@ export default function WarehouseEventDetailPage() {
                 </div>
               ) : null}
               <div className="text-sm text-slate-600">{event.location}</div>
+              {event.registrationNumber ? (
+                <div className="mt-1 text-xs text-slate-500" title="Číslo akce z nabídkové aplikace">
+                  Evidenční číslo: <span className="font-medium text-slate-700">{event.registrationNumber}</span>
+                </div>
+              ) : null}
               <div className="mt-2 text-xs text-slate-500">
                 {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
               </div>
