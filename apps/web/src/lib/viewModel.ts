@@ -30,6 +30,60 @@ export function statusBadgeClass(status: string) {
   }
 }
 
+export const EVENT_STATUS_ORDER = [
+  "DRAFT",
+  "READY_FOR_WAREHOUSE",
+  "SENT_TO_WAREHOUSE",
+  "ISSUED",
+  "CANCELLED",
+  "CLOSED"
+];
+
+export type EventSortMode = "status" | "date_asc" | "date_desc";
+
+export const EVENT_SORT_OPTIONS: Array<{ value: EventSortMode; label: string }> = [
+  { value: "status", label: "Podle stavu" },
+  { value: "date_asc", label: "Podle data: nejbližší první" },
+  { value: "date_desc", label: "Podle data: nejnovější první" }
+];
+
+type ListableEvent = { status: string; name: string; deliveryDatetime: string };
+
+export function groupEventsForList<T extends ListableEvent>(events: T[], sortMode: EventSortMode) {
+  const byDate = (a: T, b: T) => {
+    const diff = new Date(a.deliveryDatetime).getTime() - new Date(b.deliveryDatetime).getTime();
+    if (diff !== 0) return sortMode === "date_desc" ? -diff : diff;
+    return a.name.localeCompare(b.name, "cs");
+  };
+
+  if (sortMode !== "status") {
+    if (events.length === 0) return [];
+    return [{ status: "ALL", label: "Všechny akce", events: [...events].sort(byDate) }];
+  }
+
+  const byStatus = new Map<string, T[]>(EVENT_STATUS_ORDER.map((s) => [s, []]));
+  const other: T[] = [];
+
+  for (const e of events) {
+    const bucket = byStatus.get(e.status);
+    if (bucket) bucket.push(e);
+    else other.push(e);
+  }
+
+  const sections = EVENT_STATUS_ORDER.map((status) => {
+    const list = byStatus.get(status) ?? [];
+    list.sort(byDate);
+    return { status, label: statusLabel(status), events: list };
+  }).filter((section) => section.events.length > 0);
+
+  if (other.length > 0) {
+    other.sort(byDate);
+    sections.push({ status: "OTHER", label: "Ostatní", events: other });
+  }
+
+  return sections;
+}
+
 export const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   event_manager: "Event manager",

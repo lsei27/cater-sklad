@@ -15,6 +15,14 @@ import EditItemModal from "../components/EditItemModal";
 
 const CROSS_SELL_COLUMNS = 10;
 
+// Sklad hledá "svicen" i "Svícen", takže diakritiku i velikost písmen zahazujeme na obou stranách.
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+}
+
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
   const canManageItems = role === "admin" || role === "warehouse";
@@ -22,7 +30,10 @@ export default function AdminItemsPage() {
   const [parents, setParents] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [warehouseFilter, setWarehouseFilter] = useState("");
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
   const [newName, setNewName] = useState("");
   const [newParentId, setNewParentId] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
@@ -31,10 +42,50 @@ export default function AdminItemsPage() {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    const initial = searchParams.get("search");
-    if (initial) setSearch(initial);
     if (searchParams.get("import") === "true") setImportOpen(true);
   }, [searchParams]);
+
+  // setSearchParams mění identitu s každou navigací, takže bez téhle porovnávací pojistky
+  // by se effect zacyklil sám na sobě.
+  useEffect(() => {
+    const query = search.trim();
+    if ((searchParams.get("search") ?? "") === query) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (query) next.set("search", query);
+        else next.delete("search");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [search, searchParams, setSearchParams]);
+
+  const filteredItems = useMemo(() => {
+    const tokens = normalizeSearchText(search).split(/\s+/).filter(Boolean);
+    return items.filter((item: any) => {
+      if (activeFilter === "active" && !item.active) return false;
+      if (activeFilter === "inactive" && item.active) return false;
+      if (warehouseFilter && (item.warehouseId ?? "") !== warehouseFilter) return false;
+      if (categoryFilter && item.categoryId !== categoryFilter && item.category?.parent?.id !== categoryFilter) {
+        return false;
+      }
+      if (tokens.length === 0) return true;
+      const haystack = normalizeSearchText(
+        [item.name, item.sku, item.category?.name, item.category?.parent?.name].filter(Boolean).join(" ")
+      );
+      return tokens.every((token) => haystack.includes(token));
+    });
+  }, [items, search, categoryFilter, warehouseFilter, activeFilter]);
+
+  const filtersActive = Boolean(search.trim() || categoryFilter || warehouseFilter || activeFilter !== "all");
+
+  const resetFilters = () => {
+    setSearch("");
+    setCategoryFilter("");
+    setWarehouseFilter("");
+    setActiveFilter("all");
+  };
 
   const childCats = useMemo(
     () =>
@@ -59,9 +110,7 @@ export default function AdminItemsPage() {
       setParents(cats.parents);
       const warehouseRes = await api<{ warehouses: any[] }>("/warehouses?all=true");
       setWarehouses(warehouseRes.warehouses);
-      const q = new URLSearchParams();
-      if (search) q.set("search", search);
-      const res = await api<{ items: any[] }>(`/admin/items?${q.toString()}`);
+      const res = await api<{ items: any[] }>("/admin/items");
       setItems([...res.items].sort(compareByCategoryParentName));
     } catch (e: any) {
       toast.error(e?.error?.message ?? "Nepodařilo se načíst položky.");
@@ -71,7 +120,7 @@ export default function AdminItemsPage() {
   };
 
   const exportCsv = async () => {
-    if (items.length === 0) {
+    if (filteredItems.length === 0) {
       toast.error("Nejsou k dispozici žádné položky k exportu.");
       return;
     }
@@ -95,7 +144,7 @@ export default function AdminItemsPage() {
         const known = sortedWarehouses.reduce((sum: number, w: any) => sum + (stocks[item.id]?.[w.id] ?? 0), 0);
         return (item.totalQuantity ?? 0) - known;
       };
-      const hasUnassigned = items.some((item) => unassignedQty(item) !== 0);
+      const hasUnassigned = filteredItems.some((item) => unassignedQty(item) !== 0);
 
       const warehouseColumns = [
         ...sortedWarehouses.map((w: any) => ({ id: w.id as string | null, header: `warehouse_${w.name}` })),
@@ -122,7 +171,7 @@ export default function AdminItemsPage() {
         ...Array.from({ length: CROSS_SELL_COLUMNS }, (_, idx) => `cross_sell_${idx + 1}`)
       ];
 
-      const rows = items.map((item) => {
+      const rows = filteredItems.map((item) => {
         const crossSellRefs = (item.crossSellItems ?? [])
           .slice(0, CROSS_SELL_COLUMNS)
           .map((linked: any) => linked.sku || linked.name);
@@ -197,7 +246,7 @@ export default function AdminItemsPage() {
               <Plus className="h-4 w-4" /> Nová položka
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || exporting || items.length === 0}>
+              <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || exporting || filteredItems.length === 0}>
                 <Download className="h-4 w-4 mr-2" /> Export CSV
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
@@ -275,37 +324,85 @@ export default function AdminItemsPage() {
 
       <Card>
         <CardHeader>
-          <div className="text-sm font-semibold">Hledání</div>
-          <div className="mt-1 text-sm text-slate-600">Najdi položku podle názvu.</div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-2 md:grid-cols-3">
-            <label className="md:col-span-2 text-sm">
-              Dotaz
-              <div className="mt-1 flex items-center gap-2">
-                <Search className="h-4 w-4 text-slate-400" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Název položky…" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold">Hledání a filtry</div>
+              <div className="mt-1 text-sm text-slate-600">
+                Hledá se během psaní v názvu, SKU i kategorii. Na diakritice nezáleží.
               </div>
-            </label>
-            <div className="flex items-end">
-              <Button
-                full
-                variant="secondary"
-                onClick={async () => {
-                  setSearchParams((prev) => {
-                    const next = new URLSearchParams(prev);
-                    if (search.trim()) next.set("search", search.trim());
-                    else next.delete("search");
-                    return next;
-                  });
-                  await load();
-                }}
-                disabled={loading}
-              >
-                Hledat
-              </Button>
+            </div>
+            <div className="text-xs font-medium text-slate-500">
+              {loading ? "Načítám…" : `${filteredItems.length} z ${items.length} položek`}
             </div>
           </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-sm md:col-span-2 xl:col-span-1">
+              Dotaz
+              <div className="relative mt-1">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                  <Search className="h-4 w-4" />
+                </div>
+                <Input
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Název, SKU nebo kategorie…"
+                />
+              </div>
+            </label>
+
+            <label className="text-sm">
+              Kategorie
+              <Select className="mt-1" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                <option value="">Všechny kategorie</option>
+                {parents.map((p: any) => (
+                  <optgroup key={p.id} label={p.name}>
+                    <option value={p.id}>Vše v „{p.name}“</option>
+                    {(p.children ?? []).map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
+            </label>
+
+            <label className="text-sm">
+              Sklad
+              <Select className="mt-1" value={warehouseFilter} onChange={(e) => setWarehouseFilter(e.target.value)}>
+                <option value="">Všechny sklady</option>
+                {warehouses.map((w: any) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="text-sm">
+              Stav
+              <Select
+                className="mt-1"
+                value={activeFilter}
+                onChange={(e) => setActiveFilter(e.target.value as "all" | "active" | "inactive")}
+              >
+                <option value="all">Aktivní i neaktivní</option>
+                <option value="active">Jen aktivní</option>
+                <option value="inactive">Jen neaktivní</option>
+              </Select>
+            </label>
+          </div>
+
+          {filtersActive ? (
+            <div className="mt-3">
+              <Button variant="ghost" size="sm" onClick={resetFilters}>
+                Zrušit filtry
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -321,15 +418,24 @@ export default function AdminItemsPage() {
             </Card>
           ))}
         </div>
-      ) : items.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <Card>
           <CardContent>
-            <div className="text-sm text-slate-600">Žádné položky pro zvolený dotaz.</div>
+            <div className="text-sm text-slate-600">
+              {items.length === 0 ? "V katalogu zatím nejsou žádné položky." : "Žádná položka neodpovídá filtrům."}
+            </div>
+            {filtersActive && items.length > 0 ? (
+              <div className="mt-3">
+                <Button variant="secondary" size="sm" onClick={resetFilters}>
+                  Zrušit filtry
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
-          {items.map((i) => (
+          {filteredItems.map((i) => (
             <ItemRow key={i.id} item={i} allItems={items} parents={parents} warehouses={warehouses} onSaved={() => load({ keepLoading: true })} />
           ))}
         </div>
