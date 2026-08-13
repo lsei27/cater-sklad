@@ -101,6 +101,10 @@ model InventoryItem {
   unit                String   @default("ks")
   imageUrl            String?  @map("image_url")
   active              Boolean  @default(true)
+  /// Spotřební zboží (alkohol, mléko, káva). Nevrací se automaticky celé:
+  /// skutečně vrácené množství zadá sklad při uzavření akce, zbytek je spotřeba.
+  consumable          Boolean  @default(false)
+  /// Kolik dní po svozu trvá, než je vratná položka zase k dispozici.
   returnDelayDays     Int      @default(0) @map("return_delay_days")
   sku                 String?  @unique
   notes               String?
