@@ -10,6 +10,7 @@ import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
+import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.js";
 import { returnCloseTx } from "../services/returnClose.js";
 import { requireWarehouseId } from "../services/warehouse.js";
 
@@ -47,23 +48,6 @@ function compareByCategoryParentName(a: any, b: any) {
   if (byCategory !== 0) return byCategory;
 
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
-}
-
-function parseWeightValue(value: string | null | undefined) {
-  if (!value) return null;
-  const normalized = value.replace(",", ".").trim();
-  const match = normalized.match(/-?\d+(?:\.\d+)?/);
-  if (!match) return null;
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatWeightKg(value: number) {
-  const normalized = Math.round(value * 100) / 100;
-  return `${new Intl.NumberFormat("cs-CZ", {
-    minimumFractionDigits: normalized % 1 === 0 ? 0 : 1,
-    maximumFractionDigits: 2
-  }).format(normalized)} kg`;
 }
 
 const EventCreateSchema = z.object({
@@ -865,7 +849,7 @@ export async function eventRoutes(app: FastifyInstance) {
         const inventoryItems = itemsToIssue.length
           ? await tx.inventoryItem.findMany({
               where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
-              select: { id: true, masterPackageQty: true, masterPackageWeight: true, warehouseId: true }
+              select: { id: true, warehouseId: true }
             })
           : [];
         const itemMetaById = new Map(
@@ -874,14 +858,6 @@ export async function eventRoutes(app: FastifyInstance) {
         if (inventoryItems.length !== new Set(itemsToIssue.map((item) => item.inventory_item_id)).size) {
           throw new Error("ITEM_NOT_FOUND");
         }
-        const computedWeightKg = itemsToIssue.reduce((sum, item) => {
-          const meta = itemMetaById.get(item.inventory_item_id);
-          const packageWeightKg = parseWeightValue(meta?.masterPackageWeight);
-          const packageQty = meta?.masterPackageQty ?? null;
-          if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
-          return sum + Math.ceil(item.issued_quantity / packageQty) * packageWeightKg;
-        }, 0);
-
         const rows = itemsToIssue.map((i) => {
           const meta = itemMetaById.get(i.inventory_item_id);
           if (!meta) throw new Error("ITEM_NOT_FOUND");
@@ -899,6 +875,9 @@ export async function eventRoutes(app: FastifyInstance) {
           };
         });
         await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
+
+        // Vaha se pocita az z ulozeneho vydeje, aby sla stejnou cestou jako u doplnkoveho vydeje.
+        const computedWeightKg = await computeIssuedWeightKg(tx, params.id);
         
         // Add Ledger entries for issued items
         for (const row of rows) {

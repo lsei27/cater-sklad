@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Role, EventStatus } from "../generated/prisma/client.js";
 import { createTestPrisma } from "./testPrisma.js";
+import { fixtureStamp } from "./fixtureStamp.js";
 import { getIssuedWarehouseItems } from "../src/services/issuedItems.js";
 
 describe("seznam vydanych polozek (integration)", () => {
@@ -12,7 +13,7 @@ describe("seznam vydanych polozek (integration)", () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
-    const stamp = Date.now();
+    const stamp = fixtureStamp();
     const user = await prisma.user.create({
       data: { email: `issued-${stamp}@local`, passwordHash: "x", role: Role.admin }
     });
@@ -79,7 +80,7 @@ describe("seznam vydanych polozek (integration)", () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
-    const stamp = Date.now();
+    const stamp = fixtureStamp();
     const user = await prisma.user.create({
       data: { email: `issued2-${stamp}@local`, passwordHash: "x", role: Role.admin }
     });
