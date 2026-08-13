@@ -922,6 +922,9 @@ export async function eventRoutes(app: FastifyInstance) {
           });
         }
 
+        // Rozpracovaný výdej je po vydání bezpředmětný, stav položek drží event_issues.
+        await tx.eventPacking.deleteMany({ where: { eventId: params.id } });
+
         const updated = await tx.event.update({
           where: { id: params.id },
           data: {
@@ -1086,6 +1089,57 @@ export async function eventRoutes(app: FastifyInstance) {
       request.log.error({ err: e }, "delete event failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
+  });
+
+  app.get("/events/:id/packing", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const packing = await app.prisma.eventPacking.findMany({
+      where: { eventId: params.id },
+      select: { inventoryItemId: true, state: true }
+    });
+    return reply.send({ packing });
+  });
+
+  app.put("/events/:id/packing", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        inventory_item_id: z.string().uuid(),
+        state: z.enum(["idle", "armed", "confirmed"])
+      })
+      .parse(request.body);
+
+    const event = await app.prisma.event.findUnique({ where: { id: params.id }, select: { status: true } });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+    if (event.status !== "SENT_TO_WAREHOUSE") {
+      return httpError(reply, 409, "BAD_STATUS", "Balit lze jen akci ve stavu Předáno skladu.");
+    }
+
+    if (body.state === "idle") {
+      await app.prisma.eventPacking.deleteMany({
+        where: { eventId: params.id, inventoryItemId: body.inventory_item_id }
+      });
+      return reply.send({ ok: true });
+    }
+
+    await app.prisma.eventPacking.upsert({
+      where: {
+        eventId_inventoryItemId: { eventId: params.id, inventoryItemId: body.inventory_item_id }
+      },
+      create: {
+        eventId: params.id,
+        inventoryItemId: body.inventory_item_id,
+        state: body.state,
+        updatedById: user.id
+      },
+      update: { state: body.state, updatedById: user.id }
+    });
+    return reply.send({ ok: true });
   });
 
   app.get("/events/:id/blocks", { preHandler: [app.authenticate] }, async (request, reply) => {
