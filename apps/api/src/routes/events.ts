@@ -9,6 +9,7 @@ import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
+import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
 import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.js";
 import { returnCloseTx } from "../services/returnClose.js";
@@ -932,6 +933,67 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "WAREHOUSE_REQUIRED")
         return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
       request.log.error({ err: e }, "issue failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
+    }
+  });
+
+  app.post("/events/:id/issue-additional", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        idempotency_key: z.string().min(8),
+        warehouse_id: z.string().uuid().optional(),
+        pallet_count: z.number().int().min(0).optional().nullable(),
+        items: z
+          .array(
+            z.object({
+              inventory_item_id: z.string().uuid(),
+              qty: z.number().int().min(1)
+            })
+          )
+          .min(1)
+      })
+      .parse(request.body);
+
+    try {
+      const result = await app.prisma.$transaction((tx) =>
+        issueAdditionalTx({
+          tx,
+          eventId: params.id,
+          userId: user.id,
+          idempotencyKey: body.idempotency_key,
+          warehouseId: body.warehouse_id,
+          palletCount: body.pallet_count,
+          items: body.items.map((i) => ({ inventoryItemId: i.inventory_item_id, qty: i.qty }))
+        })
+      );
+
+      sseBus.emit({ type: "reservation_changed", eventId: params.id });
+      for (const item of body.items) {
+        sseBus.emit({ type: "ledger_changed", inventoryItemId: item.inventory_item_id });
+      }
+      return reply.send(result);
+    } catch (e: any) {
+      if (e instanceof InsufficientStockError) {
+        return httpError(reply, 409, "INSUFFICIENT_STOCK", "Nedostatečný stav skladu.", {
+          inventory_item_id: e.inventoryItemId,
+          available: e.available
+        });
+      }
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "BAD_STATUS")
+        return httpError(reply, 409, "BAD_STATUS", "Doplňkový výdej lze udělat jen u vydané akce.");
+      if (e?.message === "NO_ITEMS_TO_ISSUE")
+        return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Nezadal jsi žádné množství k vydání.");
+      if (e?.message === "DUPLICATE_ITEMS")
+        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v doplňkovém výdeji jen jednou.");
+      if (e?.message === "ITEM_NOT_FOUND")
+        return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
+      if (e?.message === "WAREHOUSE_REQUIRED")
+        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
+      request.log.error({ err: e }, "issue-additional failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
   });
