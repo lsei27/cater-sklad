@@ -27,6 +27,7 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
   const [crossSellSearch, setCrossSellSearch] = useState("");
   const [crossSellItemIds, setCrossSellItemIds] = useState<string[]>(item.crossSellItemIds ?? []);
   const [active, setActive] = useState(item.active ?? true);
+  const [consumable, setConsumable] = useState(item.consumable ?? false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const subcats = useMemo(
@@ -56,6 +57,7 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
     setCrossSellSearch("");
     setCrossSellItemIds(item.crossSellItemIds ?? item.crossSellItems?.map((x: any) => x.id) ?? []);
     setActive(item.active ?? true);
+    setConsumable(item.consumable ?? false);
   }, [open, item]);
 
   const crossSellCandidates = useMemo(
@@ -103,6 +105,7 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
           image_url: imageUrl ? imageUrl : null,
           qr_code: qrCode ? qrCode : null,
           cross_sell_item_ids: crossSellItemIds,
+          consumable,
           active
         })
       });
@@ -179,6 +182,24 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
         <label className="text-sm">
           Dny návratu
           <Input className="mt-1" type="number" min={0} value={returnDelayDays} onChange={e => setReturnDelayDays(e.target.value)} />
+          <span className="mt-1 block text-xs text-slate-500">
+            Za kolik dní po svozu je položka zase volná pro další akci.
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            checked={consumable}
+            onChange={e => setConsumable(e.target.checked)}
+          />
+          <span>
+            Spotřební zboží
+            <span className="mt-0.5 block text-xs text-slate-500">
+              Alkohol, mléko, káva. Při uzavření akce se nevrací automaticky celé množství, sklad zadá,
+              kolik se skutečně vrátilo, a zbytek se zaúčtuje jako spotřeba, ne jako manko.
+            </span>
+          </span>
         </label>
         <label className="text-sm">
           Master balení

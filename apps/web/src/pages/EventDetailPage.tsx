@@ -516,7 +516,7 @@ export default function EventDetailPage() {
           <CardHeader>
             <div className="flex items-center gap-2 text-red-800">
               <ShieldAlert className="h-5 w-5" />
-              <div className="text-sm font-semibold">Přehled ztrát a poškození</div>
+              <div className="text-sm font-semibold">Přehled ztrát, poškození a spotřeby</div>
             </div>
           </CardHeader>
           <CardContent>
@@ -527,7 +527,7 @@ export default function EventDetailPage() {
                   <div key={issue.id} className="flex items-center justify-between text-sm">
                     <div className="text-slate-700">{issue.item?.name}</div>
                     <div className="font-medium text-red-700">
-                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : issue.type === "consumed" ? "spotřebováno" : "chybí"})
                     </div>
                   </div>
                 ))}

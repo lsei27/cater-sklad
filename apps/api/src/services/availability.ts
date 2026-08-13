@@ -22,16 +22,20 @@ physical AS (
   WHERE l.inventory_item_id = ${inventoryItemId}::uuid
 ),
 -- Virtual returns: items from ISSUED events whose pickup is before our window start
--- These items are expected back and should count as available
+-- These items are expected back and should count as available.
+-- Vratná položka je k dispozici až po prodlevě return_delay_days od svozu (mytí,
+-- kontrola, přeprava). Spotřební zboží se nevrací vůbec, takže se nepočítá.
 virtual_returns AS (
   SELECT COALESCE(SUM(ei.issued_quantity), 0) AS virtual_qty
   FROM event_issues ei
   JOIN events e ON e.id = ei.event_id
+  JOIN inventory_items ii ON ii.id = ei.inventory_item_id
   CROSS JOIN target t
   WHERE ei.inventory_item_id = ${inventoryItemId}::uuid
     AND e.status = 'ISSUED'
     AND ei.type = 'issued'
-    AND e.pickup_datetime <= t.t_start
+    AND ii.consumable = false
+    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= t.t_start
 ),
 -- Per-event: take GREATEST of reservation vs manual block, then sum across events
 per_event_blocked AS (

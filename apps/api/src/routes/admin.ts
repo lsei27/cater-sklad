@@ -309,6 +309,7 @@ export async function adminRoutes(app: FastifyInstance) {
         active: z.boolean().optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
+        consumable: z.boolean().optional(),
         return_delay_days: z.number().int().min(0).optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
         master_package_weight: z.string().nullable().optional(),
@@ -329,6 +330,7 @@ export async function adminRoutes(app: FastifyInstance) {
           active: body.active ?? true,
           sku: body.sku ?? null,
           notes: body.notes ?? null,
+          consumable: body.consumable ?? false,
           returnDelayDays: body.return_delay_days ?? 0,
           masterPackageQty: body.master_package_qty ?? null,
           masterPackageWeight: normalizeDecimalString(body.master_package_weight),
@@ -369,6 +371,7 @@ export async function adminRoutes(app: FastifyInstance) {
         active: z.boolean().optional(),
         sku: z.string().min(1).nullable().optional(),
         notes: z.string().nullable().optional(),
+        consumable: z.boolean().optional(),
         return_delay_days: z.number().int().min(0).optional(),
         master_package_qty: z.number().int().min(1).nullable().optional(),
         master_package_weight: z.string().nullable().optional(),
@@ -390,6 +393,7 @@ export async function adminRoutes(app: FastifyInstance) {
           ...(body.active !== undefined ? { active: body.active } : {}),
           ...(body.sku !== undefined ? { sku: body.sku } : {}),
           ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          ...(body.consumable !== undefined ? { consumable: body.consumable } : {}),
           ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
           ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
           ...(body.master_package_weight !== undefined ? { masterPackageWeight: normalizeDecimalString(body.master_package_weight) } : {}),
@@ -639,9 +643,14 @@ export async function adminRoutes(app: FastifyInstance) {
               warehouseId = warehouse.id;
             }
 
+            // Chybějící sloupec nesmí příznak přepsat na false, jinak by starší CSV
+            // tiše zrušilo nastavení spotřebního zboží u všech položek.
+            const consumable = parseBool(r.consumable) ?? existing?.consumable ?? false;
+
             const itemData = {
               name, categoryId: child.id, unit, notes, imageUrl, active,
               qrCode,
+              consumable,
               returnDelayDays,
               masterPackageQty, masterPackageWeight, volume, plateDiameter,
               ...(existing || inventoryName ? { warehouseId } : {}),

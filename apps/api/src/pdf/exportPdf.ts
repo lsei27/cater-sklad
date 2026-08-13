@@ -262,14 +262,16 @@ export async function buildClosureReportPdf(event: any) {
   const colName = 50;
   const colRes = 300;
   const colRet = 360;
-  const colBro = 420;
-  const colMis = 480;
+  const colBro = 400;
+  const colMis = 450;
+  const colCon = 500;
 
   page.drawText(pdfText("Polozka"), { x: colName, y: yPos, size: 10, font: bold });
   page.drawText(pdfText("Rez."), { x: colRes, y: yPos, size: 10, font: bold });
   page.drawText(pdfText("Vrac."), { x: colRet, y: yPos, size: 10, font: bold });
   page.drawText(pdfText("Rozb."), { x: colBro, y: yPos, size: 10, font: bold });
   page.drawText(pdfText("Chybi"), { x: colMis, y: yPos, size: 10, font: bold });
+  page.drawText(pdfText("Spotr."), { x: colCon, y: yPos, size: 10, font: bold });
   yPos -= 4;
   page.drawLine({ start: { x: 50, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 0.5, color: rgb(0.5, 0.5, 0.5) });
   yPos -= 14;
@@ -309,6 +311,8 @@ export async function buildClosureReportPdf(event: any) {
       const returnedQty = itemReturns.reduce((sum: number, r: any) => sum + r.returnedQuantity, 0);
       const brokenQty = itemIssues.filter((i: any) => i.type === "broken").reduce((sum: number, i: any) => sum + (i.issuedQuantity || 0), 0);
       const missingQty = itemIssues.filter((i: any) => i.type === "missing").reduce((sum: number, i: any) => sum + (i.issuedQuantity || 0), 0);
+      // Spotreba u zbozi neni ztrata, tak se nezvyrazni cervene.
+      const consumedQty = itemIssues.filter((i: any) => i.type === "consumed").reduce((sum: number, i: any) => sum + (i.issuedQuantity || 0), 0);
 
       const isLoss = brokenQty > 0 || missingQty > 0;
       const itemFont = isLoss ? bold : font;
@@ -319,6 +323,7 @@ export async function buildClosureReportPdf(event: any) {
       page.drawText(pdfText(returnedQty), { x: colRet, y: yPos, size: 9, font });
       page.drawText(pdfText(brokenQty), { x: colBro, y: yPos, size: 9, font, color: brokenQty > 0 ? textColor : rgb(0, 0, 0) });
       page.drawText(pdfText(missingQty), { x: colMis, y: yPos, size: 9, font, color: missingQty > 0 ? textColor : rgb(0, 0, 0) });
+      page.drawText(pdfText(consumedQty), { x: colCon, y: yPos, size: 9, font });
 
       yPos -= 14;
     }

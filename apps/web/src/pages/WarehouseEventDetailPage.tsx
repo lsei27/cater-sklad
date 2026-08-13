@@ -56,10 +56,9 @@ export default function WarehouseEventDetailPage() {
     name: string; 
     unit: string; 
     requested: number; 
-    returned: number; 
-    broken: number; 
-    lost: number;
-    total?: number; 
+    returned: number;
+    broken: number;
+    total?: number;
     parentCategory?: string; 
     category?: string;
     imageUrl?: string | null; 
@@ -178,6 +177,18 @@ export default function WarehouseEventDetailPage() {
     return new Map<string, string | null>(entries);
   }, [event?.reservations]);
 
+  const consumableByItemId = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const source of [event?.reservations, event?.issues, event?.returns]) {
+      for (const row of (source ?? []) as any[]) {
+        if (row.item && typeof row.item.consumable === "boolean") {
+          map.set(row.inventoryItemId, row.item.consumable);
+        }
+      }
+    }
+    return map;
+  }, [event?.reservations, event?.issues, event?.returns]);
+
   const itemPackagingById = useMemo(() => {
     const entries = (event?.reservations ?? []).map((r: any) => [
       r.inventoryItemId,
@@ -201,11 +212,14 @@ export default function WarehouseEventDetailPage() {
         serverReturns.set(r.inventoryItemId, current);
       }
     }
-    const serverLost = new Map<string, number>();
+    const serverIssued = new Map<string, number>();
     if (event?.issues) {
       for (const issue of event.issues) {
-        if (issue.type === "missing") {
-          serverLost.set(issue.inventoryItemId, (serverLost.get(issue.inventoryItemId) || 0) + (issue.issuedQuantity || 0));
+        if (issue.type === "issued") {
+          serverIssued.set(
+            issue.inventoryItemId,
+            (serverIssued.get(issue.inventoryItemId) || 0) + (issue.issuedQuantity || 0)
+          );
         }
       }
     }
@@ -217,14 +231,17 @@ export default function WarehouseEventDetailPage() {
     setRows(
       warehouseItems.map((i) => {
         const s = serverReturns.get(i.inventoryItemId);
+        const issuedQty = serverIssued.get(i.inventoryItemId) ?? i.qty;
+        // U vratného inventáře je výchozí stav "vrátilo se všechno", u spotřebního
+        // zboží naopak nula: kolik se vrátilo, se pozná až při fyzickém vracení.
+        const defaultReturned = consumableByItemId.get(i.inventoryItemId) ? 0 : issuedQty;
         return {
           inventory_item_id: i.inventoryItemId,
           name: i.name,
           unit: i.unit,
           requested: i.qty,
-          returned: s?.returned ?? 0,
+          returned: s ? s.returned : defaultReturned,
           broken: s?.broken ?? 0,
-          lost: serverLost.get(i.inventoryItemId) ?? 0,
           parentCategory: (i as any).parentCategory || "",
           category: (i as any).category || "",
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
@@ -233,7 +250,7 @@ export default function WarehouseEventDetailPage() {
         };
       })
     );
-  }, [warehouseItems, event?.returns, event?.issues, imageByItemId, warehouses]);
+  }, [warehouseItems, event?.returns, event?.issues, imageByItemId, warehouses, consumableByItemId]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
@@ -374,8 +391,10 @@ export default function WarehouseEventDetailPage() {
     return issueData.issuedMap.get(inventoryItemId) ?? fallbackQty;
   };
 
-  const getComputedReturnedQty = (row: { inventory_item_id: string; requested: number; broken: number; lost: number }) => {
-    return Math.max(0, getIssuedQtyForItem(row.inventory_item_id, row.requested) - row.broken - row.lost);
+  // Co se nevrátilo a není rozbité, je u vratného inventáře manko a u spotřebního
+  // zboží spotřeba na akci.
+  const getShortfallQty = (row: { inventory_item_id: string; requested: number; returned: number; broken: number }) => {
+    return Math.max(0, getIssuedQtyForItem(row.inventory_item_id, row.requested) - row.returned - row.broken);
   };
 
   const markItemsAsFullyReturned = (inventoryItemIds: string[]) => {
@@ -386,8 +405,7 @@ export default function WarehouseEventDetailPage() {
           ? {
               ...row,
               returned: getIssuedQtyForItem(row.inventory_item_id, row.requested),
-              broken: 0,
-              lost: 0
+              broken: 0
             }
           : row
       )
@@ -549,7 +567,7 @@ export default function WarehouseEventDetailPage() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2 text-sm font-bold text-red-800">
               <Icons.Alert className="h-4 w-4" />
-              Přehled ztrát a poškození
+              Přehled ztrát, poškození a spotřeby
             </div>
           </CardHeader>
           <CardContent>
@@ -560,12 +578,12 @@ export default function WarehouseEventDetailPage() {
                   <div key={issue.id} className="flex items-center justify-between text-sm">
                     <div className="text-slate-700">{issue.item?.name}</div>
                     <div className="font-medium text-red-700">
-                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : "chybí"})
+                      {issue.issuedQuantity || 0} {issue.item?.unit} ({issue.type === "broken" ? "rozbito" : issue.type === "consumed" ? "spotřebováno" : "chybí"})
                     </div>
                   </div>
                 ))}
               {(!event.issues || event.issues.filter((i: any) => i.type !== "issued").length === 0) && (
-                <div className="text-sm text-slate-500 italic">Žádné zaznamenané ztráty.</div>
+                <div className="text-sm text-slate-500 italic">Žádné zaznamenané ztráty ani spotřeba.</div>
               )}
             </div>
           </CardContent>
@@ -789,8 +807,10 @@ export default function WarehouseEventDetailPage() {
                         <div className="space-y-3">
                     {g.items.map((r) => {
                       const issuedQty = getIssuedQtyForItem(r.inventory_item_id, r.requested);
-                      const computedReturned = getComputedReturnedQty(r);
-                      const variance = r.broken + r.lost;
+                      const isConsumable = consumableByItemId.get(r.inventory_item_id) ?? false;
+                      const shortfall = getShortfallQty(r);
+                      // U spotřebního zboží je nevrácený zbytek očekávaný, ne odchylka.
+                      const variance = isConsumable ? r.broken : r.broken + shortfall;
                       const existingBlocks = blocks.filter(b => b.inventoryItemId === r.inventory_item_id);
                       return (
                         <div key={r.inventory_item_id} className={cn(
@@ -854,7 +874,7 @@ export default function WarehouseEventDetailPage() {
                               ) : null}
                               {event.status === "ISSUED" ? (
                                 <div className="text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">
-                                  Vrátí se: {computedReturned} {r.unit}
+                                  Vrací se: {r.returned} {r.unit}
                                 </div>
                               ) : null}
                               {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
@@ -907,14 +927,22 @@ export default function WarehouseEventDetailPage() {
 
                           {event.status === "ISSUED" ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              <label className="text-xs col-span-2 sm:col-span-1">
-                                Vráceno automaticky
+                              <label className="text-xs">
+                                Vráceno
                                 <Input
                                   className="mt-1"
                                   type="number"
                                   min={0}
-                                  value={computedReturned}
-                                  disabled
+                                  max={issuedQty}
+                                  value={r.returned}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const requestedValue = Math.max(0, Number(e.target.value));
+                                    const nextReturned = Math.min(requestedValue, Math.max(0, issuedQty - r.broken));
+                                    setRows((prev) =>
+                                      prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, returned: nextReturned } : x))
+                                    );
+                                  }}
                                 />
                               </label>
                               <label className="text-xs">
@@ -923,34 +951,33 @@ export default function WarehouseEventDetailPage() {
                                   className="mt-1"
                                   type="number"
                                   min={0}
+                                  max={issuedQty}
                                   value={r.broken}
                                   onFocus={(e) => e.target.select()}
                                   onChange={(e) => {
                                     const requestedValue = Math.max(0, Number(e.target.value));
-                                    const nextBroken = Math.min(requestedValue, Math.max(0, issuedQty - r.lost));
+                                    const nextBroken = Math.min(requestedValue, Math.max(0, issuedQty - r.returned));
                                     setRows((prev) =>
                                       prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, broken: nextBroken } : x))
                                     );
                                   }}
                                 />
                               </label>
-                              <label className="text-xs">
-                                Ztracené / chybí
-                                <Input
-                                  className="mt-1"
-                                  type="number"
-                                  min={0}
-                                  value={r.lost}
-                                  onFocus={(e) => e.target.select()}
-                                  onChange={(e) => {
-                                    const requestedValue = Math.max(0, Number(e.target.value));
-                                    const nextLost = Math.min(requestedValue, Math.max(0, issuedQty - r.broken));
-                                    setRows((prev) =>
-                                      prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, lost: nextLost } : x))
-                                    );
-                                  }}
-                                />
-                              </label>
+                              <div className="text-xs">
+                                {isConsumable ? "Spotřebováno" : "Chybí"}
+                                <div
+                                  className={cn(
+                                    "mt-1 flex min-h-10 items-center rounded-xl border px-3 text-sm font-semibold",
+                                    shortfall === 0
+                                      ? "border-slate-200 bg-slate-50 text-slate-500"
+                                      : isConsumable
+                                        ? "border-slate-200 bg-slate-50 text-slate-800"
+                                        : "border-amber-200 bg-amber-50 text-amber-800"
+                                  )}
+                                >
+                                  {shortfall} {r.unit}
+                                </div>
+                              </div>
                               <label className="text-xs col-span-2 sm:col-span-1">
                                 Sklad vrácení
                                 <select 
@@ -1184,7 +1211,7 @@ export default function WarehouseEventDetailPage() {
         onOpenChange={setConfirmClose}
         tone="danger"
         title="Uzavřít akci?"
-        description="Výchozí stav je, že se vše vrátilo. Zadávají se jen rozbité a ztracené kusy, vrácené množství dopočítáme automaticky ze skutečně vydaného počtu."
+        description="Zadej, kolik se skutečně vrátilo a kolik se rozbilo. Zbytek do vydaného množství se u inventáře zaúčtuje jako manko, u spotřebního zboží jako spotřeba na akci."
         confirmText="Uzavřít"
         onConfirm={async () => {
           if (!id) return;
@@ -1195,7 +1222,7 @@ export default function WarehouseEventDetailPage() {
                 idempotency_key: `close:${Date.now()}`,
                 items: rows.map((r) => ({
                   inventory_item_id: r.inventory_item_id,
-                  returned_quantity: getComputedReturnedQty(r),
+                  returned_quantity: r.returned,
                   broken_quantity: r.broken,
                   target_warehouse_id: r.target_warehouse_id
                 }))

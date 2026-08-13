@@ -47,10 +47,11 @@ export async function returnCloseTx(params: {
     relevantItemIds.length > 0
       ? await tx.inventoryItem.findMany({
           where: { id: { in: relevantItemIds } },
-          select: { id: true, warehouseId: true }
+          select: { id: true, warehouseId: true, consumable: true }
         })
       : [];
   const itemWarehouseByItemId = new Map(inventoryItems.map((item) => [item.id, item.warehouseId]));
+  const consumableByItemId = new Map(inventoryItems.map((item) => [item.id, item.consumable]));
 
   if (issuedItemIds.length > 0) {
     if (items.length === 0) throw new Error("ITEMS_REQUIRED");
@@ -117,6 +118,9 @@ export async function returnCloseTx(params: {
   );
   const targetWarehouseByItemId = new Map(rows.map((row) => [row.inventoryItemId, row.targetWarehouseId]));
 
+  // Ztráty se do skladu nepromítají znovu: výdej na akci je z evidence odepsal
+  // už při vydání (-issued) a zpátky se přičte jen to, co se skutečně vrátilo.
+  // Řádky v event_issues jsou záznam ztráty pro reporty, ne skladový pohyb.
   for (const [inventoryItemId, issued] of issuedByItemId.entries()) {
     const returned = returnedByItemId.get(inventoryItemId)?.returned ?? 0;
     const broken = returnedByItemId.get(inventoryItemId)?.broken ?? 0;
@@ -135,40 +139,22 @@ export async function returnCloseTx(params: {
           idempotencyKey: `breakage:${eventId}:${inventoryItemId}:${Date.now()}`
         }
       });
-      await createInventoryLedgerEntry(tx, {
-        inventoryItemId,
-        deltaQuantity: -broken,
-        reason: LedgerReason.breakage,
-        eventId,
-        warehouseId,
-        createdById: userId,
-        note: "Rozbité při návratu"
-      });
-      changedLedgerItemIds.add(inventoryItemId);
     }
 
     if (missing > 0) {
+      // U spotřebního zboží není nevrácený zbytek manko, ale spotřeba na akci.
+      const isConsumable = consumableByItemId.get(inventoryItemId) ?? false;
       await tx.eventIssue.create({
         data: {
           eventId,
           inventoryItemId,
           issuedQuantity: missing,
-          type: "missing",
+          type: isConsumable ? "consumed" : "missing",
           warehouseId,
           issuedById: userId,
-          idempotencyKey: `missing:${eventId}:${inventoryItemId}:${Date.now()}`
+          idempotencyKey: `${isConsumable ? "consumed" : "missing"}:${eventId}:${inventoryItemId}:${Date.now()}`
         }
       });
-      await createInventoryLedgerEntry(tx, {
-        inventoryItemId,
-        deltaQuantity: -missing,
-        reason: LedgerReason.missing,
-        eventId,
-        warehouseId,
-        createdById: userId,
-        note: "Chybějící při uzavření"
-      });
-      changedLedgerItemIds.add(inventoryItemId);
     }
   }
 
