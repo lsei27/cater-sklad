@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import { compareByCategoryParentName, managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import Modal from "../components/ui/Modal";
+import AdditionalIssueModal from "../components/AdditionalIssueModal";
 import { Icons } from "../lib/icons";
 import { X, Plus } from "lucide-react";
 
@@ -74,6 +75,7 @@ export default function WarehouseEventDetailPage() {
   const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
   const [showConfirmedList, setShowConfirmedList] = useState(false);
+  const [additionalIssueOpen, setAdditionalIssueOpen] = useState(false);
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
   const [issuePalletCount, setIssuePalletCount] = useState<number | "">("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -717,6 +719,11 @@ export default function WarehouseEventDetailPage() {
               </div>
             ) : (
               <>
+                {event.status === "ISSUED" ? (
+                  <Button full variant="secondary" className="mb-2" onClick={() => setAdditionalIssueOpen(true)}>
+                    <Icons.Box className="h-4 w-4" /> Vydat navíc
+                  </Button>
+                ) : null}
                 <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
                   Uzavřít akci
                 </Button>
@@ -732,7 +739,11 @@ export default function WarehouseEventDetailPage() {
       <Card>
         <CardHeader>
           <div className="text-sm font-semibold">Položky</div>
-          <div className="mt-1 text-sm text-slate-600">Požadované množství je z posledního exportu.</div>
+          <div className="mt-1 text-sm text-slate-600">
+            {event.status === "ISSUED" || event.status === "CLOSED"
+              ? "Množství odpovídá skutečnému výdeji včetně doplňkových."
+              : "Požadované množství je z posledního exportu."}
+          </div>
           
           {event?.status === "ISSUED" && warehouseItems.length > 0 && (
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
@@ -1313,6 +1324,15 @@ export default function WarehouseEventDetailPage() {
           </div>
         )}
       </Modal>
+      <AdditionalIssueModal
+        open={additionalIssueOpen}
+        onOpenChange={setAdditionalIssueOpen}
+        eventId={id ?? ""}
+        warehouses={warehouses}
+        onDone={() => {
+          load();
+        }}
+      />
     </div >
   );
 }
