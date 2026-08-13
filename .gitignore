@@ -15,3 +15,9 @@ generated
 .venv
 venv
 .claude
+.backup
+
+# Pracovni data pro import a nahravani na CDN, ne zdrojovy kod.
+# Obrazky se nahravaji na Bunny a v katalogu se drzi jen image_url.
+obrazky_webp/
+aktualni_sklad_doplneno.csv
