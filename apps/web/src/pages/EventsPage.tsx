@@ -9,9 +9,17 @@ import Textarea from "../components/ui/Textarea";
 import Badge from "../components/ui/Badge";
 import Skeleton from "../components/ui/Skeleton";
 import toast from "react-hot-toast";
-import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
+import {
+  EVENT_SORT_OPTIONS,
+  EventSortMode,
+  groupEventsForList,
+  managerLabel,
+  statusBadgeClass,
+  statusLabel
+} from "../lib/viewModel";
 import { Icons } from "../lib/icons";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
+import Select from "../components/ui/Select";
 
 type EventRow = {
   id: string;
@@ -32,6 +40,7 @@ export default function EventsPage() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<EventFiltersData>({});
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [sortMode, setSortMode] = useState<EventSortMode>("status");
   const role = getCurrentUser()?.role ?? "";
 
   if (role === "warehouse") return <Navigate to="/warehouse" replace />;
@@ -74,45 +83,7 @@ export default function EventsPage() {
     return e.name.toLowerCase().includes(s) || e.location.toLowerCase().includes(s);
   });
 
-  const groupedSections = useMemo(() => {
-    const statusOrder = [
-      "DRAFT",
-      "READY_FOR_WAREHOUSE",
-      "SENT_TO_WAREHOUSE",
-      "ISSUED",
-      "CANCELLED",
-      "CLOSED"
-    ];
-    const byStatus = new Map<string, EventRow[]>(statusOrder.map((s) => [s, []]));
-    const other: EventRow[] = [];
-
-    for (const e of filtered) {
-      const bucket = byStatus.get(e.status);
-      if (bucket) bucket.push(e);
-      else other.push(e);
-    }
-
-    const byDate = (a: EventRow, b: EventRow) => {
-      const diff = new Date(a.deliveryDatetime).getTime() - new Date(b.deliveryDatetime).getTime();
-      if (diff !== 0) return diff;
-      return a.name.localeCompare(b.name, "cs");
-    };
-
-    const sections = statusOrder
-      .map((status) => {
-        const list = byStatus.get(status) ?? [];
-        list.sort(byDate);
-        return { status, label: statusLabel(status), events: list };
-      })
-      .filter((s) => s.events.length > 0);
-
-    if (other.length > 0) {
-      other.sort(byDate);
-      sections.push({ status: "OTHER", label: "Ostatní", events: other });
-    }
-
-    return sections;
-  }, [filtered]);
+  const groupedSections = useMemo(() => groupEventsForList(filtered, sortMode), [filtered, sortMode]);
 
   return (
     <div className="space-y-6">
@@ -141,8 +112,8 @@ export default function EventsPage() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant={viewMode === "grid" ? "primary" : "secondary"}
@@ -159,8 +130,20 @@ export default function EventsPage() {
           >
             <Icons.List className="h-4 w-4" /> Seznam
           </Button>
+          <Select
+            className="w-full sm:w-56"
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as EventSortMode)}
+            aria-label="Řazení akcí"
+          >
+            {EVENT_SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
         </div>
-        <div className="text-xs text-gray-500 font-medium">
+        <div className="text-xs text-gray-500 font-medium sm:text-right">
           {filtered.length} {filtered.length === 1 ? 'akce' : filtered.length < 5 && filtered.length > 0 ? 'akce' : 'akcí'}
         </div>
       </div>
