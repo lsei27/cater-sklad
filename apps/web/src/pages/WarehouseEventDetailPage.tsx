@@ -451,8 +451,7 @@ export default function WarehouseEventDetailPage() {
         <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
           Zpět na seznam
         </Button>
-        {(role === "admin" || event.createdBy?.id === getCurrentUser()?.id) &&
-        !["ISSUED", "CLOSED", "CANCELLED"].includes(event.status) ? (
+        {!["ISSUED", "CLOSED", "CANCELLED"].includes(event.status) ? (
           <Button variant="secondary" size="sm" onClick={() => nav(`/events/${id}`)}>
             <Icons.Edit className="h-4 w-4" /> Upravit akci a položky
           </Button>
