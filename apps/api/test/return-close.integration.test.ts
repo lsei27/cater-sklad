@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PrismaClient, Role, LedgerReason, EventStatus } from "../generated/prisma/client.js";
+import { Role, LedgerReason, EventStatus } from "../generated/prisma/client.js";
+import { createTestPrisma } from "./testPrisma.js";
 import { createInventoryLedgerEntry } from "../src/services/ledger.js";
 import { getPhysicalTotal } from "../src/services/availability.js";
 import { returnCloseTx } from "../src/services/returnClose.js";
@@ -10,7 +11,7 @@ describe("return close transaction (integration)", () => {
   const maybe = run ? it : it.skip;
 
   maybe("restores stock exactly to issued quantity when everything is returned", async () => {
-    const prisma = new PrismaClient({ datasources: { db: { url } } });
+    const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
     const user = await prisma.user.create({
@@ -18,7 +19,10 @@ describe("return close transaction (integration)", () => {
     });
     const parent = await prisma.category.create({ data: { name: `Inventar-${Date.now()}` } });
     const child = await prisma.category.create({ data: { name: `Test-${Date.now()}`, parentId: parent.id } });
-    const item = await prisma.inventoryItem.create({ data: { name: `Item-${Date.now()}`, categoryId: child.id, unit: "ks" } });
+    const warehouse = await prisma.warehouse.create({ data: { name: `Sklad-${Date.now()}` } });
+    const item = await prisma.inventoryItem.create({
+      data: { name: `Item-${Date.now()}`, categoryId: child.id, unit: "ks", warehouseId: warehouse.id }
+    });
 
     await prisma.inventoryLedger.create({
       data: { inventoryItemId: item.id, deltaQuantity: 5, reason: LedgerReason.audit_adjustment, createdById: user.id }
@@ -87,11 +91,11 @@ describe("return close transaction (integration)", () => {
     });
     expect(lossIssues).toHaveLength(0);
 
-    await prisma.$disconnect();
+    await disconnect();
   });
 
   maybe("rejects returning more than was actually issued and leaves stock unchanged", async () => {
-    const prisma = new PrismaClient({ datasources: { db: { url } } });
+    const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
     const user = await prisma.user.create({
@@ -160,6 +164,6 @@ describe("return close transaction (integration)", () => {
     const currentEvent = await prisma.event.findUniqueOrThrow({ where: { id: event.id } });
     expect(currentEvent.status).toBe(EventStatus.ISSUED);
 
-    await prisma.$disconnect();
+    await disconnect();
   });
 });

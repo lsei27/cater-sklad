@@ -24,6 +24,7 @@ type Snapshot = {
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string };
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
+type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
 
 function parseWeightValue(value: string | null | undefined) {
   if (!value) return null;
@@ -73,6 +74,7 @@ export default function WarehouseEventDetailPage() {
   const [blockNote, setBlockNote] = useState("");
   const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
+  const [showConfirmedList, setShowConfirmedList] = useState(false);
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
   const [issuePalletCount, setIssuePalletCount] = useState<number | "">("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -106,10 +108,29 @@ export default function WarehouseEventDetailPage() {
     } catch (e) {}
   };
 
+  // Rozpracovaný digitální výdej žije na serveru, aby skladník mohl akci dobalit
+  // později nebo na jiném telefonu.
+  const loadPacking = async () => {
+    if (!id) return;
+    try {
+      const res = await api<{ packing: PackingRow[] }>(`/events/${id}/packing`);
+      if (res.packing.length === 0) return;
+      setDigitalIssueStates((prev) => {
+        const next = { ...prev };
+        for (const row of res.packing) {
+          next[row.inventoryItemId] = row.state;
+        }
+        return next;
+      });
+      setIssueMode((prev) => prev ?? "digital");
+    } catch (e) {}
+  };
+
   useEffect(() => {
     load();
     loadBlocks();
     loadWarehouses();
+    loadPacking();
   }, [id]);
 
   const snapshot: Snapshot | null = useMemo(() => {
@@ -252,6 +273,26 @@ export default function WarehouseEventDetailPage() {
     return { issuedMap, lostMap };
   }, [event?.issues]);
 
+  // Během digitálního balení se potvrzené položky stěhují dolů do vydaného seznamu,
+  // aby nahoře zůstalo jen to, co ještě není sbalené.
+  const digitalPackingActive = event?.status === "SENT_TO_WAREHOUSE" && issueMode === "digital";
+
+  const confirmedRows = useMemo(
+    () =>
+      digitalPackingActive
+        ? rows.filter((r) => (digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed")
+        : [],
+    [digitalPackingActive, rows, digitalIssueStates]
+  );
+
+  const pendingRows = useMemo(
+    () =>
+      digitalPackingActive
+        ? rows.filter((r) => (digitalIssueStates[r.inventory_item_id] ?? "idle") !== "confirmed")
+        : rows,
+    [digitalPackingActive, rows, digitalIssueStates]
+  );
+
   const groupedRows = useMemo(() => {
     type CatGroup = { parent: string; sub: string; items: typeof rows };
     const sections: Array<{ title: string; groups: CatGroup[] }> = [
@@ -259,7 +300,7 @@ export default function WarehouseEventDetailPage() {
       { title: "Kuchyň", groups: [] }
     ];
     const groupMap = new Map<string, CatGroup>();
-    for (const r of rows) {
+    for (const r of pendingRows) {
       const parent = r.parentCategory || "Ostatní";
       const sub = r.category || "Nezařazeno";
       const key = `${parent}||${sub}`;
@@ -280,7 +321,7 @@ export default function WarehouseEventDetailPage() {
       }
     }
     return sections;
-  }, [rows]);
+  }, [pendingRows]);
 
   const digitalIssueSummary = useMemo(() => {
     let confirmed = 0;
@@ -314,8 +355,19 @@ export default function WarehouseEventDetailPage() {
     return totalKg > 0 ? formatWeightKg(totalKg) : "Nelze dopočítat";
   }, [digitalIssueStates, issueMode, itemPackagingById, rows]);
 
-  const updateDigitalIssueState = (inventoryItemId: string, nextState: DigitalIssueState) => {
+  const updateDigitalIssueState = async (inventoryItemId: string, nextState: DigitalIssueState) => {
+    const previousState = digitalIssueStates[inventoryItemId] ?? "idle";
+    if (previousState === nextState) return;
     setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
+    try {
+      await api(`/events/${id}/packing`, {
+        method: "PUT",
+        body: JSON.stringify({ inventory_item_id: inventoryItemId, state: nextState })
+      });
+    } catch (e: any) {
+      setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: previousState }));
+      toast.error(e?.error?.message ?? "Nepodařilo se uložit rozbalenou položku.");
+    }
   };
 
   const getIssuedQtyForItem = (inventoryItemId: string, fallbackQty: number) => {
@@ -564,6 +616,7 @@ export default function WarehouseEventDetailPage() {
                     <div className="text-sm font-semibold text-slate-900">Digitální výdej</div>
                     <div className="mt-1 text-sm text-slate-600">
                       Položky se potvrzují v aplikaci po jedné. Každá položka má krok „Vydat“ a následné „Potvrdit“.
+                      Rozbalená akce se ukládá, dá se dokončit na víckrát.
                     </div>
                   </button>
                 </div>
@@ -622,7 +675,9 @@ export default function WarehouseEventDetailPage() {
                       <div>
                         <div className="text-sm font-semibold text-slate-900">Digitální checklist</div>
                         <div className="mt-1 text-sm text-slate-600">
-                          U každé položky nejprve klikni na „Vydat“, pak na „Potvrdit“. Finální tlačítko se zpřístupní až po potvrzení všech položek.
+                          U každé položky nejprve klikni na „Vydat“, pak na „Potvrdit“. Potvrzené položky se přesunou do seznamu
+                          vydaného zboží dole. Postup se průběžně ukládá, takže můžeš aplikaci zavřít a dobalit později
+                          i na jiném telefonu. Finální tlačítko se zpřístupní až po potvrzení všech položek.
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2 text-xs font-semibold">
@@ -710,7 +765,11 @@ export default function WarehouseEventDetailPage() {
         </CardHeader>
         <CardContent>
           {groupedRows.every(s => s.groups.length === 0) ? (
-            <div className="text-sm text-slate-600">Pro tuto akci nejsou žádné položky.</div>
+            <div className="text-sm text-slate-600">
+              {digitalPackingActive && confirmedRows.length > 0
+                ? "Všechny položky jsou vydané. Zbývá potvrdit celý výdej dole."
+                : "Pro tuto akci nejsou žádné položky."}
+            </div>
           ) : (
             <div className="space-y-8">
               {groupedRows.filter(s => s.groups.length > 0).map((section) => (
@@ -812,42 +871,27 @@ export default function WarehouseEventDetailPage() {
                                 <div className="text-xs font-semibold text-emerald-900">
                                   Digitální výdej
                                 </div>
-                                <Badge
-                                  tone={
-                                    (digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed"
-                                      ? "ok"
-                                      : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
-                                        ? "warn"
-                                        : "neutral"
-                                  }
-                                >
-                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed"
-                                    ? "Potvrzeno"
-                                    : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
-                                      ? "Čeká na potvrzení"
-                                      : "Nepotvrzeno"}
+                                <Badge tone={(digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed" ? "warn" : "neutral"}>
+                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
+                                    ? "Čeká na potvrzení"
+                                    : "Nepotvrzeno"}
                                 </Badge>
                               </div>
                               <div className="mt-2 text-xs text-emerald-900/80">
-                                1. klikni na „Vydat“, 2. klikni na „Potvrdit“. Teprve pak je položka připravená k finálnímu potvrzení celé akce.
+                                1. klikni na „Vydat“, 2. klikni na „Potvrdit“. Položka se pak přesune do seznamu vydaného zboží dole.
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <Button
                                   size="sm"
                                   variant={(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "primary" : "secondary"}
-                                  onClick={() => {
-                                    const current = digitalIssueStates[r.inventory_item_id] ?? "idle";
+                                  onClick={() =>
                                     updateDigitalIssueState(
                                       r.inventory_item_id,
-                                      current === "idle" ? "armed" : "idle"
-                                    );
-                                  }}
+                                      (digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "armed" : "idle"
+                                    )
+                                  }
                                 >
-                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle"
-                                    ? "Vydat"
-                                    : (digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
-                                      ? "Zrušit"
-                                      : "Vrátit zpět"}
+                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "Vydat" : "Zrušit"}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -855,7 +899,7 @@ export default function WarehouseEventDetailPage() {
                                   disabled={(digitalIssueStates[r.inventory_item_id] ?? "idle") !== "armed"}
                                   onClick={() => updateDigitalIssueState(r.inventory_item_id, "confirmed")}
                                 >
-                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed" ? "Potvrzeno" : "Potvrdit"}
+                                  Potvrdit
                                 </Button>
                               </div>
                             </div>
@@ -986,6 +1030,48 @@ export default function WarehouseEventDetailPage() {
               ))}
             </div>
           )}
+          {digitalPackingActive && confirmedRows.length > 0 ? (
+            <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                onClick={() => setShowConfirmedList((prev) => !prev)}
+              >
+                <div className="text-sm font-semibold text-slate-900">
+                  Vydáno ({confirmedRows.length})
+                </div>
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                  {showConfirmedList ? "Skrýt" : "Zobrazit"}
+                  <Icons.ChevronRight className={cn("h-4 w-4 transition-transform", showConfirmedList && "rotate-90")} />
+                </div>
+              </button>
+              {showConfirmedList ? (
+                <div className="space-y-2 border-t border-slate-200 px-4 py-3">
+                  {confirmedRows.map((r) => (
+                    <div
+                      key={r.inventory_item_id}
+                      className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-900">{r.name}</div>
+                        <div className="text-xs text-slate-600">
+                          {r.requested} {r.unit}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => updateDigitalIssueState(r.inventory_item_id, "idle")}
+                      >
+                        Vrátit do seznamu
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
             <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
