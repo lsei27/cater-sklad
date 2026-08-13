@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PrismaClient, Role, LedgerReason } from "../generated/prisma/client.js";
+import { Role, LedgerReason } from "../generated/prisma/client.js";
+import { createTestPrisma } from "./testPrisma.js";
 import { reserveItemsTx, InsufficientStockError } from "../src/services/reserve.js";
 
 describe("reserve transaction (integration)", () => {
@@ -8,7 +9,7 @@ describe("reserve transaction (integration)", () => {
   const maybe = run ? it : it.skip;
 
   maybe("prevents oversell under concurrency via advisory lock", async () => {
-    const prisma = new PrismaClient({ datasources: { db: { url } } });
+    const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
     const user = await prisma.user.create({
@@ -52,7 +53,7 @@ describe("reserve transaction (integration)", () => {
     const fail = [r1, r2].find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
     expect(fail?.reason instanceof InsufficientStockError || fail?.reason?.message === "INSUFFICIENT_STOCK").toBe(true);
 
-    await prisma.$disconnect();
+    await disconnect();
   });
 });
 

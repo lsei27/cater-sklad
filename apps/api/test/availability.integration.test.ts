@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PrismaClient, Role, LedgerReason } from "../generated/prisma/client.js";
+import { Role, LedgerReason } from "../generated/prisma/client.js";
+import { createTestPrisma } from "./testPrisma.js";
 import { getAvailabilityForEventItemTx } from "../src/services/availability.js";
 
 describe("availability SQL (integration)", () => {
@@ -8,7 +9,7 @@ describe("availability SQL (integration)", () => {
   const maybe = run ? it : it.skip;
 
   maybe("computes available = physical - blocked", async () => {
-    const prisma = new PrismaClient({ datasources: { db: { url } } });
+    const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
     const user = await prisma.user.create({
@@ -50,7 +51,7 @@ describe("availability SQL (integration)", () => {
     expect(a.blockedTotal).toBe(3);
     expect(a.available).toBe(2);
 
-    await prisma.$disconnect();
+    await disconnect();
   });
 });
 
