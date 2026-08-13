@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Role, LedgerReason, EventStatus } from "../generated/prisma/client.js";
 import { createTestPrisma } from "./testPrisma.js";
+import { fixtureStamp } from "./fixtureStamp.js";
 import { createInventoryLedgerEntry } from "../src/services/ledger.js";
 import { getAvailabilityForEventItemTx, getPhysicalTotal } from "../src/services/availability.js";
 import { returnCloseTx } from "../src/services/returnClose.js";
@@ -14,7 +15,7 @@ describe("spotřební zboží a prodleva návratu (integration)", () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
-    const stamp = Date.now();
+    const stamp = fixtureStamp();
     const user = await prisma.user.create({
       data: { email: `consum-${stamp}@local`, passwordHash: "x", role: Role.admin }
     });
@@ -122,7 +123,7 @@ describe("spotřební zboží a prodleva návratu (integration)", () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
-    const stamp = Date.now();
+    const stamp = fixtureStamp();
     const user = await prisma.user.create({
       data: { email: `delay-${stamp}@local`, passwordHash: "x", role: Role.admin }
     });
@@ -215,7 +216,7 @@ describe("spotřební zboží a prodleva návratu (integration)", () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     await prisma.$connect();
 
-    const stamp = Date.now();
+    const stamp = fixtureStamp();
     const user = await prisma.user.create({
       data: { email: `virt-${stamp}@local`, passwordHash: "x", role: Role.admin }
     });

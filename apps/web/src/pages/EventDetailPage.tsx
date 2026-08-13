@@ -105,7 +105,7 @@ export default function EventDetailPage() {
       toast.error("Akce je už uzamčená (vydaná nebo uzavřená).");
       return;
     }
-    if (["event_manager", "warehouse"].includes(role) && !isOwner) {
+    if (role === "event_manager" && !isOwner) {
       deepLinkHandled.current = true;
       toast.error("Nemáte oprávnění přidávat položky do cizí akce.");
       return;
@@ -161,7 +161,9 @@ export default function EventDetailPage() {
   const canChef = ["admin", "chef"].includes(role);
   const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
-  const canManageEvent = role === "admin" || (["event_manager", "warehouse"].includes(role) && isOwner);
+  // Sklad musi umet prihodit polozku do akce, kterou zalozil event manager:
+  // ten v sezone casto vola z terenu, ze do akce jeste neco potrebuje.
+  const canManageEvent = role === "admin" || role === "warehouse" || (role === "event_manager" && isOwner);
   const canConfirmKitchen = canChef || canManageEvent;
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
@@ -567,7 +569,8 @@ export default function EventDetailPage() {
                             const canDelete =
                               canEditEvent &&
                               (role === "admin" ||
-                                (["event_manager", "warehouse"].includes(role) && r.createdById === getCurrentUser()?.id) ||
+                                role === "warehouse" ||
+                                (role === "event_manager" && r.createdById === getCurrentUser()?.id) ||
                                 (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
 
                             return (

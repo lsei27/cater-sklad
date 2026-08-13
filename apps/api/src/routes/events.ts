@@ -9,6 +9,9 @@ import { getAvailabilityForEventItemTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
+import { issueAdditionalTx } from "../services/issueAdditional.js";
+import { getIssuedWarehouseItems } from "../services/issuedItems.js";
+import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.js";
 import { returnCloseTx } from "../services/returnClose.js";
 import { requireWarehouseId } from "../services/warehouse.js";
 
@@ -46,23 +49,6 @@ function compareByCategoryParentName(a: any, b: any) {
   if (byCategory !== 0) return byCategory;
 
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
-}
-
-function parseWeightValue(value: string | null | undefined) {
-  if (!value) return null;
-  const normalized = value.replace(",", ".").trim();
-  const match = normalized.match(/-?\d+(?:\.\d+)?/);
-  if (!match) return null;
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatWeightKg(value: number) {
-  const normalized = Math.round(value * 100) / 100;
-  return `${new Intl.NumberFormat("cs-CZ", {
-    minimumFractionDigits: normalized % 1 === 0 ? 0 : 1,
-    maximumFractionDigits: 2
-  }).format(normalized)} kg`;
 }
 
 const EventCreateSchema = z.object({
@@ -283,43 +269,33 @@ export async function eventRoutes(app: FastifyInstance) {
       pdfUrl: `/events/${event.id}/exports/${e.version}/pdf`
     }));
 
-    let warehouseItems: Array<{ inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string }> = [];
+    let warehouseItems: Array<{
+      inventoryItemId: string;
+      name: string;
+      unit: string;
+      qty: number;
+      parentCategory?: string;
+      category?: string;
+    }> = [];
+
+    // U vydané akce je pravdou o obsahu skutečný výdej, ne export: doplňkový
+    // výdej přidává položky, které v exportu nejsou.
+    if (event.status === "ISSUED") {
+      warehouseItems = await getIssuedWarehouseItems(app.prisma, event.id);
+    }
+
     const snapshot = (exports?.[0] as any)?.snapshotJson as ExportSnapshot | undefined;
-    if (snapshot?.groups?.length) {
+    if (warehouseItems.length === 0 && snapshot?.groups?.length) {
       warehouseItems = snapshot.groups.flatMap((g) =>
         (g.items ?? []).map((it) => ({
           inventoryItemId: it.inventoryItemId,
           name: it.name,
           unit: it.unit,
           qty: it.qty,
-          parentCategory: g.parentCategory
+          parentCategory: g.parentCategory,
+          category: (g as { category?: string }).category
         }))
       );
-    }
-    if (warehouseItems.length === 0 && event.status === "ISSUED") {
-      const issued = await app.prisma.$queryRaw<
-        Array<{ inventory_item_id: string; issued: number; name: string; unit: string; parent_category: string }>
-      >`
-        SELECT
-          i.inventory_item_id::text AS inventory_item_id,
-          COALESCE(SUM(i.issued_quantity),0)::int AS issued,
-          it.name AS name,
-          it.unit AS unit,
-          COALESCE(cp.name, 'Nezařazeno') AS parent_category
-        FROM event_issues i
-        JOIN inventory_items it ON it.id = i.inventory_item_id
-        LEFT JOIN inventory_categories c ON c.id = it.category_id
-        LEFT JOIN inventory_categories cp ON cp.id = c.parent_id
-        WHERE i.event_id = ${event.id}::uuid AND i.type = 'issued'
-        GROUP BY i.inventory_item_id, it.name, it.unit, cp.name
-      `;
-      warehouseItems = issued.map((r) => ({
-        inventoryItemId: r.inventory_item_id,
-        name: r.name,
-        unit: r.unit,
-        qty: Number(r.issued),
-        parentCategory: r.parent_category
-      }));
     }
 
     return { event: { ...event, exports, warehouseItems } };
@@ -874,7 +850,7 @@ export async function eventRoutes(app: FastifyInstance) {
         const inventoryItems = itemsToIssue.length
           ? await tx.inventoryItem.findMany({
               where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
-              select: { id: true, masterPackageQty: true, masterPackageWeight: true, warehouseId: true }
+              select: { id: true, warehouseId: true }
             })
           : [];
         const itemMetaById = new Map(
@@ -883,14 +859,6 @@ export async function eventRoutes(app: FastifyInstance) {
         if (inventoryItems.length !== new Set(itemsToIssue.map((item) => item.inventory_item_id)).size) {
           throw new Error("ITEM_NOT_FOUND");
         }
-        const computedWeightKg = itemsToIssue.reduce((sum, item) => {
-          const meta = itemMetaById.get(item.inventory_item_id);
-          const packageWeightKg = parseWeightValue(meta?.masterPackageWeight);
-          const packageQty = meta?.masterPackageQty ?? null;
-          if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
-          return sum + Math.ceil(item.issued_quantity / packageQty) * packageWeightKg;
-        }, 0);
-
         const rows = itemsToIssue.map((i) => {
           const meta = itemMetaById.get(i.inventory_item_id);
           if (!meta) throw new Error("ITEM_NOT_FOUND");
@@ -908,6 +876,9 @@ export async function eventRoutes(app: FastifyInstance) {
           };
         });
         await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
+
+        // Vaha se pocita az z ulozeneho vydeje, aby sla stejnou cestou jako u doplnkoveho vydeje.
+        const computedWeightKg = await computeIssuedWeightKg(tx, params.id);
         
         // Add Ledger entries for issued items
         for (const row of rows) {
@@ -962,6 +933,67 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "WAREHOUSE_REQUIRED")
         return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
       request.log.error({ err: e }, "issue failed");
+      return httpError(reply, 500, "INTERNAL", "Internal Server Error");
+    }
+  });
+
+  app.post("/events/:id/issue-additional", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        idempotency_key: z.string().min(8),
+        warehouse_id: z.string().uuid().optional(),
+        pallet_count: z.number().int().min(0).optional().nullable(),
+        items: z
+          .array(
+            z.object({
+              inventory_item_id: z.string().uuid(),
+              qty: z.number().int().min(1)
+            })
+          )
+          .min(1)
+      })
+      .parse(request.body);
+
+    try {
+      const result = await app.prisma.$transaction((tx) =>
+        issueAdditionalTx({
+          tx,
+          eventId: params.id,
+          userId: user.id,
+          idempotencyKey: body.idempotency_key,
+          warehouseId: body.warehouse_id,
+          palletCount: body.pallet_count,
+          items: body.items.map((i) => ({ inventoryItemId: i.inventory_item_id, qty: i.qty }))
+        })
+      );
+
+      sseBus.emit({ type: "reservation_changed", eventId: params.id });
+      for (const item of body.items) {
+        sseBus.emit({ type: "ledger_changed", inventoryItemId: item.inventory_item_id });
+      }
+      return reply.send(result);
+    } catch (e: any) {
+      if (e instanceof InsufficientStockError) {
+        return httpError(reply, 409, "INSUFFICIENT_STOCK", "Nedostatečný stav skladu.", {
+          inventory_item_id: e.inventoryItemId,
+          available: e.available
+        });
+      }
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "BAD_STATUS")
+        return httpError(reply, 409, "BAD_STATUS", "Doplňkový výdej lze udělat jen u vydané akce.");
+      if (e?.message === "NO_ITEMS_TO_ISSUE")
+        return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Nezadal jsi žádné množství k vydání.");
+      if (e?.message === "DUPLICATE_ITEMS")
+        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v doplňkovém výdeji jen jednou.");
+      if (e?.message === "ITEM_NOT_FOUND")
+        return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
+      if (e?.message === "WAREHOUSE_REQUIRED")
+        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
+      request.log.error({ err: e }, "issue-additional failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
   });
