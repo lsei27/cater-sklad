@@ -34,6 +34,7 @@ export default function AdminItemsPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("");
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | "consumable" | "returnable">("all");
   const [newName, setNewName] = useState("");
   const [newParentId, setNewParentId] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
@@ -66,6 +67,8 @@ export default function AdminItemsPage() {
     return items.filter((item: any) => {
       if (activeFilter === "active" && !item.active) return false;
       if (activeFilter === "inactive" && item.active) return false;
+      if (kindFilter === "consumable" && !item.consumable) return false;
+      if (kindFilter === "returnable" && item.consumable) return false;
       if (warehouseFilter && (item.warehouseId ?? "") !== warehouseFilter) return false;
       if (categoryFilter && item.categoryId !== categoryFilter && item.category?.parent?.id !== categoryFilter) {
         return false;
@@ -76,15 +79,18 @@ export default function AdminItemsPage() {
       );
       return tokens.every((token) => haystack.includes(token));
     });
-  }, [items, search, categoryFilter, warehouseFilter, activeFilter]);
+  }, [items, search, categoryFilter, warehouseFilter, activeFilter, kindFilter]);
 
-  const filtersActive = Boolean(search.trim() || categoryFilter || warehouseFilter || activeFilter !== "all");
+  const filtersActive = Boolean(
+    search.trim() || categoryFilter || warehouseFilter || activeFilter !== "all" || kindFilter !== "all"
+  );
 
   const resetFilters = () => {
     setSearch("");
     setCategoryFilter("");
     setWarehouseFilter("");
     setActiveFilter("all");
+    setKindFilter("all");
   };
 
   const childCats = useMemo(
@@ -339,7 +345,7 @@ export default function AdminItemsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <label className="text-sm md:col-span-2 xl:col-span-1">
               Dotaz
               <div className="relative mt-1">
@@ -381,6 +387,19 @@ export default function AdminItemsPage() {
                     {w.name}
                   </option>
                 ))}
+              </Select>
+            </label>
+
+            <label className="text-sm">
+              Druh
+              <Select
+                className="mt-1"
+                value={kindFilter}
+                onChange={(e) => setKindFilter(e.target.value as "all" | "consumable" | "returnable")}
+              >
+                <option value="all">Vratné i spotřební</option>
+                <option value="consumable">Jen spotřební zboží</option>
+                <option value="returnable">Jen vratný inventář</option>
               </Select>
             </label>
 
@@ -470,6 +489,11 @@ function ItemRow({ item, allItems, parents, warehouses, onSaved }: { item: any; 
                 <div className="truncate text-sm font-semibold">{item.name}</div>
                 <div className="flex flex-wrap gap-2 text-xs text-slate-600">
                   <span>{formatCategoryParentLabel(item.category?.parent?.name, item.category?.name)}</span>
+                  {item.consumable ? (
+                    <span className="font-semibold text-amber-700" title="Při uzavření akce se nevrací automaticky, zbytek je spotřeba">
+                      • Spotřební
+                    </span>
+                  ) : null}
                   {!item.active ? <span className="text-red-600 font-semibold">• Neaktivní</span> : null}
                 </div>
               </div>
