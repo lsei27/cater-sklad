@@ -10,6 +10,7 @@ import Skeleton from "../components/ui/Skeleton";
 import Textarea from "../components/ui/Textarea";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
+import QuickAddItemsModal from "../components/QuickAddItemsModal";
 import toast from "react-hot-toast";
 import {
   compareByCategoryParentName,
@@ -849,6 +850,7 @@ function AddItemsPanel(props: {
   const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [crossSells, setCrossSells] = useState<{ sourceItem: any, items: any[] } | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [availability, setAvailability] = useState<Map<string, StockRow>>(new Map());
   const [categoriesReady, setCategoriesReady] = useState(false);
   const initRef = useRef(false);
@@ -884,6 +886,7 @@ function AddItemsPanel(props: {
   useEffect(() => {
     if (!props.open) {
       setCategoriesReady(false);
+      setQuickAddOpen(false);
       return;
     }
     initRef.current = false;
@@ -1055,6 +1058,17 @@ function AddItemsPanel(props: {
     >
       <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] md:h-full md:min-h-0">
         <div className="flex flex-col gap-4 md:h-full md:min-h-0">
+          {!isChef ? (
+            <div className="flex flex-col gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-indigo-950">Potřebujete vložit více položek najednou?</div>
+                <div className="mt-0.5 text-xs text-indigo-700">Kompaktní tabulka zobrazí názvy, volné množství a políčka pro počet.</div>
+              </div>
+              <Button className="shrink-0" onClick={() => setQuickAddOpen(true)}>
+                Možnost zjednodušeného přidání
+              </Button>
+            </div>
+          ) : null}
           <div className="grid gap-3 md:grid-cols-3">
             <label className="md:col-span-3 text-sm">
               Hledat
@@ -1279,6 +1293,15 @@ function AddItemsPanel(props: {
         </div>
       </div>
     </Modal>
+
+    <QuickAddItemsModal
+      open={quickAddOpen}
+      onOpenChange={setQuickAddOpen}
+      eventId={props.eventId}
+      role={props.role}
+      existingItems={currentItems}
+      onDone={props.onDone}
+    />
 
     {crossSells && (
       <Modal

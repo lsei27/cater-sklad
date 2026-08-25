@@ -55,5 +55,55 @@ describe("reserve transaction (integration)", () => {
 
     await disconnect();
   });
-});
 
+  maybe("rolls back every row when one item in a bulk reservation is unavailable", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    await prisma.$connect();
+    const stamp = Date.now();
+
+    const user = await prisma.user.create({
+      data: { email: `bulk-reserve-${stamp}@local`, passwordHash: "x", role: Role.admin }
+    });
+    const parent = await prisma.category.create({ data: { name: `Bulk reserve ${stamp}` } });
+    const child = await prisma.category.create({ data: { name: "Položky", parentId: parent.id } });
+    const [availableItem, unavailableItem] = await Promise.all([
+      prisma.inventoryItem.create({ data: { name: "Dostupná", categoryId: child.id, unit: "ks" } }),
+      prisma.inventoryItem.create({ data: { name: "Nedostupná", categoryId: child.id, unit: "ks" } })
+    ]);
+    await prisma.inventoryLedger.createMany({
+      data: [
+        { inventoryItemId: availableItem.id, deltaQuantity: 10, reason: LedgerReason.audit_adjustment, createdById: user.id },
+        { inventoryItemId: unavailableItem.id, deltaQuantity: 1, reason: LedgerReason.audit_adjustment, createdById: user.id }
+      ]
+    });
+    const event = await prisma.event.create({
+      data: {
+        name: "Hromadná rezervace",
+        location: "L",
+        deliveryDatetime: new Date("2030-07-01T08:00:00Z"),
+        pickupDatetime: new Date("2030-07-02T08:00:00Z"),
+        status: "DRAFT",
+        createdById: user.id
+      }
+    });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveItemsTx({
+          tx,
+          actor: { id: user.id, role: user.role },
+          eventId: event.id,
+          items: [
+            { inventoryItemId: availableItem.id, qty: 2 },
+            { inventoryItemId: unavailableItem.id, qty: 2 }
+          ]
+        })
+      )
+    ).rejects.toBeInstanceOf(InsufficientStockError);
+
+    const reservations = await prisma.eventReservation.findMany({ where: { eventId: event.id } });
+    expect(reservations).toHaveLength(0);
+
+    await disconnect();
+  });
+});

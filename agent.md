@@ -135,7 +135,7 @@ API adresu z `VITE_API_BASE_URL`.
 
 **⚠️ Výpočet dostupnosti je duplikovaný na třech místech a musí zůstat konzistentní:**
 
-1. `apps/api/src/services/availability.ts` — `getAvailabilityForEventItemTx`, jedna položka vůči jedné akci. Používají ji rezervace, doplňkový výdej a `POST /events/:id/availability`. **Je to referenční implementace.**
+1. `apps/api/src/services/availability.ts` — `getAvailabilityForEventItemsTx`, jedna nebo více položek vůči jedné akci. `getAvailabilityForEventItemTx` je tenký wrapper pro jednu položku. Používají ji rezervace, doplňkový výdej a `POST /events/:id/availability`. Hromadná varianta počítá všechny požadované položky jedním SQL dotazem. **Je to referenční implementace.**
 2. `GET /inventory/items?with_stock=true` v `apps/api/src/routes/inventory.ts` — pole položek, pohání stránku Sklad.
 3. `GET /inventory/items/:id/cross-sells` tamtéž.
 
@@ -336,6 +336,13 @@ s `VITE_API_BASE_URL=http://localhost:3001` a proxy obejít.
 - **Event list**: Náhledy akcí jsou v UI seskupené podle stavu (DRAFT nahoře, CLOSED dole) a v rámci sekce podle data. Oddělovače mezi sekcemi používají `border-t border-slate-100` pro jemné vizuální oddělení. Čára pod tlačítky přepínání zobrazení také používá `border-slate-100` pro konzistentní vzhled.
 - **UI obrázky**: Miniatury položek se zobrazují při přidávání položek do akce i ve skladovém detailu. Do PDF exportů se obrázky nepřidávají.
 - **Add-items modal UX**: Přidání položek v `EventDetailPage` používá tichý refresh, aby modal neprobliknul; na desktopu se roloval pouze seznam skladu vlevo a panel "Položky v akci" zůstává viditelný (scrolluje jen při přetečení).
+- **Zjednodušené přidání položek k akci** (`apps/web/src/components/QuickAddItemsModal.tsx`):
+  - otevírá se tlačítkem `Možnost zjednodušeného přidání` uvnitř běžného add-items modalu
+  - načte všechny aktivní položky a seskupí je do kompaktních tabulek podle kategorií; na širokém desktopu používá až čtyři sloupce
+  - každý řádek ukazuje pouze název, volné množství pro termín akce a pole `Chci`; existující rezervace jsou předvyplněné
+  - Enter a šipky nahoru/dolů přesouvají fokus mezi množstvími, aby zadávání fungovalo podobně jako v Excelu
+  - `Vložit do akce` odešle pouze změněné řádky jedním voláním `POST /events/:id/reserve`; backend je zpracuje atomicky v jedné transakci
+  - množství nad dostupnost a množství, které by po zaokrouhlení na celé master balení přesáhlo dostupnost, zablokuje odeslání už v UI; rozhodující kontrola ale vždy zůstává na backendu pod advisory lockem
 - **Automatické filtrování ve skladu**: Filtry na stránce skladu (`InventoryPage`) fungují automaticky - při změně kategorie (Typ/Kategorie) nebo při psaní názvu se výsledky načítají okamžitě bez nutnosti klikat na tlačítko. Vyhledávání má 300ms debounce pro optimalizaci API volání. Tlačítko "Obnovit" slouží pro manuální refresh (např. po změně časového rozsahu).
 - **Admin/warehouse item management**: Formuláře pro vytvoření i editaci položky používají oddělený výběr `Hlavní kategorie` -> `Podkategorie`. Edit modal umí upravit všechny běžně spravované sloupce `InventoryItem` včetně jednotky, SKU, poznámek, výchozího skladu, QR kódu, `returnDelayDays` a parametrů balení.
 - **CSV import položek**: Šablona importu v admin UI zahrnuje i `qr_code`, `return_delay_days`, `master_package_qty`, `master_package_weight`, `volume`, `plate_diameter` a `warehouse`; backend `POST /admin/import/csv` tyto sloupce mapuje přímo do `InventoryItem`.

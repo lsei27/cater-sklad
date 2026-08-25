@@ -1,5 +1,5 @@
 import type { Role, Prisma } from "../../generated/prisma/client.js";
-import { getAvailabilityForEventItemTx } from "./availability.js";
+import { getAvailabilityForEventItemsTx } from "./availability.js";
 
 export class InsufficientStockError extends Error {
   constructor(
@@ -17,6 +17,9 @@ export async function reserveItemsTx(params: {
   items: Array<{ inventoryItemId: string; qty: number }>;
 }) {
   const { tx, actor, eventId, items } = params;
+
+  const itemIds = items.map((item) => item.inventoryItemId);
+  if (new Set(itemIds).size !== itemIds.length) throw new Error("DUPLICATE_ITEMS");
 
   const [event] = await tx.$queryRaw<{ id: string; status: string; export_needs_revision: boolean }[]>`
     SELECT id, status::text, export_needs_revision
@@ -79,7 +82,7 @@ export async function reserveItemsTx(params: {
     return { ...item, originalQty: item.qty };
   });
 
-  for (const { inventoryItemId } of adjustedItems) {
+  for (const inventoryItemId of [...itemIds].sort()) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(2025, hashtext(${inventoryItemId}))`;
   }
 
@@ -90,9 +93,11 @@ export async function reserveItemsTx(params: {
   });
   const existingMap = new Map(existingReservations.map((r) => [r.inventoryItemId, r]));
 
+  const availabilityRows = await getAvailabilityForEventItemsTx(tx, eventId, itemIds);
+  const availabilityByItemId = new Map(availabilityRows.map((row) => [row.inventoryItemId, row]));
   for (const { inventoryItemId, qty } of adjustedItems) {
-    const a = await getAvailabilityForEventItemTx(tx, eventId, inventoryItemId);
-    if (qty > a.available) throw new InsufficientStockError(inventoryItemId, a.available);
+    const available = availabilityByItemId.get(inventoryItemId)?.available ?? 0;
+    if (qty > available) throw new InsufficientStockError(inventoryItemId, available);
   }
 
   const now = new Date();

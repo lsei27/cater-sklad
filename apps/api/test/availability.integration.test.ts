@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Role, LedgerReason } from "../generated/prisma/client.js";
 import { createTestPrisma } from "./testPrisma.js";
-import { getAvailabilityForEventItemTx } from "../src/services/availability.js";
+import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../src/services/availability.js";
 
 describe("availability SQL (integration)", () => {
   const url = process.env.DATABASE_URL;
@@ -164,6 +164,73 @@ describe("warehouse block on a closed event (integration)", () => {
     const a = await prisma.$transaction((tx) => getAvailabilityForEventItemTx(tx, later.id, item.id));
     expect(a.blockedTotal).toBe(0);
     expect(a.available).toBe(10);
+
+    await disconnect();
+  });
+});
+
+describe("bulk event availability (integration)", () => {
+  const url = process.env.DATABASE_URL;
+  const run = !!url && process.env.RUN_DB_TESTS === "1";
+  const maybe = run ? it : it.skip;
+
+  maybe("returns independent availability for multiple items in one query", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    await prisma.$connect();
+    const stamp = Date.now();
+
+    const user = await prisma.user.create({
+      data: { email: `bulk-availability-${stamp}@local`, passwordHash: "x", role: Role.admin }
+    });
+    const parent = await prisma.category.create({ data: { name: `Bulk ${stamp}` } });
+    const child = await prisma.category.create({ data: { name: "Položky", parentId: parent.id } });
+    const [firstItem, secondItem] = await Promise.all([
+      prisma.inventoryItem.create({ data: { name: "První", categoryId: child.id, unit: "ks" } }),
+      prisma.inventoryItem.create({ data: { name: "Druhá", categoryId: child.id, unit: "ks" } })
+    ]);
+    await prisma.inventoryLedger.createMany({
+      data: [
+        { inventoryItemId: firstItem.id, deltaQuantity: 10, reason: LedgerReason.audit_adjustment, createdById: user.id },
+        { inventoryItemId: secondItem.id, deltaQuantity: 4, reason: LedgerReason.audit_adjustment, createdById: user.id }
+      ]
+    });
+
+    const targetEvent = await prisma.event.create({
+      data: {
+        name: "Cílová akce",
+        location: "L",
+        deliveryDatetime: new Date("2030-06-01T08:00:00Z"),
+        pickupDatetime: new Date("2030-06-02T08:00:00Z"),
+        status: "DRAFT",
+        createdById: user.id
+      }
+    });
+    const blockingEvent = await prisma.event.create({
+      data: {
+        name: "Překrývající se akce",
+        location: "L",
+        deliveryDatetime: new Date("2030-06-01T10:00:00Z"),
+        pickupDatetime: new Date("2030-06-01T18:00:00Z"),
+        status: "READY_FOR_WAREHOUSE",
+        createdById: user.id
+      }
+    });
+    await prisma.eventReservation.create({
+      data: {
+        eventId: blockingEvent.id,
+        inventoryItemId: firstItem.id,
+        reservedQuantity: 3,
+        state: "confirmed"
+      }
+    });
+
+    const rows = await prisma.$transaction((tx) =>
+      getAvailabilityForEventItemsTx(tx, targetEvent.id, [firstItem.id, secondItem.id])
+    );
+    expect(rows).toEqual([
+      { inventoryItemId: firstItem.id, physicalTotal: 10, blockedTotal: 3, available: 7 },
+      { inventoryItemId: secondItem.id, physicalTotal: 4, blockedTotal: 0, available: 4 }
+    ]);
 
     await disconnect();
   });

@@ -5,7 +5,7 @@ import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
-import { getAvailabilityForEventItemTx } from "../services/availability.js";
+import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
@@ -420,18 +420,13 @@ export async function eventRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
-        inventory_item_ids: z.array(z.string().uuid()).min(1)
+        inventory_item_ids: z.array(z.string().uuid()).min(1).max(1000)
       })
       .parse(request.body);
 
-    const rows = await app.prisma.$transaction(async (tx) => {
-      const out: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> = [];
-      for (const itemId of body.inventory_item_ids) {
-        const a = await getAvailabilityForEventItemTx(tx, params.id, itemId);
-        out.push({ inventoryItemId: itemId, ...a });
-      }
-      return out;
-    });
+    const rows = await app.prisma.$transaction((tx) =>
+      getAvailabilityForEventItemsTx(tx, params.id, body.inventory_item_ids)
+    );
     return { rows };
   });
 
@@ -572,6 +567,7 @@ export async function eventRoutes(app: FastifyInstance) {
             })
           )
           .min(1)
+          .max(1000)
       })
       .parse(request.body);
 
@@ -648,6 +644,9 @@ export async function eventRoutes(app: FastifyInstance) {
       }
       if (e?.message === "EVENT_READ_ONLY") {
         return httpError(reply, 409, "EVENT_READ_ONLY", "Event je po výdeji uzamčen");
+      }
+      if (e?.message === "DUPLICATE_ITEMS") {
+        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v jednom vložení jen jednou.");
       }
       if (e?.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
       if (e?.message === "FORBIDDEN") {
