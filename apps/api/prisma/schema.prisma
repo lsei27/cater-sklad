@@ -152,6 +152,11 @@ model InventoryLedger {
   @@map("inventory_ledger")
 }
 
+/// POZOR: tabulka má check constraint "events_interval_check"
+/// (delivery_datetime < pickup_datetime), který žije jen v migraci
+/// 20251222160000_init. Prisma check constraints ve schématu neumí, takže
+/// `prisma db push` databázi postaví BEZ něj. Na obrácený interval nesedí
+/// výpočet dostupnosti, proto databázi vždy stavěj přes `prisma migrate deploy`.
 model Event {
   id                  String      @id @default(uuid()) @db.Uuid
   name                String
