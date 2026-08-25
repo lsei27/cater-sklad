@@ -1,9 +1,15 @@
 import type { FastifyInstance } from "fastify";
+import { isOriginAllowed } from "../config.js";
 import { sseBus } from "../lib/sse.js";
 
 export async function streamRoutes(app: FastifyInstance) {
   app.get("/stream", async (request, reply) => {
-    const origin = typeof request.headers.origin === "string" ? request.headers.origin : "*";
+    // Hlavičky si tahle routa nastavuje ručně (píše přímo do reply.raw), takže
+    // musí origin ověřit sama, jinak by obešla whitelist z @fastify/cors.
+    const rawOrigin = typeof request.headers.origin === "string" ? request.headers.origin : null;
+    if (rawOrigin && !isOriginAllowed(rawOrigin)) {
+      return reply.status(403).send({ error: { code: "CORS_NOT_ALLOWED", message: "Origin not allowed" } });
+    }
     const token =
       // EventSource can't set headers reliably; allow query token for SSE.
       (request.query as any)?.token ??
@@ -18,9 +24,11 @@ export async function streamRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: { code: "UNAUTHENTICATED", message: "Invalid token" } });
     }
 
-    reply.raw.setHeader("Access-Control-Allow-Origin", origin);
+    if (rawOrigin) {
+      reply.raw.setHeader("Access-Control-Allow-Origin", rawOrigin);
+      reply.raw.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     reply.raw.setHeader("Vary", "Origin");
-    reply.raw.setHeader("Access-Control-Allow-Credentials", "true");
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
     reply.raw.setHeader("Connection", "keep-alive");

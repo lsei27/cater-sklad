@@ -78,13 +78,13 @@ async function getOrCreateCategory(params: {
 
 export async function adminRoutes(app: FastifyInstance) {
   async function getUserDeleteBlockers(tx: any, userId: string) {
+    // Audit log tu schválně není: ten smazání nebrání, jen se odpojí od uživatele.
     const [
       eventsCreated,
       ledgerEntries,
       exportsCount,
       issuesCount,
       returnsCount,
-      auditLogs,
       reservationsCreated
     ] = await Promise.all([
       tx.event.count({ where: { createdById: userId } }),
@@ -92,7 +92,6 @@ export async function adminRoutes(app: FastifyInstance) {
       tx.eventExport.count({ where: { exportedById: userId } }),
       tx.eventIssue.count({ where: { issuedById: userId } }),
       tx.eventReturn.count({ where: { returnedById: userId } }),
-      tx.auditLog.count({ where: { actorUserId: userId } }),
       tx.eventReservation.count({ where: { createdById: userId } })
     ]);
 
@@ -102,7 +101,6 @@ export async function adminRoutes(app: FastifyInstance) {
       exports: exportsCount,
       issues: issuesCount,
       returns: returnsCount,
-      audit_logs: auditLogs,
       reservations_created: reservationsCreated
     };
   }
@@ -225,7 +223,8 @@ export async function adminRoutes(app: FastifyInstance) {
 
     try {
       await app.prisma.$transaction(async (tx) => {
-        await tx.auditLog.deleteMany({ where: { actorUserId: params.id } });
+        // Audit log se nemaže: actor_user_id se díky ON DELETE SET NULL vynuluje
+        // a stopa po zásazích smazaného uživatele zůstane zachovaná.
         await tx.user.delete({ where: { id: params.id } });
         await tx.auditLog.create({
           data: { actorUserId: actor.id, entityType: "user", entityId: params.id, action: "delete" }

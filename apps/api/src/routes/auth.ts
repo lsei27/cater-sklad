@@ -11,8 +11,21 @@ const EmailSchema = z
   // allow internal emails like admin@local (no dot)
   .regex(/^[^\s@]+@[^\s@]+(\.[^\s@]+)?$/, "Invalid email");
 
+// Limit je schválně velkorysý: běžný uživatel, který si dvakrát přehmátne heslo,
+// na něj nesmí narazit. Proti hádání hesel hrubou silou stačí i takhle nastavený.
+const LOGIN_RATE_LIMIT = {
+  rateLimit: {
+    max: 10,
+    timeWindow: "5 minutes",
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: { code: "TOO_MANY_REQUESTS", message: "Příliš mnoho pokusů. Zkus to znovu za pár minut." }
+    })
+  }
+};
+
 export async function authRoutes(app: FastifyInstance) {
-  app.post("/auth/login", async (request, reply) => {
+  app.post("/auth/login", { config: LOGIN_RATE_LIMIT }, async (request, reply) => {
     const body = z
       .object({
         email: EmailSchema,
@@ -29,7 +42,7 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ token, user: { id: user.id, email: user.email, role: user.role } });
   });
 
-  app.post("/auth/change-password", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/auth/change-password", { config: LOGIN_RATE_LIMIT, preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     const body = z
       .object({
