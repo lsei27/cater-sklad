@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.js";
-import { LedgerReason, ReservationState } from "../../generated/prisma/client.js";
+import { EventStatus, LedgerReason, ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { getPhysicalTotal } from "../services/availability.js";
@@ -433,6 +433,46 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
     }).sort(compareInventoryDtoByCategory);
 
     return { items: dto };
+  });
+
+  app.get("/inventory/items/:id/events", { preHandler: [app.authenticate] }, async (request) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const reservations = await app.prisma.eventReservation.findMany({
+      where: {
+        inventoryItemId: params.id,
+        event: {
+          status: { notIn: [EventStatus.CLOSED, EventStatus.CANCELLED] },
+          pickupDatetime: { gte: new Date() }
+        }
+      },
+      select: {
+        reservedQuantity: true,
+        event: {
+          select: {
+            id: true,
+            name: true,
+            location: true,
+            status: true,
+            deliveryDatetime: true,
+            pickupDatetime: true
+          }
+        }
+      },
+      orderBy: { event: { deliveryDatetime: "asc" } }
+    });
+
+    return {
+      events: reservations.map((r) => ({
+        eventId: r.event.id,
+        name: r.event.name,
+        location: r.event.location,
+        status: r.event.status,
+        deliveryDatetime: r.event.deliveryDatetime.toISOString(),
+        pickupDatetime: r.event.pickupDatetime.toISOString(),
+        quantity: r.reservedQuantity
+      }))
+    };
   });
 
   app.get("/warehouses", { preHandler: [app.authenticate] }, async (request) => {
