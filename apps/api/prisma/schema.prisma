@@ -297,16 +297,19 @@ model EventReturn {
   @@map("event_returns")
 }
 
+/// actorUserId je nullable schválně: po smazání uživatele se vynuluje, ale
+/// samotný záznam v auditu zůstane. Dřív se logy mazaly, aby smazání uživatele
+/// vůbec prošlo, čímž se ztrácela historie zásahů do skladu.
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
-  actorUserId String   @map("actor_user_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
   entityType  String   @map("entity_type")
   entityId    String   @map("entity_id") @db.Uuid
   action      String
   diffJson    Json?    @map("diff_json")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([entityType, entityId])
   @@map("audit_log")

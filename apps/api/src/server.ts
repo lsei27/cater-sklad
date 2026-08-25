@@ -1,10 +1,11 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import staticPlugin from "@fastify/static";
 import multipart from "@fastify/multipart";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { env } from "./config.js";
+import { env, isOriginAllowed } from "./config.js";
 import prismaPlugin from "./plugins/prisma.js";
 import authPlugin from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
@@ -20,7 +21,10 @@ declare module "fastify" {
   }
 }
 
-const app = Fastify({ logger: true });
+// trustProxy je nutné, aby request.ip byla adresa klienta a ne Render proxy.
+// Bez toho by všichni uživatelé padali do jednoho společného rate-limit kbelíku
+// a pár špatných pokusů kohokoli by odstřihlo celou firmu.
+const app = Fastify({ logger: true, trustProxy: true });
 const storageDir = path.isAbsolute(env.STORAGE_DIR)
   ? env.STORAGE_DIR
   : path.resolve(process.cwd(), env.STORAGE_DIR);
@@ -31,10 +35,22 @@ app.addContentTypeParser("text/plain", { parseAs: "string" }, (req, body, done) 
 });
 
 await app.register(cors, {
-  origin: true,
+  // Requesty bez originu (curl, server-to-server, otevření PDF přes window.open)
+  // nechávám projít, prohlížeč u nich origin neposílá. Cizí web se sem nedostane.
+  // Neznámý origin nevyhazuje chybu, jen se mu nepošle Access-Control-Allow-Origin
+  // a prohlížeč odpověď zahodí sám. Vyhozená chyba by z toho udělala 500,
+  // což mate v logu a rozbíjí i vlastní kontrolu originu v /stream.
+  origin: (origin, cb) => {
+    if (!origin || isOriginAllowed(origin)) return cb(null, true);
+    app.log.warn({ origin }, "CORS: zamítnutý origin");
+    cb(null, false);
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 });
+// global: false — limit platí jen tam, kde si ho routa vyžádá přes config.rateLimit.
+// Běžný provoz aplikace (načítání skladu, rezervace) brzdit nechceme.
+await app.register(rateLimit, { global: false });
 await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 await app.register(prismaPlugin);
 await app.register(authPlugin, { jwtSecret: env.JWT_SECRET });
