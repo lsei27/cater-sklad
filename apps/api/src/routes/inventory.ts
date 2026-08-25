@@ -96,6 +96,12 @@ async function createWarehouseTransfersTx(
   });
   if (inventoryItems.length !== itemIds.length) throw new Error("ITEM_NOT_FOUND");
 
+  // Stejný zámek jako u rezervací a doplňkového výdeje: bez něj dva souběžné
+  // převody přečtou stejný zůstatek a oba projdou, takže sklad spadne do minusu.
+  for (const inventoryItemId of itemIds) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(2025, hashtext(${inventoryItemId}))`;
+  }
+
   const stockByItemId = await getWarehouseStocksForItemsTx(tx, {
     warehouseId: fromWarehouseId,
     itemIds
@@ -237,19 +243,25 @@ physical AS (
   WHERE inventory_item_id = ANY(${itemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
--- Virtual returns: items from ISSUED events whose pickup is before our window start
+-- Virtual returns: items from ISSUED events whose pickup is before our window start.
+-- Stejná pravidla jako v getAvailabilityForEventItemTx: spotřební zboží se nevrací
+-- vůbec a vratná položka je k dispozici až po prodlevě return_delay_days od svozu.
 virtual_returns AS (
   SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
   FROM event_issues ei
   JOIN events e ON e.id = ei.event_id
+  JOIN inventory_items ii ON ii.id = ei.inventory_item_id
   CROSS JOIN params p
   WHERE ei.inventory_item_id = ANY(${itemIds}::uuid[])
     AND e.status = 'ISSUED'
     AND ei.type = 'issued'
-    AND e.pickup_datetime <= p.t_start
+    AND ii.consumable = false
+    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= p.t_start
   GROUP BY ei.inventory_item_id
 ),
--- Per item+event: take GREATEST of reservation vs manual warehouse block
+-- Per item+event: take GREATEST of reservation vs manual warehouse block.
+-- Rezervace platí jen u živé překrývající se akce, ruční blokace se řídí svým
+-- blocked_until i na uzavřené akci (špinavé zboží čekající na kontrolu).
 per_event_blocked AS (
   SELECT
     i.id AS inventory_item_id,
@@ -259,19 +271,20 @@ per_event_blocked AS (
       COALESCE(MAX(wb.blocked_quantity), 0)
     )::int AS blocked_qty
   FROM items i
-  JOIN events e2 ON e2.status NOT IN ('CLOSED','CANCELLED')
+  CROSS JOIN events e2
   CROSS JOIN params p
   LEFT JOIN event_reservations r
     ON r.event_id = e2.id
     AND r.inventory_item_id = i.id
     AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+    AND e2.status NOT IN ('CLOSED','CANCELLED')
+    AND e2.delivery_datetime < p.t_end
+    AND p.t_start < e2.pickup_datetime
   LEFT JOIN warehouse_blocks wb
     ON wb.event_id = e2.id
     AND wb.inventory_item_id = i.id
     AND p.t_start < wb.blocked_until
-  WHERE e2.delivery_datetime < p.t_end
-    AND p.t_start < e2.pickup_datetime
-    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
+  WHERE r.id IS NOT NULL OR wb.id IS NOT NULL
   GROUP BY i.id, e2.id
 ),
 blocked AS (
@@ -361,15 +374,18 @@ physical AS (
   WHERE inventory_item_id = ANY(${targetItemIds}::uuid[])
   GROUP BY inventory_item_id
 ),
+-- Stejná pravidla jako v getAvailabilityForEventItemTx, viz komentář tamtéž.
 virtual_returns AS (
   SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
   FROM event_issues ei
   JOIN events e ON e.id = ei.event_id
+  JOIN inventory_items ii ON ii.id = ei.inventory_item_id
   CROSS JOIN params p
   WHERE ei.inventory_item_id = ANY(${targetItemIds}::uuid[])
     AND e.status = 'ISSUED'
     AND ei.type = 'issued'
-    AND e.pickup_datetime <= p.t_start
+    AND ii.consumable = false
+    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= p.t_start
   GROUP BY ei.inventory_item_id
 ),
 per_event_blocked AS (
@@ -381,19 +397,20 @@ per_event_blocked AS (
       COALESCE(MAX(wb.blocked_quantity), 0)
     )::int AS blocked_qty
   FROM items i
-  JOIN events e2 ON e2.status NOT IN ('CLOSED','CANCELLED')
+  CROSS JOIN events e2
   CROSS JOIN params p
   LEFT JOIN event_reservations r
     ON r.event_id = e2.id
     AND r.inventory_item_id = i.id
     AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+    AND e2.status NOT IN ('CLOSED','CANCELLED')
+    AND e2.delivery_datetime < p.t_end
+    AND p.t_start < e2.pickup_datetime
   LEFT JOIN warehouse_blocks wb
     ON wb.event_id = e2.id
     AND wb.inventory_item_id = i.id
     AND p.t_start < wb.blocked_until
-  WHERE e2.delivery_datetime < p.t_end
-    AND p.t_start < e2.pickup_datetime
-    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
+  WHERE r.id IS NOT NULL OR wb.id IS NOT NULL
   GROUP BY i.id, e2.id
 ),
 blocked AS (

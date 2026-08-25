@@ -51,16 +51,25 @@ function compareByCategoryParentName(a: any, b: any) {
   return String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "cs");
 }
 
-const EventCreateSchema = z.object({
-  name: z.string().min(1),
-  location: z.string().min(1),
-  address: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
-  registration_number: z.string().max(64).optional().nullable(),
-  event_date: z.string().datetime().optional().nullable(),
-  delivery_datetime: z.string().datetime(),
-  pickup_datetime: z.string().datetime()
-});
+// Databáze má na intervalu check constraint (events_interval_check). Bez téhle
+// validace se překlep v datu projeví až jako 500 z porušeného constraintu.
+const INTERVAL_ERROR = "Svoz musí být později než závoz.";
+
+const EventCreateSchema = z
+  .object({
+    name: z.string().min(1),
+    location: z.string().min(1),
+    address: z.string().optional().nullable(),
+    notes: z.string().optional().nullable(),
+    registration_number: z.string().max(64).optional().nullable(),
+    event_date: z.string().datetime().optional().nullable(),
+    delivery_datetime: z.string().datetime(),
+    pickup_datetime: z.string().datetime()
+  })
+  .refine((b) => new Date(b.delivery_datetime) < new Date(b.pickup_datetime), {
+    message: INTERVAL_ERROR,
+    path: ["pickup_datetime"]
+  });
 
 const EventUpdateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -186,6 +195,14 @@ export async function eventRoutes(app: FastifyInstance) {
 
     if (["ISSUED", "CLOSED", "CANCELLED"].includes(existing.status)) {
       return httpError(reply, 409, "READ_ONLY", "Akci nelze upravit.");
+    }
+
+    // Interval se musí ověřit proti výsledku, ne jen proti tělu requestu:
+    // klidně přijde jen jedno z obou dat a to druhé zůstane z databáze.
+    const nextDelivery = body.delivery_datetime ? new Date(body.delivery_datetime) : existing.deliveryDatetime;
+    const nextPickup = body.pickup_datetime ? new Date(body.pickup_datetime) : existing.pickupDatetime;
+    if (nextDelivery >= nextPickup) {
+      return httpError(reply, 400, "INVALID_INTERVAL", INTERVAL_ERROR);
     }
 
     const event = await app.prisma.event.update({
@@ -847,6 +864,13 @@ export async function eventRoutes(app: FastifyInstance) {
         const itemsToIssue = defaultItems.filter((i) => i.issued_quantity > 0);
         if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
 
+        // Duplicitní položka by se do event_issues zapsala jen jednou (stejný
+        // idempotency_key), ale do skladu by se odečetla za každý řádek zvlášť.
+        const duplicateIds = itemsToIssue
+          .map((i) => i.inventory_item_id)
+          .filter((id, index, arr) => arr.indexOf(id) !== index);
+        if (duplicateIds.length > 0) throw new Error("DUPLICATE_ITEMS");
+
         const inventoryItems = itemsToIssue.length
           ? await tx.inventoryItem.findMany({
               where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
@@ -929,6 +953,7 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "NEEDS_REVISION") return httpError(reply, 409, "NEEDS_REVISION", "Akce byla po předání změněna. Je nutný nový export.");
       if (e?.message === "NO_EXPORT") return httpError(reply, 409, "NO_EXPORT", "Akce nemá export. Nejdřív ji předej skladu.");
       if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Export neobsahuje žádné položky k výdeji.");
+      if (e?.message === "DUPLICATE_ITEMS") return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být ve výdeji jen jednou.");
       if (e?.message === "ITEM_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
       if (e?.message === "WAREHOUSE_REQUIRED")
         return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");

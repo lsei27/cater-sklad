@@ -37,7 +37,10 @@ virtual_returns AS (
     AND ii.consumable = false
     AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= t.t_start
 ),
--- Per-event: take GREATEST of reservation vs manual block, then sum across events
+-- Per-event: take GREATEST of reservation vs manual block, then sum across events.
+-- Rezervace platí jen u živé akce, jejíž termín se s naším oknem překrývá.
+-- Ruční blokace se naopak řídí výhradně svým blocked_until: sklad blokuje
+-- i na už uzavřené akci, když si nechává špinavé zboží do doby, než ho zkontroluje.
 per_event_blocked AS (
   SELECT
     e2.id AS event_id,
@@ -51,14 +54,14 @@ per_event_blocked AS (
     ON r.event_id = e2.id
     AND r.inventory_item_id = ${inventoryItemId}::uuid
     AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
+    AND e2.status NOT IN ('CLOSED','CANCELLED')
+    AND e2.delivery_datetime < t.t_end
+    AND t.t_start < e2.pickup_datetime
   LEFT JOIN warehouse_blocks wb
     ON wb.event_id = e2.id
     AND wb.inventory_item_id = ${inventoryItemId}::uuid
     AND t.t_start < wb.blocked_until
   WHERE e2.id <> ${targetEventId}::uuid
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND e2.delivery_datetime < t.t_end
-    AND t.t_start < e2.pickup_datetime
     AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
   GROUP BY e2.id
 )
