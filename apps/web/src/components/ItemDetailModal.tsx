@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import Modal from "./ui/Modal";
 import { Icons } from "../lib/icons";
-import { apiUrl } from "../lib/api";
+import { api, apiUrl } from "../lib/api";
 import { formatCategoryParentLabel } from "../lib/viewModel";
 
 export type ItemDetail = {
@@ -25,6 +26,16 @@ export type ItemDetail = {
   };
 };
 
+type ItemEvent = {
+  eventId: string;
+  name: string;
+  location: string;
+  status: string;
+  deliveryDatetime: string;
+  pickupDatetime: string;
+  quantity: number;
+};
+
 type Props = {
   item: ItemDetail | null;
   warehouses: Array<{ id: string; name: string }>;
@@ -42,6 +53,27 @@ export default function ItemDetailModal({
   primaryText,
   onPrimary
 }: Props) {
+  const itemId = item?.itemId ?? null;
+  const [events, setEvents] = useState<ItemEvent[] | null>(null);
+  const [eventsError, setEventsError] = useState(false);
+
+  useEffect(() => {
+    setEvents(null);
+    setEventsError(false);
+    if (!itemId) return;
+    let cancelled = false;
+    api<{ events: ItemEvent[] }>(`/inventory/items/${itemId}/events`)
+      .then((res) => {
+        if (!cancelled) setEvents(res.events);
+      })
+      .catch(() => {
+        if (!cancelled) setEventsError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId]);
+
   return (
     <Modal
       open={!!item}
@@ -60,18 +92,51 @@ export default function ItemDetailModal({
     >
       {item && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="aspect-square w-full rounded-lg bg-gray-100 overflow-hidden border border-gray-200 flex items-center justify-center">
-            {item.imageUrl ? (
-              <img
-                className="h-full w-full object-contain p-2"
-                src={apiUrl(item.imageUrl)}
-                alt={item.name}
-              />
-            ) : (
-              <div className="text-gray-400">
-                <Icons.Image />
+          <div className="space-y-3">
+            <div className="aspect-square w-full rounded-lg bg-gray-100 overflow-hidden border border-gray-200 flex items-center justify-center">
+              {item.imageUrl ? (
+                <img
+                  className="h-full w-full object-contain p-2"
+                  src={apiUrl(item.imageUrl)}
+                  alt={item.name}
+                />
+              ) : (
+                <div className="text-gray-400">
+                  <Icons.Image />
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1">
+                Na akcích
               </div>
-            )}
+              {eventsError ? (
+                <div className="text-xs text-gray-400">Nepodařilo se načíst akce.</div>
+              ) : events === null ? (
+                <div className="text-xs text-gray-400">Načítám…</div>
+              ) : events.length === 0 ? (
+                <div className="text-xs text-gray-400">Není na žádné nadcházející akci.</div>
+              ) : (
+                <div className="space-y-1 max-h-48 overflow-auto">
+                  {events.map((e) => (
+                    <div
+                      key={e.eventId}
+                      className="flex justify-between items-baseline gap-2 bg-gray-50 px-2 py-1 rounded text-xs"
+                    >
+                      <span className="min-w-0 truncate">
+                        <span className="text-gray-500">
+                          {new Date(e.deliveryDatetime).toLocaleDateString("cs-CZ")}
+                        </span>{" "}
+                        <span className="text-gray-900">{e.name}</span>
+                      </span>
+                      <span className="font-semibold text-gray-900 whitespace-nowrap">
+                        {e.quantity} {item.unit}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="space-y-2 text-sm">
             <DetailRow label="SKU" value={item.sku || "—"} />

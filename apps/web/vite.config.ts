@@ -9,6 +9,7 @@ export default defineConfig({
       "/auth": "http://localhost:3001",
       "/events": "http://localhost:3001",
       "/inventory": "http://localhost:3001",
+      "/warehouses": "http://localhost:3001",
       "/categories": "http://localhost:3001",
       "/admin": "http://localhost:3001",
       "/stream": {
