@@ -1,0 +1,33 @@
+# Zavislosti a buildy se v image vytvareji znovu, kopirovat je netreba.
+node_modules
+**/node_modules
+dist
+**/dist
+.turbo
+.vite
+coverage
+
+# Tajemstvi nesmi skoncit ve vrstvach image. Promenne dodava Render za behu.
+# Docker (na rozdil od gitu) matchuje vzory od korene kontextu,
+# proto **/ - jinak by se vynechal jen .env v korenu, ne apps/api/.env.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Frontend se do API image nebali, ten se stavi zvlast.
+apps/web
+
+# Pracovni data, lokalni nastroje a historie repozitare.
+.git
+.gitignore
+venv
+.venv
+obrazky_webp
+storage
+*.xlsx
+*.csv
+*.log
+.DS_Store
+.claude
+.backup
+.pnpm-store

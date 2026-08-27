@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 
 # Install pnpm and dependencies
 ENV PNPM_HOME="/pnpm"
@@ -25,8 +25,12 @@ COPY apps/api ./apps/api
 RUN pnpm --filter @cater-sklad/shared build
 
 # Generate Prisma Client
+# prisma.config.ts vyzaduje DATABASE_URL uz pri nacteni konfigurace, ale samotne
+# "generate" se k databazi nepripojuje. Podstrcime proto placeholder jen pro tenhle
+# krok - build tim nezavisi na zadnem tajemstvi. Skutecnou adresu dodava Render
+# az za behu pro "migrate deploy" a pro server.
 WORKDIR /app/apps/api
-RUN npx prisma generate
+RUN DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build" npx prisma generate
 
 # Build API
 RUN pnpm build
