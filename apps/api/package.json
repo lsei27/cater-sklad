@@ -11,9 +11,6 @@
     "prisma": "prisma",
     "test": "vitest run"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@cater-sklad/shared": "workspace:*",
     "@fastify/cors": "^11.3.0",

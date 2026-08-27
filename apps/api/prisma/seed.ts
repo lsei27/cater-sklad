@@ -1,7 +1,15 @@
 import bcrypt from "bcrypt";
 import { PrismaClient, Role, LedgerReason } from "../generated/prisma/client.js";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
-const prisma = new PrismaClient();
+// Prisma 7 uz neotevira spojeni sama, klient potrebuje adapter - stejne jako
+// plugins/prisma.ts. DATABASE_URL sem propada z Prisma CLI, ktera nacita .env.
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error("DATABASE_URL is required to seed the database.");
+
+const pool = new Pool({ connectionString });
+const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 async function getOrCreateCategory(params: { parentId: string | null; name: string }) {
   const { parentId, name } = params;
@@ -19,18 +27,21 @@ async function getOrCreateCategory(params: { parentId: string | null; name: stri
 async function main() {
   const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
   const existingAdmin = await prisma.user.findUnique({ where: { email: "admin@local" } });
+  // Admina drzime v promenne, nize se pod nim zaklada pocatecni stav skladu.
+  let admin = existingAdmin;
   if (!adminSeedPassword && existingAdmin) {
     console.log("ADMIN_SEED_PASSWORD not set; keeping existing admin credentials.");
   } else if (!adminSeedPassword) {
     throw new Error("ADMIN_SEED_PASSWORD is required to seed the admin user.");
   } else {
     const password = await bcrypt.hash(adminSeedPassword, 10);
-    await prisma.user.upsert({
+    admin = await prisma.user.upsert({
       where: { email: "admin@local" },
       update: { name: "Admin", passwordHash: password, role: Role.admin },
       create: { email: "admin@local", name: "Admin", passwordHash: password, role: Role.admin }
     });
   }
+  if (!admin) throw new Error("ADMIN_USER_MISSING");
 
   const emSeedPassword = process.env.EM_SEED_PASSWORD;
   if (emSeedPassword) {
@@ -228,9 +239,13 @@ async function main() {
 }
 
 main()
-  .then(async () => prisma.$disconnect())
+  .then(async () => {
+    await prisma.$disconnect();
+    await pool.end();
+  })
   .catch(async (e) => {
     console.error(e);
     await prisma.$disconnect();
+    await pool.end();
     process.exit(1);
   });
