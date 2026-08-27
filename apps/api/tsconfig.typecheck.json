@@ -1,0 +1,11 @@
+{
+  // Build (tsconfig.build.json) prekalada jen src. Seed a testy tim padaly mimo
+  // typovou kontrolu, takze v nich mohly dlouhodobe lezet chyby - napr.
+  // "admin is not defined" v prisma/seed.ts. Tenhle projekt je jen kontroluje.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "prisma", "test"]
+}
