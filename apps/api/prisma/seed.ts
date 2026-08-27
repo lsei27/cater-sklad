@@ -216,6 +216,17 @@ async function main() {
   await ensureInitialQtyIfNoLedger(item2.id, 10);
 
   // Seed Role Category Access
+  //
+  // ⚠️ POZOR: prazdna konfigurace role znamena NEOMEZENY pristup (viz
+  // services/reserve.ts, blok `if (allowedAccess.length > 0)`). Zalozenim
+  // prvniho radku se role prepne do omezeneho rezimu a vsechno neuvedene
+  // se ji zakaze. Na produkci to 27. 8. 2026 zablokovalo event managerovi
+  // 223 z 501 polozek a kuchari 464 z 501, protoze seed zna jen ctyri
+  // korenove kategorie, zatimco realny katalog jich ma ctrnact.
+  //
+  // Tenhle blok proto patri jen do cerstveho demo prostredi. Nikdy ho
+  // nepoustej proti databazi, ktera uz ma vlastni strom kategorii.
+  //
   // Chef -> Kuchyň
   const kitchenCat = parentRows.get("Kuchyň");
   if (kitchenCat) {

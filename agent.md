@@ -62,6 +62,8 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - **Role**: `admin`, `event_manager`, `chef`, `warehouse`.
 - **Jméno uživatele**: `User.name` (volitelné, ale v admin UI je nyní vyžadováno při vytvoření uživatele).
 - **RoleCategoryAccess**: Definuje, ke kterým kategoriím inventáře má daná role (např. kuchař) přístup.
+  - **⚠️ Prázdná konfigurace pro roli = NEOMEZENÝ přístup**, ne zakázaný (`apps/api/src/services/reserve.ts`, blok `if (allowedAccess.length > 0)`). Omezení se zapne teprve tím, že roli přibude první řádek. **Přidat jedno pravidlo tedy zakáže všechno ostatní** - to je snadné přehlédnout.
+  - Kontrola kouká jen **o jednu úroveň nahoru**: povolí položku, když je v povolené kategorii nebo je její přímý rodič povolený. U hlubšího zanoření než dvě úrovně by to nestačilo (dnes je strom dvouúrovňový, takže povolení kořenů stačí).
 
 ### 2. Inventář (`InventoryItem`, `Category`)
 - Položky jsou organizovány do **kategorií** (např. Kuchyň, Mobiliář, Sklo).
@@ -546,6 +548,17 @@ při nejbližším deployi zapsal do ostrého skladu kategorie `Sklo` a `Audio`,
 
 Data byla odstraněna a `prisma db seed` z `render:api-build` vyhozen. Seed zůstává
 použitelný ručně pro nová prostředí.
+
+Seed navíc zapsal do `role_category_access` pět řádků (event manager -> `Inventář`,
+`Mobiliář`, `Kuchyň`, `Zboží`; kuchař -> `Kuchyň`). Protože **prázdná konfigurace
+znamená neomezený přístup**, tím se obě role přepnuly do omezeného režimu a systém
+začal zamítat rezervace: event managerovi 223 z 501 položek, kuchaři 464 z 501.
+Projevovalo se to jako náhodné „Nemáte oprávnění rezervovat položky z této kategorie".
+
+Že šlo o seed a ne o záměr adminů potvrdil `audit_log` - o ruční změně oprávnění
+tam není jediný záznam, přestože je admin endpoint zapisuje. Napraveno: event
+manager má všech 14 kořenových kategorií, kuchaři byl řádek smazán (zpět na
+neomezeno). Ověřeno, že žádná role nemá zamítnutou ani jednu položku.
 
 Poučení: krok, který se tiše nespouštěl, může oprava nesouvisející chyby probudit.
 Před opravou čehokoli, co běží v deploy pipeline, si ověř, co ta věc dělá s produkcí.
