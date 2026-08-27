@@ -117,7 +117,9 @@ API adresu z `VITE_API_BASE_URL`.
 - **Automatický deployment**: Každý push do větve `main` spustí build a deploy.
 - **Databáze**: Spravovaná Postgres instance na **Supabase** (přesunuto z Renderu). Backend se připojuje přes Session pooler (IPv4 kompatibilní, connection string v `prisma.config.ts`).
 - **⚠️ `render.yaml` u API NEPLATÍ**: deklaruje sice `env: docker`, ale služba je v dashboardu Renderu nastavená jako **nativní Node build** s build commandem `npm run render:api-build`. Ověřeno z build logu 27. 8. 2026. `Dockerfile` se pro tuhle službu vůbec nepoužívá, takže změny v něm na produkci nic nemění. **Zdrojem pravdy je dashboard, ne `render.yaml`.**
-- **Runtime**: Node.js dodává Render, ne `Dockerfile` - v logu `Using Node.js version 22.16.0 (default)`. Je to *default* Renderu, takže se může změnit; Prisma 7.10 vyžaduje `^20.19 || ^22.12 || >=24`.
+- **Runtime**: Node.js dodává Render, ne `Dockerfile`. Verze je připnutá v `.node-version` v kořeni repa (`22.23.2`, LTS Jod) - do 27. 8. 2026 se jelo na Render *defaultu* (`22.16.0`), který se může kdykoli změnit. Prisma 7.10 vyžaduje `^20.19 || ^22.12 || >=24`.
+  - Pořadí priorit u Renderu: **proměnná `NODE_VERSION` v dashboardu** > `.node-version` > `.nvmrc` > `engines` v `package.json`. Když je v dashboardu nastavená `NODE_VERSION`, soubor se ignoruje.
+  - `Dockerfile` má `node:24-alpine`, tedy jinou verzi. Nevadí to (na produkci se nepoužívá), ale lokální test v Dockeru pak neodpovídá produkci.
 - **Migrace**: `prisma migrate deploy` běží ve **fázi buildu** jako součást `render:api-build`.
 - **Do produkčního buildu nikdy nepatří `prisma db seed`**: seed zakládá demo položky (SKLO-001, TECH-001) včetně počátečního stavu 200 a 10 ks. Do 27. 8. 2026 byl v `render:api-build` a po opravě seedu skutečně nasypal tahle data do ostrého skladu. Odstraněno.
 - **`prisma db seed` vrací 0 i když seed spadne**: build proto na rozbitém seedu nikdy neupozorní. Právě proto zůstal seed měsíce rozbitý bez povšimnutí. Nespoléhat na návratový kód, číst výpis.
