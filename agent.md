@@ -124,7 +124,7 @@ API adresu z `VITE_API_BASE_URL`.
   - `Dockerfile` má `node:24-alpine`, tedy jinou verzi. Nevadí to (na produkci se nepoužívá), ale lokální test v Dockeru pak neodpovídá produkci.
 - **Migrace**: `prisma migrate deploy` běží ve **fázi buildu** jako součást `render:api-build`.
 - **Do produkčního buildu nikdy nepatří `prisma db seed`**: seed zakládá demo položky (SKLO-001, TECH-001) včetně počátečního stavu 200 a 10 ks. Do 27. 8. 2026 byl v `render:api-build` a po opravě seedu skutečně nasypal tahle data do ostrého skladu. Odstraněno.
-- **`prisma db seed` vrací 0 i když seed spadne**: build proto na rozbitém seedu nikdy neupozorní. Právě proto zůstal seed měsíce rozbitý bez povšimnutí. Nespoléhat na návratový kód, číst výpis.
+- **Nenakonfigurovaný seed selže tiše**: když `prisma.config.ts` nemá `migrations.seed`, vypíše `prisma db seed` jen `⚠️ No seed command configured` a skončí s **návratovým kódem 0**. Přesně proto zůstal seed po přechodu na Prisma 7 měsíce rozbitý, aniž by build cokoli hlásil. Naopak selhání *nakonfigurovaného* seedu se propaguje správně (exit 1), takže na návratový kód se u něj spolehnout lze. Ověřeno na Prisma 7.10.
 - **Důležité - nepoužívat holé `pnpm` v Render dashboard commandech**: Render umí spadnout na chybě `Failed to switch pnpm to v10.26.1 ... ENOENT`, pokud je v dashboardu přímo `pnpm ...`. Bezpečná varianta je spouštět build/start přes `npm run ...` wrappery z root `package.json`.
   - Web build: `npm run render:web-build`
   - API build: `npm run render:api-build`

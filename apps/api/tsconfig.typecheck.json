@@ -7,5 +7,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src", "prisma", "test"]
+  "include": ["src", "prisma", "test", "prisma.config.ts"]
 }

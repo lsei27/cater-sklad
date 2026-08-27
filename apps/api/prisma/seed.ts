@@ -11,6 +11,10 @@ if (!connectionString) throw new Error("DATABASE_URL is required to seed the dat
 const pool = new Pool({ connectionString });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
+// Korenove kategorie, ktere seed umi zalozit a spravovat. Slouzi zaroven jako
+// detekce "cizi" databaze - viz guard na zacatku main().
+const SEED_ROOT_CATEGORIES = ["Inventář", "Mobiliář", "Kuchyň", "Zboží"];
+
 async function getOrCreateCategory(params: { parentId: string | null; name: string }) {
   const { parentId, name } = params;
   const existing = await prisma.category.findFirst({ where: { parentId, name } });
@@ -25,6 +29,23 @@ async function getOrCreateCategory(params: { parentId: string | null; name: stri
 }
 
 async function main() {
+  // Seed je urceny pro cerstve prostredi. Pokud databaze obsahuje korenove
+  // kategorie, ktere seed nezna, je to skutecny provoz - a zapis by tam napachal
+  // skodu: zalozil by demo polozky vcetne pocatecniho stavu skladu a hlavne by
+  // radky v role_category_access prepnuly role do omezeneho rezimu (prazdna
+  // konfigurace = neomezeny pristup). Presne tohle se stalo 27. 8. 2026.
+  const cizi = await prisma.category.findMany({
+    where: { parentId: null, name: { notIn: SEED_ROOT_CATEGORIES } },
+    select: { name: true }
+  });
+  if (cizi.length > 0 && process.env.SEED_ALLOW_NON_EMPTY !== "1") {
+    throw new Error(
+      `Databaze uz ma vlastni strom kategorii (${cizi.map((c) => c.name).join(", ")}). ` +
+        "Seed je jen pro cerstve prostredi a odmita se spustit. " +
+        "Pokud opravdu chces pokracovat, nastav SEED_ALLOW_NON_EMPTY=1."
+    );
+  }
+
   const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
   const existingAdmin = await prisma.user.findUnique({ where: { email: "admin@local" } });
   // Admina drzime v promenne, nize se pod nim zaklada pocatecni stav skladu.
@@ -90,7 +111,7 @@ async function main() {
   }
 
   // Deduplication/Merge logic for parent categories
-  const parents = ["Inventář", "Mobiliář", "Kuchyň", "Zboží"];
+  const parents = SEED_ROOT_CATEGORIES;
   const parentRows = new Map<string, string>();
 
   for (const name of parents) {
@@ -250,13 +271,13 @@ async function main() {
 }
 
 main()
-  .then(async () => {
-    await prisma.$disconnect();
-    await pool.end();
-  })
-  .catch(async (e) => {
+  .catch((e) => {
     console.error(e);
-    await prisma.$disconnect();
-    await pool.end();
-    process.exit(1);
+    process.exitCode = 1;
+  })
+  // finally, aby se pool zavrel i kdyz $disconnect() selze. Jinak by zustal
+  // viset otevreny a proces by se neukoncil.
+  .finally(async () => {
+    await prisma.$disconnect().catch(() => {});
+    await pool.end().catch(() => {});
   });

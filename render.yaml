@@ -1,5 +1,13 @@
 services:
   # API Service (Backend)
+  #
+  # POZOR: tenhle blok NEODPOVIDA realite. Sluzba cater-sklad-api je v dashboardu
+  # Renderu nastavena jako nativni Node build s build commandem
+  # `npm run render:api-build`, ne jako Docker (overeno z build logu 27. 8. 2026:
+  # "Running build command 'npm run render:api-build'", "Using Node.js version 22.16.0").
+  # Dockerfile se pro produkci nepouziva - slouzi lokalnimu vyvoji.
+  # Zdrojem pravdy je dashboard. Nez podle tohohle souboru cokoli usoudis,
+  # vyzadej si build log.
   - type: web
     name: cater-sklad-api
     env: docker
