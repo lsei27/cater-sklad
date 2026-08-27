@@ -21,28 +21,29 @@ Verze níže odpovídají `package.json` (stav srpen 2026). Uvedené jsou minim�
 verze podle semver rozsahu `^`.
 
 ### Backend (apps/api)
-- **Framework**: Fastify 5.10.0 (rychlý a nízkoúrovňový webový framework pro Node.js).
-- **ORM**: Prisma 7.8.0 (PostgreSQL na Supabase s PrismaPg adapterem).
+- **Runtime**: Node.js 24 (viz `Dockerfile`).
+- **Framework**: Fastify 5.12.1 (rychlý a nízkoúrovňový webový framework pro Node.js).
+- **ORM**: Prisma 7.10.0 (PostgreSQL na Supabase s PrismaPg adapterem).
 - **Validace**: Zod 4.4.3 (schémata pro API requesty).
-- **Autentizace**: JWT (@fastify/jwt 10.2.0) + Bcrypt 6.0.0 pro hašování hesel.
+- **Autentizace**: JWT (@fastify/jwt 10.2.2) + Bcrypt 6.0.0 pro hašování hesel.
 - **CORS**: @fastify/cors 11.3.0 s whitelistem originů (viz Bezpečnost).
 - **Rate limiting**: @fastify/rate-limit 11.2.0, `global: false`, aktivní jen na auth endpointech.
 - **PDF Generování**: `pdf-lib` 1.17.1 (vytváření exportních dokumentů pro sklad).
 - **Hlášení změn**: SSE (Server-Sent Events) pro real-time aktualizace skladu.
 - **QR Kódy**: `qrcode` 1.5.4 pro generování štítků položek.
-- **Testy**: Vitest 4.1.10. DB integrační testy se pouští jen s `RUN_DB_TESTS=1`, jinak se přeskočí.
-- **TypeScript**: 6.0.3
-- **Prisma Konfigurace**: Prisma 7 vyžaduje `prisma.config.ts` pro datasource konfiguraci a PrismaPg adapter pro PostgreSQL připojení.
+- **Testy**: Vitest 4.1.11. DB integrační testy se pouští jen s `RUN_DB_TESTS=1`, jinak se přeskočí.
+- **TypeScript**: 7.0.2 (nativni Go port kompilatoru)
+- **Prisma Konfigurace**: Prisma 7 vyžaduje `prisma.config.ts` pro datasource konfiguraci a PrismaPg adapter pro PostgreSQL připojení. Sem patří i `migrations.seed` - `"prisma": { "seed": ... }` v `package.json` už Prisma 7 nečte. Adapter potřebuje i `prisma/seed.ts`, ne jen běžící aplikace.
 
 ### Frontend (apps/web)
-- **UI Framework**: React 19.2.7 + Vite 8.1.4.
-- **Styling**: Tailwind CSS 4.3.2 (s @tailwindcss/postcss pluginem) + Vanilla CSS.
-- **Routing**: React Router DOM 7.18.1.
-- **Ikony**: Lucide React 1.24.0.
+- **UI Framework**: React 19.2.8 + Vite 8.2.2.
+- **Styling**: Tailwind CSS 4.3.3 (s @tailwindcss/postcss pluginem) + Vanilla CSS.
+- **Routing**: React Router DOM 7.18.2.
+- **Ikony**: Lucide React 1.34.0.
 - **Komponenty**: Vlastní UI komponenty postavené na základech Radix UI (např. Modals/Dialogs).
 - **Modal body layout**: `Modal` podporuje `bodyClassName` pro řízení scrollu a layoutu obsahu u specifických oken.
 - **Notifikace**: react-hot-toast 2.6.0.
-- **TypeScript**: 6.0.3
+- **TypeScript**: 7.0.2 (nativni Go port kompilatoru)
 
 ---
 
@@ -115,7 +116,10 @@ API adresu z `VITE_API_BASE_URL`.
 ### Render.com (API)
 - **Automatický deployment**: Každý push do větve `main` spustí build a deploy.
 - **Databáze**: Spravovaná Postgres instance na **Supabase** (přesunuto z Renderu). Backend se připojuje přes Session pooler (IPv4 kompatibilní, connection string v `prisma.config.ts`).
-- **Migrace**: Při buildu se spouští `npx prisma migrate deploy`.
+- **Image**: API se na Renderu staví z `Dockerfile` (`env: docker` v `render.yaml`), základ je `node:24-alpine`, pnpm se zavádí přes corepack.
+- **Migrace**: Spouští se až při startu kontejneru (`CMD` v `Dockerfile`: `prisma migrate deploy && npm start`), ne při buildu.
+- **`.dockerignore` je povinný**: bez něj `COPY apps/api ./apps/api` zabalí do image i `apps/api/.env` s produkčními tajemstvími. Vzory musí mít `**/`, protože Docker matchuje od kořene kontextu jinak než git (`.env` by pokrylo jen kořen).
+- **Build nesmí potřebovat tajemství**: `prisma generate` si v `Dockerfile` bere placeholder `DATABASE_URL`, protože `prisma.config.ts` tu proměnnou vyžaduje už při načtení konfigurace, i když se generate k databázi nepřipojuje.
 - **Důležité - nepoužívat holé `pnpm` v Render dashboard commandech**: Render umí spadnout na chybě `Failed to switch pnpm to v10.26.1 ... ENOENT`, pokud je v dashboardu přímo `pnpm ...`. Bezpečná varianta je spouštět build/start přes `npm run ...` wrappery z root `package.json`.
   - Web build: `npm run render:web-build`
   - API build: `npm run render:api-build`
@@ -302,10 +306,18 @@ i když v dockeru běží lokální databáze.
 # Lokální DB
 docker compose up -d db
 DATABASE_URL="postgresql://cater:cater@localhost:5432/cater_sklad" npx prisma migrate deploy
-# u `db push` se používá flag --url
 
 # Ověření, kam příkaz míří (vypíše `Datasource "db": ... at <host>`)
 npx prisma migrate status
+```
+
+Prisma 7 zrušila `--url` i `--from-url`. Cíl se řídí výhradně `DATABASE_URL`
+přes `--from-config-datasource`, takže override proměnnou je jediná pojistka:
+
+```bash
+# Porovnání běžící DB proti schema.prisma (--exit-code: 0 = shoda, 2 = drift)
+DATABASE_URL="postgresql://cater:cater@localhost:5432/cater_sklad" \
+  npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code --script
 ```
 
 ### Testy
@@ -492,3 +504,66 @@ Detaily u jednotlivých sekcí výše. Přibyly dva integrační testy na blokac
 ### Známá omezení, která se vědomě neřešila
 - **SSE při škálování na víc instancí** — viz sekce Real-time. Při jedné instanci není potřeba.
 - **CSV import** je jedna dlouhá transakce s timeoutem 120 s; velké importy je nutné dávkovat (cca 60 řádků).
+
+---
+
+## 📦 Změny srpen 2026 - Aktualizace závislostí, Node 24 a narovnání migrací
+
+### Aktualizace závislostí
+Fastify 5.12.1, Prisma 7.10.0 (client, adapter i CLI drženy v lockstepu), React 19.2.8,
+Vite 8.2.2, Tailwind 4.3.3, Lucide 1.34.0 a další v rámci semver rozsahů.
+
+- **@fastify/static 9 → 10**: jediná breaking change je podpis `setHeaders`
+  (`FastifyReply` místo `Response`). Projekt plugin registruje jen s `{ root, prefix }`
+  a nepoužívá `sendFile` ani `download`, takže bez dopadu.
+- **TypeScript 6 → 7**: nativní Go port kompilátoru. Ověřeno porovnáním výstupu -
+  `apps/api/dist` vyšel bajt po bajtu identicky, bundle webu taky; `shared/index.d.ts`
+  se liší jen pořadím klíčů. `tsconfig` nepoužívá nic z toho, co sedmička vyřadila
+  (`module` none/amd/system/umd, `moduleResolution` node/classic/node10, `target` es5).
+- **Nezvednuto záměrně**: Prisma 8 je zatím jen RC. `@types/node` zůstává na 25.
+
+### Node 24 a bezpečnost image
+Základ image zvednut z `node:20-alpine` (po konci podpory, Prisma 7.10 už vyžaduje
+`^20.19 || ^22.12 || >=24`) na `node:24-alpine`. Node 24 stále obsahuje corepack,
+takže zavádění pnpm se nemění.
+
+Přidán chybějící `.dockerignore` - do té doby se do image balil `apps/api/.env`
+s produkčním `DATABASE_URL`, `JWT_SECRET` a klíčem k Bunny. Detaily v sekci Render.
+
+### Narovnání migrací
+Migrační historie neodpovídala `schema.prisma`. Do produkce se mimo migrace
+(nejspíš přes `db push`) dostaly celé tabulky `warehouses`, `cross_sell_links`,
+`warehouse_blocks`, `warehouse_transfers`, sloupce `warehouse_id` /
+`target_warehouse_id` a dále `categories.sort_order`, `events.pallet_count`,
+`events.total_weight`, `events.dismissed_cross_sell_ids` a pět sloupců
+v `inventory_items`.
+
+Důsledkem bylo, že `prisma migrate deploy` na prázdné databázi spadl na
+`20260413110000_backfill_missing_warehouse_ids` (`column ei.warehouse_id does not
+exist`). Produkce běžela v pořádku, rozbité bylo jen zakládání nového prostředí -
+nová databáze, obnova ze zálohy, preview prostředí, lokální rozjezd od nuly.
+
+Doplněny dvě migrace:
+- `20260412000000_add_warehouses_and_catalog_fields` - chybějící DDL, zařazené
+  **před** backfill, aby na něj navazoval. Na produkci se jen zapisuje jako
+  aplikovaná přes `prisma migrate resolve --applied`, nic tam nemění.
+- `20260827080000_enable_rls_on_warehouse_tables` - nové tabulky minula konvence
+  z `20260114082944_enable_rls`. `ENABLE ROW LEVEL SECURITY` je idempotentní,
+  takže migrace doběhne na čerstvé i na produkční databázi.
+
+Ověřeno na čisté databázi: celý řetězec projde, `migrate diff --exit-code` proti
+`schema.prisma` vrací 0 (žádný zbývající drift) a RLS je zapnutá na všech 17 tabulkách.
+
+### Opravy seedu
+Seed byl po přechodu na Prisma 7 rozbitý hned třikrát a nikdo si toho nevšiml,
+protože `prisma/` není v `tsconfig` (`include: ["src"]`), takže ho typová kontrola
+nevidí:
+- `"prisma": { "seed": ... }` v `package.json` už Prisma 7 nečte, přesunuto do
+  `prisma.config.ts` pod `migrations.seed`.
+- `new PrismaClient()` bez adapteru - Prisma 7 vyžaduje `PrismaPg`, stejně jako
+  `plugins/prisma.ts`.
+- `ReferenceError: admin is not defined` - refaktor, který zavedl
+  `ADMIN_SEED_PASSWORD`, zahodil navázání proměnné, ale `admin.id` níž zůstalo.
+
+Ověřeno kompletním provisioningem od nuly: migrace, seed, start kontejneru,
+přihlášení a čtení i zápis do `warehouses`.
