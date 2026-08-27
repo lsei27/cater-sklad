@@ -116,10 +116,11 @@ API adresu z `VITE_API_BASE_URL`.
 ### Render.com (API)
 - **Automatický deployment**: Každý push do větve `main` spustí build a deploy.
 - **Databáze**: Spravovaná Postgres instance na **Supabase** (přesunuto z Renderu). Backend se připojuje přes Session pooler (IPv4 kompatibilní, connection string v `prisma.config.ts`).
-- **Image**: API se na Renderu staví z `Dockerfile` (`env: docker` v `render.yaml`), základ je `node:24-alpine`, pnpm se zavádí přes corepack.
-- **Migrace**: Spouští se až při startu kontejneru (`CMD` v `Dockerfile`: `prisma migrate deploy && npm start`), ne při buildu.
-- **`.dockerignore` je povinný**: bez něj `COPY apps/api ./apps/api` zabalí do image i `apps/api/.env` s produkčními tajemstvími. Vzory musí mít `**/`, protože Docker matchuje od kořene kontextu jinak než git (`.env` by pokrylo jen kořen).
-- **Build nesmí potřebovat tajemství**: `prisma generate` si v `Dockerfile` bere placeholder `DATABASE_URL`, protože `prisma.config.ts` tu proměnnou vyžaduje už při načtení konfigurace, i když se generate k databázi nepřipojuje.
+- **⚠️ `render.yaml` u API NEPLATÍ**: deklaruje sice `env: docker`, ale služba je v dashboardu Renderu nastavená jako **nativní Node build** s build commandem `npm run render:api-build`. Ověřeno z build logu 27. 8. 2026. `Dockerfile` se pro tuhle službu vůbec nepoužívá, takže změny v něm na produkci nic nemění. **Zdrojem pravdy je dashboard, ne `render.yaml`.**
+- **Runtime**: Node.js dodává Render, ne `Dockerfile` - v logu `Using Node.js version 22.16.0 (default)`. Je to *default* Renderu, takže se může změnit; Prisma 7.10 vyžaduje `^20.19 || ^22.12 || >=24`.
+- **Migrace**: `prisma migrate deploy` běží ve **fázi buildu** jako součást `render:api-build`.
+- **Do produkčního buildu nikdy nepatří `prisma db seed`**: seed zakládá demo položky (SKLO-001, TECH-001) včetně počátečního stavu 200 a 10 ks. Do 27. 8. 2026 byl v `render:api-build` a po opravě seedu skutečně nasypal tahle data do ostrého skladu. Odstraněno.
+- **`prisma db seed` vrací 0 i když seed spadne**: build proto na rozbitém seedu nikdy neupozorní. Právě proto zůstal seed měsíce rozbitý bez povšimnutí. Nespoléhat na návratový kód, číst výpis.
 - **Důležité - nepoužívat holé `pnpm` v Render dashboard commandech**: Render umí spadnout na chybě `Failed to switch pnpm to v10.26.1 ... ENOENT`, pokud je v dashboardu přímo `pnpm ...`. Bezpečná varianta je spouštět build/start přes `npm run ...` wrappery z root `package.json`.
   - Web build: `npm run render:web-build`
   - API build: `npm run render:api-build`
@@ -528,7 +529,24 @@ Základ image zvednut z `node:20-alpine` (po konci podpory, Prisma 7.10 už vyž
 takže zavádění pnpm se nemění.
 
 Přidán chybějící `.dockerignore` - do té doby se do image balil `apps/api/.env`
-s produkčním `DATABASE_URL`, `JWT_SECRET` a klíčem k Bunny. Detaily v sekci Render.
+s produkčním `DATABASE_URL`, `JWT_SECRET` a klíčem k Bunny.
+
+**Pozor na rozsah týhle změny:** produkční API se přes `Dockerfile` nestaví, jede
+nativní Render build (viz sekce Render). Node 24 ani `.dockerignore` tedy na
+produkci nic nemění - je to oprava pro lokální použití, `docker-compose` a případný
+budoucí návrat k Dockeru. Produkce běží na Node, který dodá Render.
+
+### Seed nasypal demo data do produkce (27. 8. 2026)
+`render:api-build` volal `prisma db seed` proti produkci při každém deployi. Dokud
+byl seed po přechodu na Prisma 7 rozbitý, byl to tichý no-op. Jakmile se seed opravil,
+při nejbližším deployi zapsal do ostrého skladu kategorie `Sklo` a `Audio`, položky
+`SKLO-001` a `TECH-001` a k nim ledger `+200` a `+10 ks` s poznámkou `Seed initial stock`.
+
+Data byla odstraněna a `prisma db seed` z `render:api-build` vyhozen. Seed zůstává
+použitelný ručně pro nová prostředí.
+
+Poučení: krok, který se tiše nespouštěl, může oprava nesouvisející chyby probudit.
+Před opravou čehokoli, co běží v deploy pipeline, si ověř, co ta věc dělá s produkcí.
 
 ### Narovnání migrací
 Migrační historie neodpovídala `schema.prisma`. Do produkce se mimo migrace
