@@ -5,6 +5,7 @@ import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
+import { duplicateEventTx } from "../services/duplicateEvent.js";
 import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
 import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
@@ -177,6 +178,62 @@ export async function eventRoutes(app: FastifyInstance) {
       }
     });
     return reply.send({ event });
+  });
+
+  app.post("/events/:id/duplicate", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = EventCreateSchema.parse(request.body);
+
+    try {
+      // Delší timeout ze stejného důvodu jako u hromadného importu: kopie velké
+      // akce zamyká a zapisuje stovky položek a do výchozích 5 s se nevejde.
+      const result = await app.prisma.$transaction(
+        async (tx) => {
+          const duplicated = await duplicateEventTx({
+            tx,
+            actor: user,
+            sourceEventId: params.id,
+            data: {
+              name: body.name,
+              location: body.location,
+              address: body.address ?? null,
+              notes: body.notes ?? null,
+              registrationNumber: body.registration_number ?? null,
+              eventDate: body.event_date ? new Date(body.event_date) : null,
+              deliveryDatetime: new Date(body.delivery_datetime),
+              pickupDatetime: new Date(body.pickup_datetime)
+            }
+          });
+
+          await tx.auditLog.create({
+            data: {
+              actorUserId: user.id,
+              entityType: "event",
+              entityId: duplicated.event.id,
+              action: "duplicate",
+              diffJson: { sourceEventId: params.id, adjustments: duplicated.adjustments }
+            }
+          });
+
+          return duplicated;
+        },
+        { timeout: 60000 }
+      );
+
+      sseBus.emit({ type: "reservation_changed", eventId: result.event.id });
+      return reply.send({ event: result.event, adjustments: result.adjustments });
+    } catch (e: any) {
+      if (e instanceof InsufficientStockError) {
+        return httpError(reply, 409, "INSUFFICIENT_STOCK", "Zásoby se během kopírování změnily. Zkus to prosím znovu.");
+      }
+      if (e?.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "CATEGORY_ACCESS_DENIED") {
+        return httpError(reply, 403, "CATEGORY_ACCESS_DENIED", "Akce obsahuje položky z kategorie, na kterou nemáte oprávnění.");
+      }
+      throw e;
+    }
   });
 
   app.patch("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {

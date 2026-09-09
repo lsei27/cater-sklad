@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, getCurrentUser } from "../lib/api";
 import { fromDateInputValue, fromDatetimeLocalValue, toDateInputValue, toDatetimeLocalValue } from "../lib/datetime";
-import { Link, Navigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { startSSE } from "../lib/sse";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Button from "../components/ui/Button";
@@ -43,8 +43,6 @@ export default function EventsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [sortMode, setSortMode] = useState<EventSortMode>("status");
   const role = getCurrentUser()?.role ?? "";
-
-  if (role === "warehouse") return <Navigate to="/warehouse" replace />;
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);

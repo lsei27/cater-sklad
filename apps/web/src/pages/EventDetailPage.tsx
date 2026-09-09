@@ -23,7 +23,7 @@ import {
   stockTone
 } from "../lib/viewModel";
 import { cn } from "../lib/ui";
-import { ArrowLeft, Ban, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
+import { ArrowLeft, Ban, Copy, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
 
 const STATUS_STEPS = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CLOSED"] as const;
@@ -75,6 +75,7 @@ export default function EventDetailPage() {
   const [crossSellWarnings, setCrossSellWarnings] = useState<any[]>([]);
   const [exportCrossSellAcknowledged, setExportCrossSellAcknowledged] = useState(false);
   const [editBasicsOpen, setEditBasicsOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -438,6 +439,12 @@ export default function EventDetailPage() {
             {canManageEvent ? (
               <Button variant="secondary" onClick={() => setEditBasicsOpen(true)}>
                 <Icons.Edit className="h-4 w-4" /> Upravit údaje
+              </Button>
+            ) : null}
+
+            {canEM ? (
+              <Button variant="secondary" onClick={() => setDuplicateOpen(true)}>
+                <Copy className="h-4 w-4" /> Kopírovat akci
               </Button>
             ) : null}
 
@@ -824,6 +831,13 @@ export default function EventDetailPage() {
           onOpenChange={(v) => setEditBasicsOpen(v)}
           event={event}
           onDone={() => load({ silent: true })}
+        />
+      )}
+      {duplicateOpen && event && (
+        <DuplicateEventModal
+          open={duplicateOpen}
+          onOpenChange={(v) => setDuplicateOpen(v)}
+          event={event}
         />
       )}
     </div>
@@ -1505,6 +1519,174 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={() => props.onOpenChange(false)}>Zrušit</Button>
         <Button onClick={save} disabled={saving}>{saving ? "Ukládám..." : "Uložit změny"}</Button>
+      </div>
+    </Modal>
+  );
+}
+
+// Kopíruje se hlavně už proběhlá akce, takže její termíny bývají v minulosti.
+// Posuneme je o celé dny dopředu tak, aby závoz vyšel na zítřek, a zachováme
+// časy i rozestupy mezi datem akce, závozem a svozem.
+function shiftDaysToTomorrow(delivery: Date): number {
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const days = Math.round((startOfDay(tomorrow).getTime() - startOfDay(delivery).getTime()) / 86400000);
+  return days > 0 ? days : 0;
+}
+
+function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolean) => void; event: any }) {
+  const nav = useNavigate();
+  const shift = shiftDaysToTomorrow(new Date(props.event.deliveryDatetime));
+
+  const shiftLocal = (value: string | null) => {
+    if (!value) return "";
+    const d = new Date(value);
+    d.setDate(d.getDate() + shift);
+    return toDatetimeLocalValue(d);
+  };
+  // event_date drží konvenci "UTC půlnoc", takže se posouvá v UTC.
+  const shiftDate = (value: string | null) => {
+    if (!value) return "";
+    const d = new Date(value);
+    d.setUTCDate(d.getUTCDate() + shift);
+    return toDateInputValue(d);
+  };
+
+  const [name, setName] = useState(`${props.event.name} (kopie)`);
+  const [location, setLocation] = useState(props.event.location);
+  const [address, setAddress] = useState(props.event.address || "");
+  const [registrationNumber, setRegistrationNumber] = useState("");
+  const [notes, setNotes] = useState(props.event.notes || "");
+  const [eventDate, setEventDate] = useState(shiftDate(props.event.eventDate));
+  const [delivery, setDelivery] = useState(shiftLocal(props.event.deliveryDatetime));
+  const [pickup, setPickup] = useState(shiftLocal(props.event.pickupDatetime));
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ eventId: string; adjustments: any[] } | null>(null);
+
+  const submit = async () => {
+    const deliveryIso = fromDatetimeLocalValue(delivery);
+    const pickupIso = fromDatetimeLocalValue(pickup);
+    if (!deliveryIso || !pickupIso) {
+      toast.error("Vyplň závoz i svoz.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api<{ event: { id: string }; adjustments: any[] }>(
+        `/events/${props.event.id}/duplicate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            location,
+            address: address || null,
+            registration_number: registrationNumber.trim() || null,
+            notes: notes.trim() || null,
+            event_date: fromDateInputValue(eventDate),
+            delivery_datetime: deliveryIso,
+            pickup_datetime: pickupIso
+          })
+        }
+      );
+      if (res.adjustments.length === 0) {
+        toast.success("Akce zkopírována");
+        props.onOpenChange(false);
+        nav(`/events/${res.event.id}`);
+        return;
+      }
+      setResult({ eventId: res.event.id, adjustments: res.adjustments });
+    } catch (e: any) {
+      toast.error(humanError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (result) {
+    return (
+      <Modal open={props.open} onOpenChange={props.onOpenChange} title="Akce zkopírována" contentClassName="max-w-2xl">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          V novém termínu nebyl dostatek zásob na všechny položky. Zbytek doplň ručně, až se sklad uvolní.
+        </div>
+        <div className="mt-3 max-h-80 space-y-1 overflow-y-auto">
+          {result.adjustments.map((a) => (
+            <div key={a.inventoryItemId} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
+              <span className="text-slate-800">{a.name}</span>
+              <span className={cn("font-medium", a.copiedQty === 0 ? "text-red-600" : "text-amber-700")}>
+                {a.copiedQty === 0 ? "nepřeneseno" : `${a.sourceQty} → ${a.copiedQty} ${a.unit}`}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button
+            onClick={() => {
+              props.onOpenChange(false);
+              nav(`/events/${result.eventId}`);
+            }}
+          >
+            Otevřít kopii
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal open={props.open} onOpenChange={props.onOpenChange} title="Kopírovat akci" contentClassName="max-w-2xl">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+        Vznikne nová akce ve stavu Rozpracováno se stejnými položkami. Množství, na které v novém termínu nezbývají
+        zásoby, se zkrátí a vypíšeme ho.
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <label className="text-sm">
+          Název
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Místo konání
+          <Input className="mt-1" value={location} onChange={(e) => setLocation(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Adresa
+          <Input className="mt-1" value={address} onChange={(e) => setAddress(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Evidenční číslo akce <span className="text-slate-400">(nepovinné)</span>
+          <Input
+            className="mt-1"
+            value={registrationNumber}
+            onChange={(e) => setRegistrationNumber(e.target.value)}
+            placeholder="Např. 2026-0142"
+          />
+          <span className="mt-1 block text-xs text-slate-500">Kopie ho nepřebírá, nová akce má vlastní číslo.</span>
+        </label>
+        <label className="text-sm md:col-span-2">
+          Poznámka
+          <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Datum akce
+          <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+        </label>
+        <div />
+        <label className="text-sm">
+          Závoz
+          <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
+        </label>
+        <label className="text-sm">
+          Svoz
+          <Input className="mt-1" type="datetime-local" value={pickup} onChange={(e) => setPickup(e.target.value)} />
+        </label>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => props.onOpenChange(false)}>Zrušit</Button>
+        <Button onClick={submit} disabled={saving}>{saving ? "Kopíruji..." : "Vytvořit kopii"}</Button>
       </div>
     </Modal>
   );
