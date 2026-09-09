@@ -20,8 +20,12 @@ export default function AppShell() {
   if (!token && loc.pathname !== "/login") return null;
 
   const role = user?.role ?? "";
-  const eventsHref = role === "warehouse" ? "/warehouse" : "/events";
+  // Sklad ma sekci Akce (planovani) i Vydej (baleni a uzavirani) jako dve
+  // samostatne polozky, aby sel kazdy otevrit ve vlastnim okne. Driv "Akce"
+  // skladnikovi vedly na /warehouse a na /events se nedostal vubec.
+  const eventsHref = "/events";
   const stockHref = "/inventory";
+  const canIssue = role === "warehouse" || role === "admin";
   const isSettingsAllowed = true;
 
   const handleLogout = () => {
@@ -63,7 +67,7 @@ export default function AppShell() {
                 onClick={() => nav(eventsHref)}
                 className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                  loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")
+                  loc.pathname.startsWith("/events")
                     ? "bg-indigo-50 text-indigo-700"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
@@ -71,6 +75,20 @@ export default function AppShell() {
                 <Icons.Calendar />
                 Akce
               </button>
+              {canIssue && (
+                <button
+                  onClick={() => nav("/warehouse")}
+                  className={cn(
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
+                    loc.pathname.startsWith("/warehouse")
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  )}
+                >
+                  <Icons.Truck />
+                  Výdej
+                </button>
+              )}
               <button
                 onClick={() => nav(stockHref)}
                 className={cn(
@@ -151,12 +169,24 @@ export default function AppShell() {
             onClick={() => nav(eventsHref)}
             className={cn(
               "flex flex-col items-center justify-center w-full h-full space-y-1",
-              (loc.pathname.startsWith("/events") || loc.pathname.startsWith("/warehouse")) ? "text-indigo-600" : "text-gray-500"
+              loc.pathname.startsWith("/events") ? "text-indigo-600" : "text-gray-500"
             )}
           >
             <Icons.Calendar />
             <span className="text-[10px] font-medium">Akce</span>
           </button>
+          {canIssue && (
+            <button
+              onClick={() => nav("/warehouse")}
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-full space-y-1",
+                loc.pathname.startsWith("/warehouse") ? "text-indigo-600" : "text-gray-500"
+              )}
+            >
+              <Icons.Truck />
+              <span className="text-[10px] font-medium">Výdej</span>
+            </button>
+          )}
           <button
             onClick={() => nav(stockHref)}
             className={cn(
