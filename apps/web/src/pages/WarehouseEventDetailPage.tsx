@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, apiBaseUrl, apiUrl, getCurrentUser } from "../lib/api";
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -22,10 +23,22 @@ type Snapshot = {
   groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
 };
 
-type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string };
+type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; warehouseName?: string | null; warehouseIsHome?: boolean | null };
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
+type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string };
+
+function OffSiteBadge(props: { warehouseName?: string | null; warehouseIsHome?: boolean | null }) {
+  // Starsi exporty sklad nenesou (undefined) - tam se nehlasi nic.
+  if (props.warehouseName === undefined && props.warehouseIsHome === undefined) return null;
+  if (props.warehouseIsHome === true) return null;
+  return (
+    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+      ! {props.warehouseName ?? "bez skladu"}
+    </span>
+  );
+}
 
 function parseWeightValue(value: string | null | undefined) {
   if (!value) return null;
@@ -65,9 +78,12 @@ export default function WarehouseEventDetailPage() {
     imageUrl?: string | null; 
     target_warehouse_id?: string;
     masterPackageQty?: number;
+    warehouseName?: string | null;
+    warehouseIsHome?: boolean | null;
   }>>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
-  const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string }>>([]);
+  const [packingChanges, setPackingChanges] = useState<PackingChange[]>([]);
+  const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
   const [blockModal, setBlockModal] = useState<{ inventoryItemId: string; name: string; maxQty: number } | null>(null);
   const [blockQty, setBlockQty] = useState("");
   const [blockUntil, setBlockUntil] = useState("");
@@ -102,6 +118,14 @@ export default function WarehouseEventDetailPage() {
     } catch (e) {}
   };
 
+  const loadPackingChanges = async () => {
+    if (!id) return;
+    try {
+      const res = await api<{ changes: PackingChange[] }>(`/events/${id}/packing-changes`);
+      setPackingChanges(res.changes);
+    } catch (e) {}
+  };
+
   const loadWarehouses = async () => {
     try {
       const res = await api<{ warehouses: Array<{ id: string; name: string }> }>("/warehouses");
@@ -132,6 +156,7 @@ export default function WarehouseEventDetailPage() {
     loadBlocks();
     loadWarehouses();
     loadPacking();
+    loadPackingChanges();
   }, [id]);
 
   const snapshot: Snapshot | null = useMemo(() => {
@@ -226,9 +251,9 @@ export default function WarehouseEventDetailPage() {
       }
     }
 
-    const defaultWarehouseId = warehouses.find(
-      (w) => w.name.toLowerCase().includes("liboc")
-    )?.id;
+    // Domaci sklad je priznak na skladu, ne shoda jmena - "liboc" matchovalo
+    // i "Liboc levy kontejner" a slo to zmenit jen deployem.
+    const defaultWarehouseId = warehouses.find((w) => w.isHome)?.id;
 
     setRows(
       warehouseItems.map((i) => {
@@ -246,6 +271,8 @@ export default function WarehouseEventDetailPage() {
           broken: s?.broken ?? 0,
           parentCategory: (i as any).parentCategory || "",
           category: (i as any).category || "",
+          warehouseName: i.warehouseName,
+          warehouseIsHome: i.warehouseIsHome,
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
           target_warehouse_id: defaultWarehouseId,
           masterPackageQty: (i as any).masterPackageQty
@@ -477,6 +504,32 @@ export default function WarehouseEventDetailPage() {
             <div className="text-sm font-semibold text-amber-900">Pozor: změny po předání</div>
             <div className="mt-1 text-sm text-amber-800">
               Akce byla upravena po předání. Před výdejem je nutný nový export.
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {packingChanges.length > 0 ? (
+        <Card>
+          <CardContent>
+            <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3">
+              <div className="text-sm font-bold text-amber-900">
+                Balení se po předání změnilo ({packingChanges.length})
+              </div>
+              <div className="mt-1 text-xs text-amber-800">
+                Vytištěný seznam už neplatí. Zkontroluj tyto položky:
+              </div>
+              <ul className="mt-2 space-y-1">
+                {packingChanges.map((c, i) => (
+                  <li key={i} className="text-xs text-amber-900">
+                    <span className="font-semibold">{c.name}</span>:{" "}
+                    {c.from} → <span className="font-bold">{c.to}</span> {c.unit}
+                    <span className="ml-1 text-amber-700">
+                      ({c.changedBy}, {new Date(c.changedAt).toLocaleString("cs-CZ")})
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </CardContent>
         </Card>
@@ -854,7 +907,10 @@ export default function WarehouseEventDetailPage() {
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold">{r.name}</div>
+                                <div className="truncate text-sm font-semibold">
+                                  {r.name}
+                                  <OffSiteBadge warehouseName={r.warehouseName} warehouseIsHome={r.warehouseIsHome} />
+                                </div>
                                   <div className="mt-1 text-xs text-slate-600">
                                     Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
                                     {r.masterPackageQty && r.masterPackageQty > 0 ? (
@@ -1045,9 +1101,7 @@ export default function WarehouseEventDetailPage() {
                                   setBlockQty(String(r.requested));
                                   const dt = new Date(event.pickupDatetime);
                                   dt.setDate(dt.getDate() + 1); // Default +1 day
-                                  // format to datetime-local
-                                  dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
-                                  setBlockUntil(dt.toISOString().slice(0, 16));
+                                  setBlockUntil(toDatetimeLocalValue(dt));
                                   setBlockNote("");
                                 }}
                               >
@@ -1090,7 +1144,10 @@ export default function WarehouseEventDetailPage() {
                       className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-900">{r.name}</div>
+                        <div className="truncate text-sm font-medium text-slate-900">
+                          {r.name}
+                          <OffSiteBadge warehouseName={r.warehouseName} warehouseIsHome={r.warehouseIsHome} />
+                        </div>
                         <div className="text-xs text-slate-600">
                           {r.requested} {r.unit}
                         </div>
@@ -1154,7 +1211,7 @@ export default function WarehouseEventDetailPage() {
             return;
           }
           try {
-            await api(`/events/${id}/issue`, { 
+            const res = await api<{ skippedItems?: Array<{ inventoryItemId: string; name: string }> }>(`/events/${id}/issue`, {
               method: "POST", 
               body: JSON.stringify({ 
                 idempotency_key: `${issueMode ?? "issue"}:${Date.now()}`,
@@ -1172,6 +1229,14 @@ export default function WarehouseEventDetailPage() {
               }) 
             });
             toast.success(issueMode === "digital" ? "Digitální vydání potvrzeno" : "Vydání potvrzeno");
+            // Polozka smazana z inventaru po exportu uz nejde vydat. Sklad ma
+            // v ruce vytisteny seznam, takze se musi dozvedet, co z nej vypadlo.
+            if (res?.skippedItems?.length) {
+              toast.error(
+                `Nevydáno (položka už není v inventáři): ${res.skippedItems.map((i) => i.name).join(", ")}`,
+                { duration: 12000 }
+              );
+            }
             await load();
           } catch (e: any) {
             toast.error(e?.error?.message ?? "Nepodařilo se potvrdit výdej.");
@@ -1294,8 +1359,8 @@ export default function WarehouseEventDetailPage() {
                       toast.error("Vyplňte platné množství a datum.");
                       return;
                     }
-                    const d = new Date(blockUntil);
-                    if (isNaN(d.getTime())) {
+                    const blockUntilIso = fromDatetimeLocalValue(blockUntil);
+                    if (!blockUntilIso) {
                       toast.error("Neplatné datum.");
                       return;
                     }
@@ -1305,7 +1370,7 @@ export default function WarehouseEventDetailPage() {
                       body: JSON.stringify({
                         inventoryItemId: blockModal.inventoryItemId,
                         blockedQuantity: q,
-                        blockedUntil: d.toISOString(),
+                        blockedUntil: blockUntilIso,
                         note: blockNote || undefined
                       })
                     });

@@ -82,6 +82,9 @@ model Warehouse {
   name      String   @unique
   address   String?
   active    Boolean  @default(true)
+  /// Domácí sklad, ze kterého se běžně vydává. Položky mimo něj se v balení
+  /// zvýrazňují, aby je sklad nepřehlédl. Příznak smí mít jen jeden sklad.
+  isHome    Boolean  @default(false) @map("is_home")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   items         InventoryItem[]

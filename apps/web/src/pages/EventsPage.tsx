@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, getCurrentUser } from "../lib/api";
+import { fromDateInputValue, fromDatetimeLocalValue, toDateInputValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Link, Navigate } from "react-router-dom";
 import { startSSE } from "../lib/sse";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -320,9 +321,9 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
   const [address, setAddress] = useState("");
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [notes, setNotes] = useState("");
-  const [eventDate, setEventDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
-  const [delivery, setDelivery] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
-  const [pickup, setPickup] = useState(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16));
+  const [eventDate, setEventDate] = useState(toDateInputValue(new Date(Date.now() + 86400000)));
+  const [delivery, setDelivery] = useState(toDatetimeLocalValue(new Date(Date.now() + 86400000)));
+  const [pickup, setPickup] = useState(toDatetimeLocalValue(new Date(Date.now() + 2 * 86400000)));
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -337,6 +338,12 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
           onSubmit={async (e) => {
             e.preventDefault();
             setError(null);
+            const deliveryIso = fromDatetimeLocalValue(delivery);
+            const pickupIso = fromDatetimeLocalValue(pickup);
+            if (!deliveryIso || !pickupIso) {
+              setError("Vyplň závoz i svoz.");
+              return;
+            }
             try {
               const res = await api<{ event: { id: string } }>("/events", {
                 method: "POST",
@@ -346,9 +353,9 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
                   address: address || null,
                   registration_number: registrationNumber.trim() || null,
                   notes: notes.trim() || null,
-                  event_date: eventDate ? new Date(eventDate).toISOString() : null,
-                  delivery_datetime: new Date(delivery).toISOString(),
-                  pickup_datetime: new Date(pickup).toISOString()
+                  event_date: fromDateInputValue(eventDate),
+                  delivery_datetime: deliveryIso,
+                  pickup_datetime: pickupIso
                 })
               });
               toast.success("Akce vytvořena");

@@ -89,7 +89,7 @@ export async function reserveItemsTx(params: {
   // Fetch existing reservations to check ownership
   const existingReservations = await tx.eventReservation.findMany({
     where: { eventId, inventoryItemId: { in: adjustedItems.map((i) => i.inventoryItemId) } },
-    select: { inventoryItemId: true, createdById: true }
+    select: { inventoryItemId: true, createdById: true, reservedQuantity: true }
   });
   const existingMap = new Map(existingReservations.map((r) => [r.inventoryItemId, r]));
 
@@ -126,6 +126,40 @@ export async function reserveItemsTx(params: {
 
   if (event.status === "SENT_TO_WAREHOUSE") {
     await tx.event.update({ where: { id: eventId }, data: { exportNeedsRevision: true } });
+
+    // Sklad uz ma balenu v ruce, takze se musi dozvedet, co se v ni zmenilo -
+    // ktera polozka a z kolika na kolik. Priznak exportNeedsRevision sam o sobe
+    // rekne jen "neco se stalo".
+    const changes = adjustedItems
+      .map(({ inventoryItemId, qty }) => ({
+        inventoryItemId,
+        from: existingMap.get(inventoryItemId)?.reservedQuantity ?? 0,
+        to: qty
+      }))
+      .filter((c) => c.from !== c.to);
+
+    if (changes.length > 0) {
+      const names = await tx.inventoryItem.findMany({
+        where: { id: { in: changes.map((c) => c.inventoryItemId) } },
+        select: { id: true, name: true, unit: true }
+      });
+      const metaById = new Map(names.map((n) => [n.id, n] as const));
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actor.id,
+          entityType: "event",
+          entityId: eventId,
+          action: "packing_changed",
+          diffJson: {
+            changes: changes.map((c) => ({
+              ...c,
+              name: metaById.get(c.inventoryItemId)?.name ?? c.inventoryItemId,
+              unit: metaById.get(c.inventoryItemId)?.unit ?? "ks"
+            }))
+          }
+        }
+      });
+    }
   }
 
   // Return adjusted items info so the caller can inform the user about roundups

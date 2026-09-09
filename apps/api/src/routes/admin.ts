@@ -428,6 +428,21 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const result = await app.prisma.$transaction(async (tx) => {
+      // Smazani polozky bere akci rezervaci pod rukama. U akce uz predane skladu
+      // proto musi zneplatnit export - stejne jako kazda jina zmena rezervaci
+      // (viz reserve.ts). Bez toho zustane snapshot ukazovat na neexistujici
+      // polozku a akce se nedala vyskladnit.
+      const affected = await tx.eventReservation.findMany({
+        where: { inventoryItemId: params.id, event: { status: "SENT_TO_WAREHOUSE" } },
+        select: { eventId: true }
+      });
+      if (affected.length > 0) {
+        await tx.event.updateMany({
+          where: { id: { in: affected.map((r) => r.eventId) } },
+          data: { exportNeedsRevision: true }
+        });
+      }
+
       // Deep hard delete - remove all related records
       await tx.inventoryLedger.deleteMany({ where: { inventoryItemId: params.id } });
       await tx.eventReservation.deleteMany({ where: { inventoryItemId: params.id } });
@@ -589,8 +604,24 @@ export async function adminRoutes(app: FastifyInstance) {
       ledger_adjustments: [] as Array<{ sku?: string; name: string; delta: number }>,
       cross_sell_links_created: 0,
       changed_item_ids: [] as string[],
+      warnings: [] as string[],
       errors: [] as Array<{ row: number; error: string }>
     };
+
+    // Chybejici sloupec s jednotkou driv tise spadl na "ks" u vsech radku, takze
+    // se nikdo nedozvedel, ze se napoje prepsaly z cl. Radeji o tom rict.
+    const hasUnitColumn = records.length === 0 || Object.keys(records[0]!).some((k) => k.trim() === "unit");
+    if (!hasUnitColumn) {
+      report.warnings.push(
+        "Soubor nemá sloupec \"unit\". Všem položkám se nastavila jednotka \"ks\" - zkontroluj nápoje evidované v cl."
+      );
+    }
+    const rowsWithoutUnit = records.filter((r) => !(r.unit ?? "").toString().trim()).length;
+    if (hasUnitColumn && rowsWithoutUnit > 0) {
+      report.warnings.push(
+        `${rowsWithoutUnit} řádků má prázdnou jednotku, nastavila se "ks". Zkontroluj nápoje evidované v cl.`
+      );
+    }
 
     if (dryRun) return reply.send({ dry_run: true, rows: records.length });
 

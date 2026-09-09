@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, apiUrl, getCurrentUser } from "../lib/api";
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
@@ -53,14 +54,11 @@ export default function InventoryPage() {
   const [eventSearch, setEventSearch] = useState("");
 
   const [startAt, setStartAt] = useState(() => {
-    const d = new Date();
-    const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0));
-    return start.toISOString().slice(0, 16);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return toDatetimeLocalValue(start);
   });
-  const [endAt, setEndAt] = useState(() => {
-    const d = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-    return d.toISOString().slice(0, 16);
-  });
+  const [endAt, setEndAt] = useState(() => toDatetimeLocalValue(new Date(Date.now() + 7 * 24 * 3600 * 1000)));
 
   const isInitialLoad = useRef(true);
   const startAtRef = useRef(startAt);
@@ -84,8 +82,14 @@ export default function InventoryPage() {
       const q = new URLSearchParams();
       q.set("active", "true");
       q.set("with_stock", "true");
-      q.set("start_at", new Date(startAtRef.current).toISOString());
-      q.set("end_at", new Date(endAtRef.current).toISOString());
+      const startIso = fromDatetimeLocalValue(startAtRef.current);
+      const endIso = fromDatetimeLocalValue(endAtRef.current);
+      if (!startIso || !endIso) {
+        setError("Neplatné období dostupnosti.");
+        return;
+      }
+      q.set("start_at", startIso);
+      q.set("end_at", endIso);
       if (search) q.set("search", search);
       if (parentId) q.set("parent_category_id", parentId);
       if (categoryId) q.set("category_id", categoryId);

@@ -48,7 +48,7 @@ export async function createExportTx(params: {
 
     const reservations = await tx.eventReservation.findMany({
         where: { eventId: eventId, state: "confirmed", reservedQuantity: { gt: 0 } },
-        include: { item: { include: { category: { include: { parent: true } } } } },
+        include: { item: { include: { category: { include: { parent: true } }, warehouse: true } } },
         orderBy: { inventoryItemId: "asc" }
     });
     if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
@@ -81,7 +81,11 @@ export async function createExportTx(params: {
             unit: r.item.unit,
             qty: r.reservedQuantity,
             masterPackageQty: r.item.masterPackageQty,
-            notes: r.item.notes
+            notes: r.item.notes,
+            // Sklad se do snapshotu uklada, aby ho slo vytisknout do balenu.
+            // Starsi exporty ho nemaji - PDF si s tim musi poradit.
+            warehouseName: r.item.warehouse?.name ?? null,
+            warehouseIsHome: r.item.warehouse ? r.item.warehouse.isHome : null
         });
     }
 

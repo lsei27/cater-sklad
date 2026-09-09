@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { formatCzechDate, formatCzechTime } from "../lib/czechDate.js";
 
 export type ExportSnapshot = {
   event: {
@@ -24,6 +25,9 @@ export type ExportSnapshot = {
       qty: number;
       masterPackageQty?: number | null;
       notes?: string | null;
+      /// Chybi u exportu vytvorenych pred zavedenim skladu v balenu.
+      warehouseName?: string | null;
+      warehouseIsHome?: boolean | null;
     }>;
   }>;
 };
@@ -62,23 +66,6 @@ function wrapText(value: string, font: PDFFont, size: number, maxWidth: number) 
     if (line) lines.push(line);
   }
   return lines;
-}
-
-function formatCzechDate(isoString: string | null | undefined): string {
-  if (!isoString) return "";
-  const d = new Date(isoString);
-  const day = d.getDate();
-  const month = d.getMonth() + 1;
-  const year = d.getFullYear();
-  return `${day}. ${month}. ${year}`;
-}
-
-function formatCzechTime(isoString: string | null | undefined): string {
-  if (!isoString) return "";
-  const d = new Date(isoString);
-  const hours = d.getHours().toString().padStart(2, "0");
-  const minutes = d.getMinutes().toString().padStart(2, "0");
-  return `${hours}:${minutes}`;
 }
 
 export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string) {
@@ -149,6 +136,50 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
     yPos -= 10;
   }
 
+  // Polozky mimo domaci sklad se musi na papire poznat na prvni pohled, jinak
+  // je sklad zabali z Libce a zjisti to az na miste. Starsi exporty sklad
+  // nenesou (warehouseName === undefined) - tam se nehlasi nic.
+  const offSiteItems = snapshot.groups.flatMap((g) =>
+    (g.items ?? []).filter((it) => it.warehouseName !== undefined && it.warehouseIsHome !== true)
+  );
+  if (offSiteItems.length > 0) {
+    if (yPos < 120) {
+      page = pdfDoc.addPage();
+      ({ width, height } = page.getSize());
+      yPos = height - 50;
+    }
+    // Seznam se v boxu omezuje, at nepretece stranku. Uplny vycet je nize
+    // u jednotlivych polozek, tohle je jen upozorneni na prvni pohled.
+    const listed = offSiteItems.slice(0, 12);
+    const boxHeight = 22 + (listed.length + (offSiteItems.length > listed.length ? 1 : 0)) * 12;
+    page.drawRectangle({
+      x: 46,
+      y: yPos - boxHeight + 10,
+      width: width - 96,
+      height: boxHeight,
+      color: rgb(1, 0.94, 0.94),
+      borderColor: rgb(0.7, 0.1, 0.1),
+      borderWidth: 1.5
+    });
+    page.drawText(pdfText(`POZOR - ${offSiteItems.length} polozek neni v domacim sklade!`), {
+      x: 54, y: yPos, size: 12, font: bold, color: rgb(0.7, 0.1, 0.1)
+    });
+    yPos -= 14;
+    for (const it of listed) {
+      page.drawText(pdfText(`- ${it.name}: ${it.warehouseName ?? "bez prirazeneho skladu"}`), {
+        x: 58, y: yPos, size: 9, font, color: rgb(0.5, 0.05, 0.05)
+      });
+      yPos -= 12;
+    }
+    if (offSiteItems.length > listed.length) {
+      page.drawText(pdfText(`- a dalsich ${offSiteItems.length - listed.length} (viz oznaceni u polozek)`), {
+        x: 58, y: yPos, size: 9, font: bold, color: rgb(0.5, 0.05, 0.05)
+      });
+      yPos -= 12;
+    }
+    yPos -= 16;
+  }
+
   // Section Header: Items to Pack
   if (yPos < 60) {
     page = pdfDoc.addPage();
@@ -209,6 +240,20 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
 
         // Item Name
         page.drawText(pdfText(item.name), { x: colName, y: yPos, size: 10, font });
+
+        // U domaciho skladu se nic netiskne - opakovane "Liboc" u kazdeho radku
+        // by upozorneni jen rozmelnilo.
+        if (item.warehouseName !== undefined && item.warehouseIsHome !== true) {
+          const tag = `! ${item.warehouseName ?? "bez skladu"}`;
+          const nameWidth = font.widthOfTextAtSize(pdfText(item.name), 10);
+          page.drawText(pdfText(tag), {
+            x: Math.min(colName + nameWidth + 8, colQty - 100),
+            y: yPos,
+            size: 9,
+            font: bold,
+            color: rgb(0.7, 0.1, 0.1)
+          });
+        }
 
         // Quantity + master package info
         let qtyLabel = `${item.qty} ${item.unit}`;

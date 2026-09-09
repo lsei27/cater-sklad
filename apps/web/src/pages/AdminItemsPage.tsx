@@ -778,6 +778,16 @@ function ImportModal({ open, onOpenChange, onSaved }: { open: boolean, onOpenCha
                 <li>Úpravy skladu: {result.ledger_adjustments?.length ?? 0}</li>
               </ul>
             </div>
+            {result.warnings && result.warnings.length > 0 && (
+              <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-sm">
+                <div className="font-semibold mb-1">Upozornění ({result.warnings.length}):</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {result.warnings.map((w: string, i: number) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {result.errors && result.errors.length > 0 && (
               <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm max-h-40 overflow-y-auto">
                 <div className="font-semibold mb-1">Chyby ({result.errors.length}):</div>

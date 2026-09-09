@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, apiBaseUrl, apiUrl, getCurrentUser, getToken } from "../lib/api";
+import { fromDateInputValue, fromDatetimeLocalValue, toDateInputValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -852,6 +853,10 @@ function AddItemsPanel(props: {
   const [crossSells, setCrossSells] = useState<{ sourceItem: any, items: any[] } | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [availability, setAvailability] = useState<Map<string, StockRow>>(new Map());
+  // Dostupnost je jedno cislo za vsechny sklady dohromady. Manazer ale potrebuje
+  // vedet, kde polozka lezi - vydej mimo domaci sklad znamena dalsi cestu.
+  const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
+  const [warehouseStocks, setWarehouseStocks] = useState<Record<string, Record<string, number>>>({});
   const [categoriesReady, setCategoriesReady] = useState(false);
   const initRef = useRef(false);
   const prefillRef = useRef(false);
@@ -925,6 +930,14 @@ function AddItemsPanel(props: {
         });
         if (seq !== loadSeq.current) return;
         setAvailability(new Map(a.rows.map((x) => [x.inventoryItemId, x])));
+
+        const [wh, ws] = await Promise.all([
+          api<{ warehouses: Array<{ id: string; name: string; isHome?: boolean }> }>("/warehouses"),
+          api<{ stocks: Record<string, Record<string, number>> }>("/inventory/warehouse-stocks")
+        ]);
+        if (seq !== loadSeq.current) return;
+        setWarehouses(wh.warehouses);
+        setWarehouseStocks(ws.stocks);
       } else {
         setAvailability(new Map());
       }
@@ -1159,6 +1172,10 @@ function AddItemsPanel(props: {
                             <div className="mt-1 text-xs text-slate-600">
                               Celkem: {a?.physicalTotal ?? 0} · Rezervováno: {a?.blockedTotal ?? 0}
                             </div>
+                            <WarehouseBreakdown
+                              stocks={warehouseStocks[itemId]}
+                              warehouses={warehouses}
+                            />
                             {available === 0 ? (
                               <div className="mt-1 text-xs text-slate-500">Momentálně nedostupné (rezervováno na jiné akce).</div>
                             ) : null}
@@ -1363,18 +1380,55 @@ function AddItemsPanel(props: {
   );
 }
 
+/** Rozpad fyzickeho stavu po skladech. Domaci sklad se neznaci, ostatni ano -
+ *  vydej mimo nej znamena dalsi cestu, at to manazer vidi uz pri vyberu. */
+function WarehouseBreakdown(props: {
+  stocks?: Record<string, number>;
+  warehouses: Array<{ id: string; name: string; isHome?: boolean }>;
+}) {
+  const parts = props.warehouses
+    .map((w) => ({ ...w, qty: props.stocks?.[w.id] ?? 0 }))
+    .filter((w) => w.qty !== 0)
+    .sort((a, b) => Number(b.isHome ?? false) - Number(a.isHome ?? false) || b.qty - a.qty);
+
+  if (parts.length === 0) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {parts.map((w) => (
+        <span
+          key={w.id}
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[10px] font-medium",
+            w.isHome ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-800"
+          )}
+          title={w.isHome ? "Domácí sklad" : "Mimo domácí sklad"}
+        >
+          {w.isHome ? "" : "! "}{w.name}: {w.qty}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) => void; event: any; onDone: () => void }) {
   const [name, setName] = useState(props.event.name);
   const [location, setLocation] = useState(props.event.location);
   const [address, setAddress] = useState(props.event.address || "");
   const [registrationNumber, setRegistrationNumber] = useState(props.event.registrationNumber || "");
   const [notes, setNotes] = useState(props.event.notes || "");
-  const [eventDate, setEventDate] = useState(props.event.eventDate ? new Date(props.event.eventDate).toISOString().slice(0, 10) : "");
-  const [delivery, setDelivery] = useState(props.event.deliveryDatetime ? new Date(props.event.deliveryDatetime).toISOString().slice(0, 16) : "");
-  const [pickup, setPickup] = useState(props.event.pickupDatetime ? new Date(props.event.pickupDatetime).toISOString().slice(0, 16) : "");
+  const [eventDate, setEventDate] = useState(toDateInputValue(props.event.eventDate));
+  const [delivery, setDelivery] = useState(toDatetimeLocalValue(props.event.deliveryDatetime));
+  const [pickup, setPickup] = useState(toDatetimeLocalValue(props.event.pickupDatetime));
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
+    const deliveryIso = fromDatetimeLocalValue(delivery);
+    const pickupIso = fromDatetimeLocalValue(pickup);
+    if (!deliveryIso || !pickupIso) {
+      toast.error("Vyplň závoz i svoz.");
+      return;
+    }
     setSaving(true);
     try {
       await api(`/events/${props.event.id}`, {
@@ -1385,9 +1439,9 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           address: address || null,
           registration_number: registrationNumber.trim() || null,
           notes: notes.trim() || null,
-          event_date: eventDate ? new Date(eventDate).toISOString() : null,
-          delivery_datetime: new Date(delivery).toISOString(),
-          pickup_datetime: new Date(pickup).toISOString()
+          event_date: fromDateInputValue(eventDate),
+          delivery_datetime: deliveryIso,
+          pickup_datetime: pickupIso
         })
       });
       toast.success("Uloženo");

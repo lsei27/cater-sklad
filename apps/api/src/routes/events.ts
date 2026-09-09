@@ -13,7 +13,8 @@ import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
 import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.js";
 import { returnCloseTx } from "../services/returnClose.js";
-import { requireWarehouseId } from "../services/warehouse.js";
+import { requireWarehouseId, resolveWarehouseId } from "../services/warehouse.js";
+import { splitKnownIssueItems } from "../lib/issueSelection.js";
 
 function safeFilename(value: string) {
   return value
@@ -293,6 +294,8 @@ export async function eventRoutes(app: FastifyInstance) {
       qty: number;
       parentCategory?: string;
       category?: string;
+      warehouseName?: string | null;
+      warehouseIsHome?: boolean | null;
     }> = [];
 
     // U vydané akce je pravdou o obsahu skutečný výdej, ne export: doplňkový
@@ -310,12 +313,53 @@ export async function eventRoutes(app: FastifyInstance) {
           unit: it.unit,
           qty: it.qty,
           parentCategory: g.parentCategory,
-          category: (g as { category?: string }).category
+          category: (g as { category?: string }).category,
+          warehouseName: it.warehouseName,
+          warehouseIsHome: it.warehouseIsHome
         }))
       );
     }
 
     return { event: { ...event, exports, warehouseItems } };
+  });
+
+  // Zmeny v baleni po predani skladu. Sklad ma vytisteny seznam, takze potrebuje
+  // videt, co se od jeho verze exportu zmenilo - polozka, z kolika na kolik, kdo.
+  app.get("/events/:id/packing-changes", { preHandler: [app.authenticate] }, async (request) => {
+    const id = z.object({ id: z.string().uuid() }).parse(request.params).id;
+
+    const latestExport = await app.prisma.eventExport.findFirst({
+      where: { eventId: id },
+      orderBy: { version: "desc" },
+      select: { exportedAt: true, version: true }
+    });
+    if (!latestExport) return { changes: [], sinceVersion: null };
+
+    const entries = await app.prisma.auditLog.findMany({
+      where: {
+        entityType: "event",
+        entityId: id,
+        action: "packing_changed",
+        createdAt: { gt: latestExport.exportedAt }
+      },
+      orderBy: { createdAt: "desc" },
+      include: { actor: { select: { name: true, email: true } } }
+    });
+
+    const changes = entries.flatMap((entry) => {
+      const diff = entry.diffJson as { changes?: Array<{ name: string; unit: string; from: number; to: number }> } | null;
+      const actorLabel = entry.actor?.name?.trim() || entry.actor?.email || "neznámý uživatel";
+      return (diff?.changes ?? []).map((c) => ({
+        name: c.name,
+        unit: c.unit,
+        from: c.from,
+        to: c.to,
+        changedBy: actorLabel,
+        changedAt: entry.createdAt.toISOString()
+      }));
+    });
+
+    return { changes, sinceVersion: latestExport.version };
   });
 
   app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -873,16 +917,42 @@ export async function eventRoutes(app: FastifyInstance) {
         const inventoryItems = itemsToIssue.length
           ? await tx.inventoryItem.findMany({
               where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
-              select: { id: true, warehouseId: true }
+              select: { id: true, name: true, warehouseId: true }
             })
           : [];
         const itemMetaById = new Map(
           inventoryItems.map((item) => [item.id, item] as const)
         );
-        if (inventoryItems.length !== new Set(itemsToIssue.map((item) => item.inventory_item_id)).size) {
-          throw new Error("ITEM_NOT_FOUND");
+
+        // Snapshot exportu drzi UUID polozek bez FK, takze smazana polozka v nem
+        // zustane viset. Driv to shodilo cely vydej (ITEM_NOT_FOUND) a akce se
+        // nedala vyskladnit vubec. Vydat smazanou polozku stejne nejde - nema
+        // rezervaci ani stav - takze se vynecha a vrati se v odpovedi.
+        const snapshotNameById = new Map(
+          snapshot.groups.flatMap((g) => (g.items ?? []).map((it) => [it.inventoryItemId, it.name] as const))
+        );
+        const { known: issuableItems, skipped: skippedItems } = splitKnownIssueItems(
+          itemsToIssue,
+          new Set(itemMetaById.keys()),
+          snapshotNameById
+        );
+        if (issuableItems.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
+
+        // "Kazda vydavana polozka musi mit urceny sklad" samo o sobe nerekne,
+        // ktera to je - operator pak jen hada. Jmena se doplni do hlasky.
+        const withoutWarehouse = issuableItems
+          .filter((i) => !resolveWarehouseId({
+            explicitWarehouseId: i.warehouse_id ?? body.warehouse_id,
+            itemWarehouseId: itemMetaById.get(i.inventory_item_id)?.warehouseId
+          }))
+          .map((i) => itemMetaById.get(i.inventory_item_id)?.name ?? i.inventory_item_id);
+        if (withoutWarehouse.length > 0) {
+          const err = new Error("WAREHOUSE_REQUIRED");
+          (err as Error & { itemNames?: string[] }).itemNames = withoutWarehouse;
+          throw err;
         }
-        const rows = itemsToIssue.map((i) => {
+
+        const rows = issuableItems.map((i) => {
           const meta = itemMetaById.get(i.inventory_item_id);
           if (!meta) throw new Error("ITEM_NOT_FOUND");
           const warehouseId = requireWarehouseId({
@@ -936,11 +1006,12 @@ export async function eventRoutes(app: FastifyInstance) {
             diffJson: {
               count: rows.length,
               pallet_count: body.pallet_count ?? null,
-              total_weight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null
+              total_weight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null,
+              ...(skippedItems.length > 0 ? { skipped_items: skippedItems } : {})
             }
           }
         });
-        return { event: updated };
+        return { event: updated, skippedItems };
       });
 
       sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "ISSUED" });
@@ -954,8 +1025,17 @@ export async function eventRoutes(app: FastifyInstance) {
       if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Export neobsahuje žádné položky k výdeji.");
       if (e?.message === "DUPLICATE_ITEMS") return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být ve výdeji jen jednou.");
       if (e?.message === "ITEM_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
-      if (e?.message === "WAREHOUSE_REQUIRED")
-        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vydávaná položka musí mít určený sklad.");
+      if (e?.message === "WAREHOUSE_REQUIRED") {
+        const names: string[] = e?.itemNames ?? [];
+        return httpError(
+          reply,
+          409,
+          "WAREHOUSE_REQUIRED",
+          names.length > 0
+            ? `Tyto položky nemají určený sklad: ${names.join(", ")}. Vyber sklad v poli "Vydáváno ze skladu".`
+            : "Každá vydávaná položka musí mít určený sklad."
+        );
+      }
       request.log.error({ err: e }, "issue failed");
       return httpError(reply, 500, "INTERNAL", "Internal Server Error");
     }
