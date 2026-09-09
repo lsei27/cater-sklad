@@ -30,6 +30,11 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
   const [consumable, setConsumable] = useState(item.consumable ?? false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmWarehouseMove, setConfirmWarehouseMove] = useState(false);
+  const unassignedQuantity = Math.max(0, Number(item.unassignedQuantity ?? 0));
+  const selectedWarehouse = warehouses.find(
+    (warehouse: { id: string; name: string }) => warehouse.id === warehouseId
+  ) as { id: string; name: string } | undefined;
   const subcats = useMemo(
     () =>
       parentId
@@ -58,6 +63,7 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
     setCrossSellItemIds(item.crossSellItemIds ?? item.crossSellItems?.map((x: any) => x.id) ?? []);
     setActive(item.active ?? true);
     setConsumable(item.consumable ?? false);
+    setConfirmWarehouseMove(false);
   }, [open, item]);
 
   const crossSellCandidates = useMemo(
@@ -85,10 +91,10 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
     [allItems, crossSellItemIds]
   );
 
-  const save = async () => {
+  const persist = async (moveUnassignedStock: boolean) => {
     setSaving(true);
     try {
-      await api(`/admin/items/${item.id}`, {
+      const result = await api<{ moved_unassigned_quantity: number }>(`/admin/items/${item.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           name,
@@ -102,6 +108,7 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
           volume: volume.trim() ? volume.trim() : null,
           plate_diameter: plateDiameter.trim() ? plateDiameter.trim() : null,
           warehouse_id: warehouseId || null,
+          move_unassigned_stock_to_warehouse: moveUnassignedStock,
           image_url: imageUrl ? imageUrl : null,
           qr_code: qrCode ? qrCode : null,
           cross_sell_item_ids: crossSellItemIds,
@@ -109,7 +116,11 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
           active
         })
       });
-      toast.success("Uloženo");
+      toast.success(
+        result.moved_unassigned_quantity > 0
+          ? `Uloženo a ${result.moved_unassigned_quantity} ${unit} přesunuto do skladu ${selectedWarehouse?.name ?? ""}.`
+          : "Uloženo"
+      );
       onSaved();
       onOpenChange(false);
     } catch (e: any) {
@@ -117,6 +128,14 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
     } finally {
       setSaving(false);
     }
+  };
+
+  const save = async () => {
+    if (warehouseId && unassignedQuantity > 0) {
+      setConfirmWarehouseMove(true);
+      return;
+    }
+    await persist(false);
   };
 
   return (
@@ -178,6 +197,15 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
               </option>
             ))}
           </Select>
+          {unassignedQuantity > 0 ? (
+            <span className="mt-1 block text-xs font-medium text-amber-700">
+              {unassignedQuantity} {unit} je nyní bez přiřazeného skladu. Při uložení můžeš stav převést do vybraného skladu.
+            </span>
+          ) : (
+            <span className="mt-1 block text-xs text-slate-500">
+              Použije se pro nové skladové pohyby. Změna sama nepřesouvá zásoby mezi sklady.
+            </span>
+          )}
         </label>
         <label className="text-sm">
           Dny návratu
@@ -345,6 +373,27 @@ export default function EditItemModal({ open, onOpenChange, item, allItems, pare
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmWarehouseMove}
+        onOpenChange={setConfirmWarehouseMove}
+        title="Přiřadit existující zásobu?"
+        description={`${unassignedQuantity} ${unit} je bez skladu. Přesun zachová celkový počet a přiřadí jej do skladu ${selectedWarehouse?.name ?? "vybraného skladu"}.`}
+        confirmText={`Přesunout do ${selectedWarehouse?.name ?? "skladu"}`}
+        onConfirm={() => persist(true)}
+      >
+        <Button
+          variant="secondary"
+          full
+          className="mt-4"
+          onClick={async () => {
+            setConfirmWarehouseMove(false);
+            await persist(false);
+          }}
+        >
+          Uložit bez přesunu
+        </Button>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmDelete}

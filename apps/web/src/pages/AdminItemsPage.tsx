@@ -526,6 +526,11 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
   const [loading, setLoading] = useState(false);
 
   const save = async () => {
+    if (!item.warehouseId) {
+      toast.error("Nejdřív u položky vyber výchozí sklad.");
+      return;
+    }
+
     const payload: Record<string, unknown> = {
       ledger_reason: ledgerReason,
       reason: reason.trim() || undefined
@@ -571,11 +576,20 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
 
 
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title={`Sklad: ${item.name}`} primaryText="Provést změnu" onPrimary={save} primaryDisabled={loading}>
+    <Modal open={open} onOpenChange={onOpenChange} title={`Sklad: ${item.name}`} primaryText="Provést změnu" onPrimary={save} primaryDisabled={loading || !item.warehouseId}>
       <div className="grid gap-4">
         <div className="p-3 bg-slate-50 rounded-xl text-sm text-slate-600">
           Aktuální fyzický stav: <span className="font-bold text-slate-900">{item.totalQuantity ?? 0}</span> {item.unit ?? "ks"}
         </div>
+        {item.warehouse?.name ? (
+          <div className="rounded-xl bg-indigo-50 p-3 text-sm text-indigo-800">
+            Nový pohyb se zapíše do skladu <span className="font-semibold">{item.warehouse.name}</span>.
+          </div>
+        ) : (
+          <div className="rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-800">
+            Položka nemá výchozí sklad. Nejdřív jej nastav přes „Upravit“.
+          </div>
+        )}
         <label className="text-sm">
           Režim úpravy
           <Select className="mt-1" value={mode} onChange={(e) => {

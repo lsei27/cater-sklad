@@ -6,6 +6,7 @@ import { requireRole } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal, getWarehouseQuantity } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
+import { moveUnassignedStockTx } from "../services/unassignedStock.js";
 import { sseBus } from "../lib/sse.js";
 import path from "node:path";
 import { createWriteStream } from "node:fs";
@@ -278,7 +279,20 @@ export async function adminRoutes(app: FastifyInstance) {
           _sum: { deltaQuantity: true }
         })
       : [];
+    const unassignedTotals = items.length
+      ? await app.prisma.inventoryLedger.groupBy({
+          by: ["inventoryItemId"],
+          where: {
+            inventoryItemId: { in: items.map((item) => item.id) },
+            warehouseId: null
+          },
+          _sum: { deltaQuantity: true }
+        })
+      : [];
     const totalByItemId = new Map(totals.map((row) => [row.inventoryItemId, row._sum.deltaQuantity ?? 0]));
+    const unassignedByItemId = new Map(
+      unassignedTotals.map((row) => [row.inventoryItemId, row._sum.deltaQuantity ?? 0])
+    );
     return {
       items: items.map((item) => ({
         ...item,
@@ -291,7 +305,8 @@ export async function adminRoutes(app: FastifyInstance) {
           unit: link.targetItem.unit,
           category: link.targetItem.category
         })),
-        totalQuantity: totalByItemId.get(item.id) ?? 0
+        totalQuantity: totalByItemId.get(item.id) ?? 0,
+        unassignedQuantity: unassignedByItemId.get(item.id) ?? 0
       }))
     };
   });
@@ -319,7 +334,7 @@ export async function adminRoutes(app: FastifyInstance) {
         cross_sell_item_ids: z.array(z.string().uuid()).optional()
       })
       .parse(request.body);
-        const item = await app.prisma.$transaction(async (tx) => {
+    const item = await app.prisma.$transaction(async (tx) => {
       const created = await tx.inventoryItem.create({
         data: {
           name: body.name,
@@ -377,49 +392,94 @@ export async function adminRoutes(app: FastifyInstance) {
         volume: z.string().nullable().optional(),
         plate_diameter: z.string().nullable().optional(),
         warehouse_id: z.string().uuid().nullable().optional(),
+        move_unassigned_stock_to_warehouse: z.boolean().optional(),
         qr_code: z.string().nullable().optional(),
         cross_sell_item_ids: z.array(z.string().uuid()).optional()
       })
       .parse(request.body);
-    const item = await app.prisma.$transaction(async (tx) => {
-      const updated = await tx.inventoryItem.update({
-        where: { id: params.id },
-        data: {
-          ...(body.name !== undefined ? { name: body.name } : {}),
-          ...(body.category_id !== undefined ? { categoryId: body.category_id } : {}),
-          ...(body.unit !== undefined ? { unit: body.unit } : {}),
-          ...(body.image_url !== undefined ? { imageUrl: body.image_url } : {}),
-          ...(body.active !== undefined ? { active: body.active } : {}),
-          ...(body.sku !== undefined ? { sku: body.sku } : {}),
-          ...(body.notes !== undefined ? { notes: body.notes } : {}),
-          ...(body.consumable !== undefined ? { consumable: body.consumable } : {}),
-          ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
-          ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
-          ...(body.master_package_weight !== undefined ? { masterPackageWeight: normalizeDecimalString(body.master_package_weight) } : {}),
-          ...(body.volume !== undefined ? { volume: body.volume } : {}),
-          ...(body.plate_diameter !== undefined ? { plateDiameter: body.plate_diameter } : {}),
-          ...(body.warehouse_id !== undefined ? { warehouseId: body.warehouse_id } : {}),
-          ...(body.qr_code !== undefined ? { qrCode: body.qr_code } : {})
+    const unassignedStockTargetWarehouseId = body.move_unassigned_stock_to_warehouse
+      ? body.warehouse_id
+      : null;
+    if (body.move_unassigned_stock_to_warehouse && !unassignedStockTargetWarehouseId) {
+      return httpError(
+        reply,
+        400,
+        "WAREHOUSE_REQUIRED",
+        "Pro přesun nepřiřazeného stavu je nutné vybrat výchozí sklad."
+      );
+    }
+
+    try {
+      const result = await app.prisma.$transaction(async (tx) => {
+        const updated = await tx.inventoryItem.update({
+          where: { id: params.id },
+          data: {
+            ...(body.name !== undefined ? { name: body.name } : {}),
+            ...(body.category_id !== undefined ? { categoryId: body.category_id } : {}),
+            ...(body.unit !== undefined ? { unit: body.unit } : {}),
+            ...(body.image_url !== undefined ? { imageUrl: body.image_url } : {}),
+            ...(body.active !== undefined ? { active: body.active } : {}),
+            ...(body.sku !== undefined ? { sku: body.sku } : {}),
+            ...(body.notes !== undefined ? { notes: body.notes } : {}),
+            ...(body.consumable !== undefined ? { consumable: body.consumable } : {}),
+            ...(body.return_delay_days !== undefined ? { returnDelayDays: body.return_delay_days } : {}),
+            ...(body.master_package_qty !== undefined ? { masterPackageQty: body.master_package_qty } : {}),
+            ...(body.master_package_weight !== undefined ? { masterPackageWeight: normalizeDecimalString(body.master_package_weight) } : {}),
+            ...(body.volume !== undefined ? { volume: body.volume } : {}),
+            ...(body.plate_diameter !== undefined ? { plateDiameter: body.plate_diameter } : {}),
+            ...(body.warehouse_id !== undefined ? { warehouseId: body.warehouse_id } : {}),
+            ...(body.qr_code !== undefined ? { qrCode: body.qr_code } : {})
+          }
+        });
+
+        if (body.cross_sell_item_ids !== undefined) {
+          const targetIds = Array.from(new Set(body.cross_sell_item_ids.filter((id) => id !== params.id)));
+          await tx.crossSellLink.deleteMany({ where: { sourceItemId: params.id } });
+          if (targetIds.length > 0) {
+            await tx.crossSellLink.createMany({
+              data: targetIds.map((targetItemId) => ({ sourceItemId: params.id, targetItemId })),
+              skipDuplicates: true
+            });
+          }
         }
+
+        const moved = unassignedStockTargetWarehouseId
+          ? await moveUnassignedStockTx({
+              tx,
+              inventoryItemId: params.id,
+              targetWarehouseId: unassignedStockTargetWarehouseId,
+              actorUserId: actor.id
+            })
+          : { movedQuantity: 0 };
+
+        await tx.auditLog.create({
+          data: {
+            actorUserId: actor.id,
+            entityType: "inventory_item",
+            entityId: updated.id,
+            action: "update",
+            diffJson: { ...body, moved_unassigned_quantity: moved.movedQuantity }
+          }
+        });
+
+        return { item: updated, movedQuantity: moved.movedQuantity };
       });
 
-      if (body.cross_sell_item_ids !== undefined) {
-        const targetIds = Array.from(new Set(body.cross_sell_item_ids.filter((id) => id !== params.id)));
-        await tx.crossSellLink.deleteMany({ where: { sourceItemId: params.id } });
-        if (targetIds.length > 0) {
-          await tx.crossSellLink.createMany({
-            data: targetIds.map((targetItemId) => ({ sourceItemId: params.id, targetItemId })),
-            skipDuplicates: true
-          });
-        }
+      if (result.movedQuantity > 0) {
+        sseBus.emit({ type: "ledger_changed", inventoryItemId: result.item.id });
       }
-
-      return updated;
-    });
-    await app.prisma.auditLog.create({
-      data: { actorUserId: actor.id, entityType: "inventory_item", entityId: item.id, action: "update", diffJson: body }
-    });
-    return reply.send({ item });
+      return reply.send({ item: result.item, moved_unassigned_quantity: result.movedQuantity });
+    } catch (error) {
+      if (error instanceof Error && error.message === "NEGATIVE_UNASSIGNED_STOCK") {
+        return httpError(
+          reply,
+          409,
+          "NEGATIVE_UNASSIGNED_STOCK",
+          "Položka má záporný nepřiřazený stav. Nejdřív je nutné opravit skladovou historii."
+        );
+      }
+      throw error;
+    }
   });
 
   app.delete("/admin/items/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -527,6 +587,14 @@ export async function adminRoutes(app: FastifyInstance) {
 
     const item = await app.prisma.inventoryItem.findUnique({ where: { id: params.id } });
     if (!item) return httpError(reply, 404, "NOT_FOUND", "Položka nenalezena.");
+    if (!item.warehouseId) {
+      return httpError(
+        reply,
+        409,
+        "WAREHOUSE_REQUIRED",
+        "Nejdřív u položky vyber výchozí sklad. Nový skladový pohyb nelze uložit bez skladu."
+      );
+    }
 
     const currentQuantity = await getPhysicalTotal(app.prisma, item.id);
     const delta =
@@ -548,7 +616,7 @@ export async function adminRoutes(app: FastifyInstance) {
       reason: ledgerReason,
       createdById: actor.id,
       note: body.reason || null,
-      warehouseId: item.warehouseId ?? null
+      warehouseId: item.warehouseId
     });
 
     await app.prisma.auditLog.create({
@@ -564,6 +632,7 @@ export async function adminRoutes(app: FastifyInstance) {
           previous_quantity: currentQuantity,
           next_quantity: currentQuantity + delta,
           ledger_reason: ledgerReason,
+          warehouse_id: item.warehouseId,
           reason: body.reason ?? null
         }
       }
