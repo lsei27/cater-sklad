@@ -152,14 +152,22 @@ export async function adminRoutes(app: FastifyInstance) {
       .parse(request.body);
     const bcrypt = await import("bcrypt");
     const hash = await bcrypt.default.hash(body.password, 10);
-    const user = await app.prisma.user.create({
-      data: {
-        email: body.email,
-        name: body.name,
-        passwordHash: hash,
-        role: body.role as any
+    let user;
+    try {
+      user = await app.prisma.user.create({
+        data: {
+          email: body.email,
+          name: body.name,
+          passwordHash: hash,
+          role: body.role as any
+        }
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") { // Unique constraint na e-mailu
+        return httpError(reply, 409, "EMAIL_TAKEN", `Uživatel s e-mailem ${body.email} už existuje.`);
       }
-    });
+      throw e;
+    }
     await app.prisma.auditLog.create({
       data: {
         actorUserId: request.user!.id,
