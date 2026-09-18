@@ -22,10 +22,11 @@ export default function Modal(props: {
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-slate-900/40" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px]" />
         <Dialog.Content
           className={cn(
-            "fixed left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl",
+            "fixed inset-x-0 bottom-0 z-50 max-h-[calc(100dvh-1rem)] overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl",
+            "sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[92vw] sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl",
             props.contentClassName
           )}
         >
@@ -41,24 +42,24 @@ export default function Modal(props: {
             </Dialog.Close>
           </div>
 
-          <div className={cn("max-h-[70vh] overflow-auto px-4 py-4", props.bodyClassName)}>
+          <div className={cn("max-h-[calc(100dvh-10rem)] overflow-auto px-4 py-4 sm:max-h-[70vh]", props.bodyClassName)}>
             {props.children}
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-3">
-            {props.footer ?? <div />}
-            <div className="flex gap-2">
+          <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:pb-3">
+            {props.footer ?? null}
+            <div className="flex flex-col-reverse gap-2 sm:ml-auto sm:flex-row">
               {props.onSecondary ? (
-                <Button variant="secondary" onClick={props.onSecondary}>
+                <Button variant="secondary" className="w-full sm:w-auto" onClick={props.onSecondary}>
                   {props.secondaryText ?? "Zrušit"}
                 </Button>
               ) : (
                 <Dialog.Close asChild>
-                  <Button variant="secondary">Zavřít</Button>
+                  <Button variant="secondary" className="w-full sm:w-auto">Zavřít</Button>
                 </Dialog.Close>
               )}
               {props.onPrimary ? (
-                <Button disabled={props.primaryDisabled} onClick={props.onPrimary}>
+                <Button className="w-full sm:w-auto" disabled={props.primaryDisabled} onClick={props.onPrimary}>
                   {props.primaryText ?? "Uložit"}
                 </Button>
               ) : null}

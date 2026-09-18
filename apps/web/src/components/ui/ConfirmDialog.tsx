@@ -16,10 +16,11 @@ export default function ConfirmDialog(props: {
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-slate-900/40" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px]" />
         <Dialog.Content
           className={cn(
-            "fixed left-1/2 top-1/2 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+            "fixed inset-x-0 bottom-0 z-50 max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl",
+            "sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[92vw] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:pb-4"
           )}
         >
           <div className="flex items-start justify-between gap-3">
@@ -36,11 +37,12 @@ export default function ConfirmDialog(props: {
 
           {props.children}
 
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Dialog.Close asChild>
-              <Button variant="secondary">Zrušit</Button>
+              <Button variant="secondary" className="w-full sm:w-auto">Zrušit</Button>
             </Dialog.Close>
             <Button
+              className="w-full sm:w-auto"
               variant={props.tone === "danger" ? "danger" : "primary"}
               onClick={async () => {
                 await props.onConfirm();
@@ -55,4 +57,3 @@ export default function ConfirmDialog(props: {
     </Dialog.Root>
   );
 }
-

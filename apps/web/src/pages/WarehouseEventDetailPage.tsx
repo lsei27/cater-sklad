@@ -24,6 +24,7 @@ type Snapshot = {
 };
 
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; warehouseName?: string | null; warehouseIsHome?: boolean | null };
+type Warehouse = { id: string; name: string; isHome?: boolean };
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
@@ -83,7 +84,7 @@ export default function WarehouseEventDetailPage() {
   }>>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [packingChanges, setPackingChanges] = useState<PackingChange[]>([]);
-  const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [blockModal, setBlockModal] = useState<{ inventoryItemId: string; name: string; maxQty: number } | null>(null);
   const [blockQty, setBlockQty] = useState("");
   const [blockUntil, setBlockUntil] = useState("");
@@ -128,7 +129,7 @@ export default function WarehouseEventDetailPage() {
 
   const loadWarehouses = async () => {
     try {
-      const res = await api<{ warehouses: Array<{ id: string; name: string }> }>("/warehouses");
+      const res = await api<{ warehouses: Warehouse[] }>("/warehouses");
       setWarehouses(res.warehouses);
     } catch (e) {}
   };
@@ -473,9 +474,10 @@ export default function WarehouseEventDetailPage() {
 
   const issueDisabled = event.status !== "SENT_TO_WAREHOUSE" || event.exportNeedsRevision || warehouseItems.length === 0;
   const closeDisabled = event.status !== "ISSUED" || rows.length === 0;
+  const showMobileActionDock = event.status === "ISSUED" || (event.status === "SENT_TO_WAREHOUSE" && issueMode !== null);
 
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", showMobileActionDock && "pb-36 md:pb-0")}>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
           Zpět na seznam
@@ -501,9 +503,16 @@ export default function WarehouseEventDetailPage() {
       {event.exportNeedsRevision ? (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent>
-            <div className="text-sm font-semibold text-amber-900">Pozor: změny po předání</div>
-            <div className="mt-1 text-sm text-amber-800">
-              Akce byla upravena po předání. Před výdejem je nutný nový export.
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-amber-900">Pozor: změny po předání</div>
+                <div className="mt-1 text-sm text-amber-800">
+                  Akce byla upravena po předání. Aktualizuj předání, potom půjde výdej znovu potvrdit.
+                </div>
+              </div>
+              <Button className="w-full shrink-0 sm:w-auto" onClick={() => nav(`/events/${id}`)}>
+                <Icons.Edit className="h-4 w-4" /> Aktualizovat předání
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -1167,7 +1176,7 @@ export default function WarehouseEventDetailPage() {
           ) : null}
 
           {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
-            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+            <div className="mt-8 hidden rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 md:block">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-slate-900">Finální potvrzení výdeje</div>
@@ -1193,6 +1202,71 @@ export default function WarehouseEventDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {event.status === "SENT_TO_WAREHOUSE" && issueMode ? (
+        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
+          <div className="mx-auto flex max-w-xl items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
+                <span>{issueMode === "digital" ? "Finální potvrzení" : "Manuální výdej"}</span>
+                {issueMode === "digital" ? (
+                  <span>{digitalIssueSummary.confirmed}/{digitalIssueSummary.total}</span>
+                ) : null}
+              </div>
+              {issueMode === "digital" ? (
+                <>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-[width]"
+                      style={{
+                        width: `${digitalIssueSummary.total > 0
+                          ? Math.round((digitalIssueSummary.confirmed / digitalIssueSummary.total) * 100)
+                          : 0}%`
+                      }}
+                    />
+                  </div>
+                  <div className="mt-1 truncate text-[11px] text-slate-500">
+                    {digitalIssueSummary.allConfirmed
+                      ? "Vše je potvrzeno — můžeš dokončit výdej."
+                      : `Zbývá potvrdit ${digitalIssueSummary.remaining} položek.`}
+                  </div>
+                </>
+              ) : (
+                <div className="mt-1 truncate text-[11px] text-slate-500">Po kontrole PDF potvrď celý výdej.</div>
+              )}
+            </div>
+            <Button
+              className="h-12 shrink-0 px-4"
+              disabled={issueDisabled || (issueMode === "digital" && !digitalIssueSummary.allConfirmed)}
+              onClick={() => setConfirmIssue(true)}
+            >
+              <Icons.Check className="h-4 w-4" />
+              {issueMode === "digital" && !digitalIssueSummary.allConfirmed ? "Ještě ne" : "Potvrdit"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {event.status === "ISSUED" ? (
+        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-red-100 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
+          <div className="mx-auto flex max-w-xl items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold text-slate-900">Vrácení z akce</div>
+              <div className="mt-1 truncate text-[11px] text-slate-500">
+                {rows.length > 0 ? `${rows.length} položek připravených k uzavření.` : "Načítám vydané položky…"}
+              </div>
+            </div>
+            <Button
+              variant="danger"
+              className="h-12 shrink-0 px-4"
+              disabled={closeDisabled}
+              onClick={() => setConfirmClose(true)}
+            >
+              <Icons.Check className="h-4 w-4" /> Uzavřít akci
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={confirmIssue}

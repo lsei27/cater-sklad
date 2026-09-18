@@ -30,6 +30,31 @@ export function statusBadgeClass(status: string) {
   }
 }
 
+export function canCreateEventExport(status?: string | null) {
+  return status === "DRAFT" || status === "READY_FOR_WAREHOUSE" || status === "SENT_TO_WAREHOUSE";
+}
+
+export type WarehouseWorkflowAction = {
+  label: string;
+  description: string;
+};
+
+export function warehouseWorkflowAction(status?: string | null): WarehouseWorkflowAction | null {
+  if (status === "SENT_TO_WAREHOUSE") {
+    return {
+      label: "Otevřít výdej",
+      description: "Akce je předaná skladu a čeká na vyskladnění."
+    };
+  }
+  if (status === "ISSUED") {
+    return {
+      label: "Zapsat vrácení a uzavřít",
+      description: "Akce je vydaná. Doplň vrácené nebo rozbité kusy a akci uzavři."
+    };
+  }
+  return null;
+}
+
 export const EVENT_STATUS_ORDER = [
   "DRAFT",
   "READY_FOR_WAREHOUSE",

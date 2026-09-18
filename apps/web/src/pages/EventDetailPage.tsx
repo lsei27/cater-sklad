@@ -14,13 +14,15 @@ import Modal from "../components/ui/Modal";
 import QuickAddItemsModal from "../components/QuickAddItemsModal";
 import toast from "react-hot-toast";
 import {
+  canCreateEventExport,
   compareByCategoryParentName,
   formatCategoryParentLabel,
   humanError,
   managerLabel,
   statusBadgeClass,
   statusLabel,
-  stockTone
+  stockTone,
+  warehouseWorkflowAction
 } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { ArrowLeft, Ban, Copy, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
@@ -162,6 +164,7 @@ export default function EventDetailPage() {
 
   const canEM = ["admin", "event_manager", "warehouse"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
+  const canUseWarehouseWorkflow = role === "warehouse" || role === "admin";
   const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
   // Sklad musi umet prihodit polozku do akce, kterou zalozil event manager:
@@ -174,11 +177,30 @@ export default function EventDetailPage() {
     !isPast &&
     ((canManageEvent && ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE"].includes(event?.status)) || canChef) &&
     canEditEvent;
+  // Novy export pouze znovu zachyti aktualni stav polozek. Musi jit vytvorit
+  // i po datu akce, aby sklad dokazal napravit revizi a dokoncit pozdni vydej.
+  // Samotne upravy polozek zustavaji u minulych akci zamcene pres canEditEvent.
+  const canExportEvent = canCreateEventExport(event?.status);
+  const warehouseAction = warehouseWorkflowAction(event?.status);
 
   const latestExport = event?.exports?.[0] ?? null;
   const manager = managerLabel(event?.createdBy);
   const token = getToken();
   const withToken = (url: string) => (token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url);
+
+  const openExportPreview = async () => {
+    if (!id || !canExportEvent) return;
+    setExportLoading(true);
+    try {
+      const res = await api<{ preview: unknown }>(`/events/${id}/export-preview`);
+      setExportPreview(res.preview);
+      setExportConfirm(true);
+    } catch (error: unknown) {
+      toast.error(humanError(error));
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   const grouped = useMemo(() => {
     const sections: Array<{ title: string; groups: any[] }> = [
@@ -262,6 +284,54 @@ export default function EventDetailPage() {
                   Položky byly upraveny po předání skladu. Před výdejem je potřeba vytvořit nový export.
                 </div>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {canUseWarehouseWorkflow && warehouseAction ? (
+        <Card
+          className={cn(
+            "overflow-hidden",
+            event.status === "ISSUED"
+              ? "border-amber-200 bg-amber-50/70"
+              : event.exportNeedsRevision
+                ? "border-amber-300 bg-amber-50"
+                : "border-emerald-200 bg-emerald-50/70"
+          )}
+        >
+          <CardContent>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div
+                  className={cn(
+                    "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+                    event.status === "ISSUED" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"
+                  )}
+                >
+                  {event.status === "ISSUED" ? <Icons.Check className="h-5 w-5" /> : <Icons.Truck className="h-5 w-5" />}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {event.exportNeedsRevision ? "Výdej čeká na aktualizaci předání" : warehouseAction.label}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    {event.exportNeedsRevision
+                      ? "Po změně položek je potřeba vytvořit nový export. Pak bude možné akci vyskladnit."
+                      : warehouseAction.description}
+                  </div>
+                </div>
+              </div>
+              {event.exportNeedsRevision ? (
+                <Button className="w-full shrink-0 sm:w-auto" disabled={exportLoading} onClick={openExportPreview}>
+                  <FileDown className="h-4 w-4" /> {exportLoading ? "Načítám..." : "Aktualizovat předání"}
+                </Button>
+              ) : (
+                <Button className="w-full shrink-0 sm:w-auto" onClick={() => nav(`/warehouse/${id}`)}>
+                  {event.status === "ISSUED" ? <Icons.Check className="h-4 w-4" /> : <Icons.Truck className="h-4 w-4" />}
+                  {warehouseAction.label}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -407,20 +477,13 @@ export default function EventDetailPage() {
             ) : null}
 
             {canEM ? (
-              <Button onClick={async () => {
-                if (!id) return;
-                setExportLoading(true);
-                try {
-                  const res = await api<{ preview: any }>(`/events/${id}/export-preview`);
-                  setExportPreview(res.preview);
-                  setExportConfirm(true);
-                } catch (e: any) {
-                  toast.error(humanError(e));
-                } finally {
-                  setExportLoading(false);
-                }
-              }} disabled={!canEditEvent || exportLoading}>
-                <FileDown className="h-4 w-4" /> {exportLoading ? "Načítám..." : "Předat skladu (PDF)"}
+              <Button onClick={openExportPreview} disabled={!canExportEvent || exportLoading}>
+                <FileDown className="h-4 w-4" />
+                {exportLoading
+                  ? "Načítám..."
+                  : event.exportNeedsRevision
+                    ? "Aktualizovat předání (PDF)"
+                    : "Předat skladu (PDF)"}
               </Button>
             ) : null}
 
@@ -707,7 +770,7 @@ export default function EventDetailPage() {
       >
         {exportPreview ? (
           <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div><span className="text-slate-500">Název:</span> <strong>{exportPreview.event?.name}</strong></div>
               <div><span className="text-slate-500">Místo:</span> {exportPreview.event?.location}</div>
               {exportPreview.event?.address && <div><span className="text-slate-500">Adresa:</span> {exportPreview.event?.address}</div>}
