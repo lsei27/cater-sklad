@@ -404,13 +404,17 @@ export async function eventRoutes(app: FastifyInstance) {
     });
 
     const changes = entries.flatMap((entry) => {
-      const diff = entry.diffJson as { changes?: Array<{ name: string; unit: string; from: number; to: number }> } | null;
+      const diff = entry.diffJson as {
+        changes?: Array<{ name: string; unit: string; from: number; to: number; dayFrom?: number; dayTo?: number | null }>;
+      } | null;
       const actorLabel = entry.actor?.name?.trim() || entry.actor?.email || "neznámý uživatel";
       return (diff?.changes ?? []).map((c) => ({
         name: c.name,
         unit: c.unit,
         from: c.from,
         to: c.to,
+        dayFrom: c.dayFrom ?? 1,
+        dayTo: c.dayTo ?? null,
         changedBy: actorLabel,
         changedAt: entry.createdAt.toISOString()
       }));
@@ -565,14 +569,20 @@ export async function eventRoutes(app: FastifyInstance) {
 
     if (targetItems.length === 0) return { items: [] };
 
-    const rows = await app.prisma.$transaction(async (tx) => {
-      const out: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> = [];
-      for (const tId of targetItemIds) {
-        const a = await getAvailabilityForEventItemTx(tx, params.id, tId);
-        out.push({ inventoryItemId: tId, ...a });
-      }
-      return out;
-    });
+    let rows: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }>;
+    try {
+      rows = await app.prisma.$transaction(async (tx) => {
+        const out: Array<{ inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number }> = [];
+        for (const tId of targetItemIds) {
+          const a = await getAvailabilityForEventItemTx(tx, params.id, tId);
+          out.push({ inventoryItemId: tId, ...a });
+        }
+        return out;
+      });
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      throw e;
+    }
 
     const stockById = new Map(rows.map((r) => [r.inventoryItemId, r]));
     const dto = targetItems.map((it) => {
@@ -680,7 +690,9 @@ export async function eventRoutes(app: FastifyInstance) {
           .array(
             z.object({
               inventory_item_id: z.string().uuid(),
-              qty: z.number().int().min(0)
+              qty: z.number().int().min(0),
+              day_from: z.number().int().min(1).optional(),
+              day_to: z.number().int().min(1).nullable().optional()
             })
           )
           .min(1)
@@ -707,7 +719,12 @@ export async function eventRoutes(app: FastifyInstance) {
           tx,
           actor: user,
           eventId: params.id,
-          items: body.items.map((i) => ({ inventoryItemId: i.inventory_item_id, qty: i.qty }))
+          items: body.items.map((i) => ({
+            inventoryItemId: i.inventory_item_id,
+            qty: i.qty,
+            dayFrom: i.day_from,
+            dayTo: i.day_to
+          }))
         });
 
         const eventRow = await tx.event.findUnique({
@@ -763,7 +780,10 @@ export async function eventRoutes(app: FastifyInstance) {
         return httpError(reply, 409, "EVENT_READ_ONLY", "Event je po výdeji uzamčen");
       }
       if (e?.message === "DUPLICATE_ITEMS") {
-        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v jednom vložení jen jednou.");
+        return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v jednom vložení jen jednou pro daný rozsah dnů.");
+      }
+      if (e?.message === "INVALID_DAY_RANGE") {
+        return httpError(reply, 400, "INVALID_DAY_RANGE", "Neplatný rozsah dnů akce.");
       }
       if (e?.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Event not found");
       if (e?.message === "FORBIDDEN") {

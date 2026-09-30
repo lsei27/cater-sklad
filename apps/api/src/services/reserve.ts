@@ -1,5 +1,6 @@
 import type { Role, Prisma } from "../../generated/prisma/client.js";
 import { getAvailabilityForEventItemsTx } from "./availability.js";
+import { dayRangeKey, normalizeDayRange } from "../lib/eventDays.js";
 
 export class InsufficientStockError extends Error {
   constructor(
@@ -10,19 +11,20 @@ export class InsufficientStockError extends Error {
   }
 }
 
+/// Řádek rezervace. Bez dayFrom/dayTo platí pro celou akci.
+export type ReserveItemInput = { inventoryItemId: string; qty: number; dayFrom?: number; dayTo?: number | null };
+
 export async function reserveItemsTx(params: {
   tx: Prisma.TransactionClient;
   actor: { id: string; role: Role };
   eventId: string;
-  items: Array<{ inventoryItemId: string; qty: number }>;
+  items: ReserveItemInput[];
 }) {
   const { tx, actor, eventId, items } = params;
 
-  const itemIds = items.map((item) => item.inventoryItemId);
-  if (new Set(itemIds).size !== itemIds.length) throw new Error("DUPLICATE_ITEMS");
-
-  const [event] = await tx.$queryRaw<{ id: string; status: string; export_needs_revision: boolean }[]>`
-    SELECT id, status::text, export_needs_revision
+  const [event] = await tx.$queryRaw<{ id: string; status: string; export_needs_revision: boolean; day_count: number }[]>`
+    SELECT id, status::text, export_needs_revision,
+           event_day_count(delivery_datetime, pickup_datetime)::int AS day_count
     FROM events
     WHERE id = ${eventId}::uuid
     FOR UPDATE
@@ -32,9 +34,25 @@ export async function reserveItemsTx(params: {
     throw new Error("EVENT_READ_ONLY");
   }
 
+  // Rozsah se sjednotí dřív, než se hledají duplicity: „dny 1 až 3“ u třídenní
+  // akce je tentýž řádek jako „celá akce“.
+  const rows = items.map((item) => {
+    const range = normalizeDayRange({ dayFrom: item.dayFrom, dayTo: item.dayTo }, Number(event.day_count));
+    if (!range) throw new Error("INVALID_DAY_RANGE");
+    return {
+      inventoryItemId: item.inventoryItemId,
+      qty: item.qty,
+      range,
+      key: `${item.inventoryItemId}|${dayRangeKey(range)}`
+    };
+  });
+  if (new Set(rows.map((r) => r.key)).size !== rows.length) throw new Error("DUPLICATE_ITEMS");
+
+  const itemIds = Array.from(new Set(rows.map((r) => r.inventoryItemId)));
+
   // 1. Check Role Category Access
   if (actor.role !== "admin") {
-    const allowedAccess = await (tx as any).roleCategoryAccess.findMany({
+    const allowedAccess = await tx.roleCategoryAccess.findMany({
       where: { role: actor.role },
       select: { categoryId: true }
     });
@@ -42,9 +60,8 @@ export async function reserveItemsTx(params: {
     // Empty role config means unrestricted access for that role.
     // Restrictions only apply once admin explicitly assigns categories.
     if (allowedAccess.length > 0) {
-    const allowedCategoryIds = new Set(allowedAccess.map((a: any) => a.categoryId));
+      const allowedCategoryIds = new Set(allowedAccess.map((a) => a.categoryId));
 
-      const itemIds = items.map((i) => i.inventoryItemId);
       const itemCats = await tx.inventoryItem.findMany({
         where: { id: { in: itemIds } },
         select: { id: true, categoryId: true, category: { select: { parentId: true } } }
@@ -63,7 +80,7 @@ export async function reserveItemsTx(params: {
   }
 
   // 2. Master Package roundup — adjust quantities to full master packages
-  const itemIdsForLookup = items.filter((i) => i.qty > 0).map((i) => i.inventoryItemId);
+  const itemIdsForLookup = rows.filter((r) => r.qty > 0).map((r) => r.inventoryItemId);
   const masterPackageItems = itemIdsForLookup.length > 0
     ? await tx.inventoryItem.findMany({
         where: { id: { in: itemIdsForLookup }, masterPackageQty: { not: null } },
@@ -72,54 +89,63 @@ export async function reserveItemsTx(params: {
     : [];
   const masterPackageMap = new Map(masterPackageItems.map((i) => [i.id, i.masterPackageQty!]));
 
-  const adjustedItems = items.map((item) => {
-    if (item.qty <= 0) return { ...item, originalQty: item.qty };
-    const mpq = masterPackageMap.get(item.inventoryItemId);
+  const adjustedRows = rows.map((row) => {
+    if (row.qty <= 0) return { ...row, originalQty: row.qty };
+    const mpq = masterPackageMap.get(row.inventoryItemId);
     if (mpq && mpq > 0) {
-      const roundedQty = Math.ceil(item.qty / mpq) * mpq;
-      return { ...item, originalQty: item.qty, qty: roundedQty };
+      return { ...row, originalQty: row.qty, qty: Math.ceil(row.qty / mpq) * mpq };
     }
-    return { ...item, originalQty: item.qty };
+    return { ...row, originalQty: row.qty };
   });
 
   for (const inventoryItemId of [...itemIds].sort()) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(2025, hashtext(${inventoryItemId}))`;
   }
 
-  // Fetch existing reservations to check ownership
   const existingReservations = await tx.eventReservation.findMany({
-    where: { eventId, inventoryItemId: { in: adjustedItems.map((i) => i.inventoryItemId) } },
-    select: { inventoryItemId: true, createdById: true, reservedQuantity: true }
+    where: { eventId, inventoryItemId: { in: itemIds } },
+    select: { id: true, inventoryItemId: true, dayFrom: true, dayTo: true, createdById: true, reservedQuantity: true }
   });
-  const existingMap = new Map(existingReservations.map((r) => [r.inventoryItemId, r]));
-
-  const availabilityRows = await getAvailabilityForEventItemsTx(tx, eventId, itemIds);
-  const availabilityByItemId = new Map(availabilityRows.map((row) => [row.inventoryItemId, row]));
-  for (const { inventoryItemId, qty } of adjustedItems) {
-    const available = availabilityByItemId.get(inventoryItemId)?.available ?? 0;
-    if (qty > available) throw new InsufficientStockError(inventoryItemId, available);
-  }
+  const existingByKey = new Map(
+    existingReservations.map((r) => [`${r.inventoryItemId}|${dayRangeKey({ dayFrom: r.dayFrom, dayTo: r.dayTo })}`, r])
+  );
 
   const now = new Date();
   const expiresAt =
     event.status === "DRAFT" ? new Date(now.getTime() + 30 * 60 * 1000) : null;
   const state = event.status === "DRAFT" ? "draft" : "confirmed";
 
-  for (const { inventoryItemId, qty } of adjustedItems) {
-    const existing = existingMap.get(inventoryItemId);
-    const createdById = existing?.createdById ?? actor.id;
+  // Řádky se kontrolují a zapisují postupně, aby druhý řádek téže položky
+  // v jednom požadavku viděl první a dohromady nepřekročily sklad.
+  for (const row of adjustedRows) {
+    const existing = existingByKey.get(row.key);
 
-    if (qty <= 0) {
-      if (existing) {
-        await tx.eventReservation.delete({
-          where: { eventId_inventoryItemId: { eventId, inventoryItemId } }
-        });
-      }
+    if (row.qty <= 0) {
+      if (existing) await tx.eventReservation.delete({ where: { id: existing.id } });
+      continue;
+    }
+
+    const [availability] = await getAvailabilityForEventItemsTx(tx, eventId, [row.inventoryItemId], { range: row.range });
+    const available = availability?.available ?? 0;
+    if (row.qty > available) throw new InsufficientStockError(row.inventoryItemId, available);
+
+    if (existing) {
+      await tx.eventReservation.update({
+        where: { id: existing.id },
+        data: { reservedQuantity: row.qty, state, expiresAt, createdById: existing.createdById ?? actor.id }
+      });
     } else {
-      await tx.eventReservation.upsert({
-        where: { eventId_inventoryItemId: { eventId, inventoryItemId } },
-        update: { reservedQuantity: qty, state, expiresAt, createdById },
-        create: { eventId, inventoryItemId, reservedQuantity: qty, state, expiresAt, createdById: actor.id }
+      await tx.eventReservation.create({
+        data: {
+          eventId,
+          inventoryItemId: row.inventoryItemId,
+          reservedQuantity: row.qty,
+          dayFrom: row.range.dayFrom,
+          dayTo: row.range.dayTo,
+          state,
+          expiresAt,
+          createdById: actor.id
+        }
       });
     }
   }
@@ -128,13 +154,15 @@ export async function reserveItemsTx(params: {
     await tx.event.update({ where: { id: eventId }, data: { exportNeedsRevision: true } });
 
     // Sklad uz ma balenu v ruce, takze se musi dozvedet, co se v ni zmenilo -
-    // ktera polozka a z kolika na kolik. Priznak exportNeedsRevision sam o sobe
-    // rekne jen "neco se stalo".
-    const changes = adjustedItems
-      .map(({ inventoryItemId, qty }) => ({
-        inventoryItemId,
-        from: existingMap.get(inventoryItemId)?.reservedQuantity ?? 0,
-        to: qty
+    // ktera polozka, na ktere dny a z kolika na kolik. Priznak exportNeedsRevision
+    // sam o sobe rekne jen "neco se stalo".
+    const changes = adjustedRows
+      .map((row) => ({
+        inventoryItemId: row.inventoryItemId,
+        dayFrom: row.range.dayFrom,
+        dayTo: row.range.dayTo,
+        from: existingByKey.get(row.key)?.reservedQuantity ?? 0,
+        to: Math.max(0, row.qty)
       }))
       .filter((c) => c.from !== c.to);
 
@@ -163,13 +191,15 @@ export async function reserveItemsTx(params: {
   }
 
   // Return adjusted items info so the caller can inform the user about roundups
-  const masterPackageAdjustments = adjustedItems
-    .filter((i) => i.originalQty !== i.qty && i.qty > 0)
-    .map((i) => ({
-      inventoryItemId: i.inventoryItemId,
-      requestedQty: i.originalQty,
-      adjustedQty: i.qty,
-      masterPackageQty: masterPackageMap.get(i.inventoryItemId) ?? null
+  const masterPackageAdjustments = adjustedRows
+    .filter((r) => r.originalQty !== r.qty && r.qty > 0)
+    .map((r) => ({
+      inventoryItemId: r.inventoryItemId,
+      dayFrom: r.range.dayFrom,
+      dayTo: r.range.dayTo,
+      requestedQty: r.originalQty,
+      adjustedQty: r.qty,
+      masterPackageQty: masterPackageMap.get(r.inventoryItemId) ?? null
     }));
 
   return { state, expiresAt, masterPackageAdjustments };
