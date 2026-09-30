@@ -183,6 +183,15 @@ Pokud tenhle výpočet měníš, změň ho na všech třech místech a spusť `a
   - bez kontroly duplicit se tedy položka zapíše do `event_issues` jednou, ale ze skladu se odečte za každý výskyt. Vzniklá ztráta je tichá a **trvalá**: uzavření akce vrací jen to, co je v `event_issues`.
   - stejnou kontrolu mají i `issueAdditionalTx` a `returnCloseTx`; nový kód, který zapisuje do ledgeru v cyklu, ji musí mít taky.
 
+### Vícedenní akce po dnech (od 2026-09-30)
+
+- Řádek položky v akci má rozsah `day_from` / `day_to` (`day_to = NULL` = do konce akce). Jedna položka může mít víc řádků s různými dny. Rozsah končící posledním dnem se ukládá jako `NULL`.
+- Dny se neukládají na akci, odvozují se ze závozu a svozu: den 1 = datum závozu, hranice dnů je půlnoc `Europe/Prague`. Počítají je SQL funkce `event_day_count`, `event_day_start`, `event_day_end` z migrace `20260930090000_multi_day_rows`.
+- Unikátní klíč řádků rezervací a balení je výrazový index s `COALESCE(day_to, 0)`. Prisma ho ve schématu neumí, `prisma db push` ho nevytvoří: lokálně po `db push` pusť `prisma db execute --file` s touto migrací.
+- Dostupnost počítá jediná funkce `getItemsAvailabilityTx` v `services/availability.ts` (detail akce i skladové přehledy). Blokuje špička souběžného vytížení a rezervace blokuje až do konce řádku plus `return_delay_days`.
+- Výdej jde po dnech (`POST /events/:id/issue` s `day`), vydané dny = rozlišné `day_from` v `event_issues`. Doplňkový výdej má `day_from = NULL` a vydaný den nevytváří.
+- Vydaný řádek rezervace (existuje řádek výdeje se stejným klíčem akce, položka, `day_from`, `day_to`) už neblokuje: výdej ho odečetl z fyzického stavu a zpět se počítá virtuálním návratem. Dřív se vydané zboží překrývající se akce odečítalo dvakrát.
+
 ### Uzavření akce a návraty (`apps/api/src/services/returnClose.ts`)
 - **Hlavní invariant skladu**: pokud se nic nerozbije a nic nechybí, musí se po uzavření vrátit přesně tolik kusů, kolik bylo skutečně vydáno.
 - **Backend nesmí dopočítávat „kreativně“**:
