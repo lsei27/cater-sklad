@@ -19,12 +19,14 @@ export async function createExportTx(params: {
             delivery_datetime: Date;
             pickup_datetime: Date;
             status: string;
+            day_count: number;
             manager_name: string | null;
             manager_email: string;
             manager_id: string;
         }[]
     >`
     SELECT e.id, e.name, e.location, e.address, e.notes, e.event_date, e.delivery_datetime, e.pickup_datetime, e.status::text,
+           event_day_count(e.delivery_datetime, e.pickup_datetime)::int AS day_count,
            u.name as manager_name, u.email as manager_email, u.id as manager_id
     FROM events e
     JOIN users u ON u.id = e.created_by
@@ -49,7 +51,7 @@ export async function createExportTx(params: {
     const reservations = await tx.eventReservation.findMany({
         where: { eventId: eventId, state: "confirmed", reservedQuantity: { gt: 0 } },
         include: { item: { include: { category: { include: { parent: true } }, warehouse: true } } },
-        orderBy: { inventoryItemId: "asc" }
+        orderBy: [{ inventoryItemId: "asc" }, { dayFrom: "asc" }]
     });
     if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
 
@@ -85,7 +87,9 @@ export async function createExportTx(params: {
             // Sklad se do snapshotu uklada, aby ho slo vytisknout do balenu.
             // Starsi exporty ho nemaji - PDF si s tim musi poradit.
             warehouseName: r.item.warehouse?.name ?? null,
-            warehouseIsHome: r.item.warehouse ? r.item.warehouse.isHome : null
+            warehouseIsHome: r.item.warehouse ? r.item.warehouse.isHome : null,
+            dayFrom: r.dayFrom,
+            dayTo: r.dayTo
         });
     }
 
@@ -93,7 +97,7 @@ export async function createExportTx(params: {
     const sortedGroups = Array.from(groupsMap.values())
         .map(g => ({
             ...g,
-            items: g.items.sort((a, b) => a.name.localeCompare(b.name, "cs"))
+            items: g.items.sort((a, b) => a.name.localeCompare(b.name, "cs") || (a.dayFrom ?? 1) - (b.dayFrom ?? 1))
         }))
         .sort((a, b) => {
             if (a.parentSortOrder !== b.parentSortOrder) return a.parentSortOrder - b.parentSortOrder;
@@ -118,7 +122,8 @@ export async function createExportTx(params: {
             pickupDatetime: ev.pickup_datetime.toISOString(),
             version,
             exportedAt: exportedAt.toISOString(),
-            managerName
+            managerName,
+            dayCount: Number(ev.day_count)
         },
         groups: sortedGroups
     };

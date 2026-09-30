@@ -7,7 +7,7 @@ import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { duplicateEventTx } from "../services/duplicateEvent.js";
 import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
-import { buildExportPdf, type ExportSnapshot } from "../pdf/exportPdf.js";
+import { buildExportPdf, filterSnapshotToDay, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { issueAdditionalTx } from "../services/issueAdditional.js";
@@ -17,6 +17,7 @@ import { returnCloseTx } from "../services/returnClose.js";
 import { requireWarehouseId, resolveWarehouseId } from "../services/warehouse.js";
 import { splitKnownIssueItems } from "../lib/issueSelection.js";
 import { eventDayCount } from "../lib/eventDays.js";
+import { getIssuedDaysTx } from "../services/issueDay.js";
 import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
 
 function safeFilename(value: string) {
@@ -384,21 +385,35 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const snapshot = (exports?.[0] as any)?.snapshotJson as ExportSnapshot | undefined;
     if (warehouseItems.length === 0 && snapshot?.groups?.length) {
-      warehouseItems = snapshot.groups.flatMap((g) =>
-        (g.items ?? []).map((it) => ({
-          inventoryItemId: it.inventoryItemId,
-          name: it.name,
-          unit: it.unit,
-          qty: it.qty,
-          parentCategory: g.parentCategory,
-          category: (g as { category?: string }).category,
-          warehouseName: it.warehouseName,
-          warehouseIsHome: it.warehouseIsHome
-        }))
-      );
+      // Vícedenní akce má v exportu víc řádků jedné položky. Seznam skladu
+      // ukazuje součet, po dnech se balí v kartě „Balení po dnech“.
+      const byItemId = new Map<string, (typeof warehouseItems)[number]>();
+      for (const g of snapshot.groups) {
+        for (const it of g.items ?? []) {
+          const existing = byItemId.get(it.inventoryItemId);
+          if (existing) {
+            existing.qty += it.qty;
+            continue;
+          }
+          byItemId.set(it.inventoryItemId, {
+            inventoryItemId: it.inventoryItemId,
+            name: it.name,
+            unit: it.unit,
+            qty: it.qty,
+            parentCategory: g.parentCategory,
+            category: (g as { category?: string }).category,
+            warehouseName: it.warehouseName,
+            warehouseIsHome: it.warehouseIsHome
+          });
+        }
+      }
+      warehouseItems = Array.from(byItemId.values());
     }
 
-    return { event: { ...event, exports, warehouseItems } };
+    const dayCount = eventDayCount(event.deliveryDatetime, event.pickupDatetime);
+    const issuedDays = await getIssuedDaysTx(app.prisma, event.id);
+
+    return { event: { ...event, exports, warehouseItems, dayCount, issuedDays } };
   });
 
   // Zmeny v baleni po predani skladu. Sklad ma vytisteny seznam, takze potrebuje
@@ -484,13 +499,15 @@ export async function eventRoutes(app: FastifyInstance) {
     requireRole(request.user!.role, ["admin", "event_manager", "chef", "warehouse"]);
 
     const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
-    const queryParams = z.object({ type: z.enum(["general", "kitchen"]).optional() }).parse(request.query);
+    const queryParams = z
+      .object({ type: z.enum(["general", "kitchen"]).optional(), day: z.coerce.number().int().min(1).optional() })
+      .parse(request.query);
 
     const row = await app.prisma.eventExport.findFirst({
       where: { eventId: params.id, version: params.version }
     });
     if (!row) return httpError(reply, 404, "NOT_FOUND", "Export not found");
-    const snapshot = JSON.parse(JSON.stringify(row.snapshotJson)) as ExportSnapshot;
+    let snapshot = JSON.parse(JSON.stringify(row.snapshotJson)) as ExportSnapshot;
     if (!snapshot.event.managerName) {
       const eventManager = await app.prisma.event.findUnique({
         where: { id: params.id },
@@ -512,12 +529,17 @@ export async function eventRoutes(app: FastifyInstance) {
       snapshot.groups = snapshot.groups.filter((g) => g.parentCategory.toLowerCase() !== "kuchyn" && g.parentCategory.toLowerCase() !== "kuchyň");
       subtitle = "Sklad";
     }
+    if (queryParams.day) {
+      snapshot = filterSnapshotToDay(snapshot, queryParams.day);
+      subtitle = subtitle ? `${subtitle} - Den ${queryParams.day}` : `Den ${queryParams.day}`;
+    }
 
     try {
       const pdfBytes = await buildExportPdf(snapshot, subtitle);
       reply.header("Content-Type", "application/pdf");
-      const filenameSuffix = subtitle ? `_${subtitle.toLowerCase()}` : "";
-      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}${filenameSuffix}.pdf"`);
+      const typeSuffix = queryParams.type ? `_${queryParams.type === "kitchen" ? "kuchyn" : "sklad"}` : "";
+      const daySuffix = queryParams.day ? `_den${queryParams.day}` : "";
+      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}${typeSuffix}${daySuffix}.pdf"`);
       reply.header("Cache-Control", "no-store");
       return reply.send(Buffer.from(pdfBytes));
     } catch (err) {
@@ -896,7 +918,7 @@ export async function eventRoutes(app: FastifyInstance) {
         category: string;
         parentSortOrder: number;
         categorySortOrder: number;
-        items: Array<{ name: string; qty: number; unit: string }>;
+        items: Array<{ name: string; qty: number; unit: string; dayFrom: number; dayTo: number | null }>;
       }
     >();
     for (const r of reservations) {
@@ -910,7 +932,7 @@ export async function eventRoutes(app: FastifyInstance) {
         groupsMap.set(key, g);
         return g;
       })();
-      group.items.push({ name: r.item.name, qty: r.reservedQuantity, unit: r.item.unit });
+      group.items.push({ name: r.item.name, qty: r.reservedQuantity, unit: r.item.unit, dayFrom: r.dayFrom, dayTo: r.dayTo });
     }
 
     const preview = {
@@ -921,12 +943,13 @@ export async function eventRoutes(app: FastifyInstance) {
         notes: ev.notes ?? null,
         eventDate: ev.eventDate?.toISOString() ?? null,
         deliveryDatetime: ev.deliveryDatetime.toISOString(),
-        pickupDatetime: ev.pickupDatetime.toISOString()
+        pickupDatetime: ev.pickupDatetime.toISOString(),
+        dayCount: eventDayCount(ev.deliveryDatetime, ev.pickupDatetime)
       },
       groups: Array.from(groupsMap.values())
         .map((group) => ({
           ...group,
-          items: group.items.sort((a, b) => a.name.localeCompare(b.name, "cs"))
+          items: group.items.sort((a, b) => a.name.localeCompare(b.name, "cs") || a.dayFrom - b.dayFrom)
         }))
         .sort(compareByCategoryParentName)
         .map(({ parentSortOrder, categorySortOrder, ...group }) => group),

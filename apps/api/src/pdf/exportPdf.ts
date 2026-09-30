@@ -14,6 +14,8 @@ export type ExportSnapshot = {
     version: number;
     exportedAt: string;
     managerName: string;
+    /// Chybí u exportů před zavedením vícedenních akcí = 1 den.
+    dayCount?: number;
   };
   groups: Array<{
     parentCategory: string;
@@ -28,6 +30,9 @@ export type ExportSnapshot = {
       /// Chybi u exportu vytvorenych pred zavedenim skladu v balenu.
       warehouseName?: string | null;
       warehouseIsHome?: boolean | null;
+      /// Rozsah dnů řádku. Chybí u exportů před zavedením vícedenních akcí = celá akce.
+      dayFrom?: number;
+      dayTo?: number | null;
     }>;
   }>;
 };
@@ -66,6 +71,29 @@ function wrapText(value: string, font: PDFFont, size: number, maxWidth: number) 
     if (line) lines.push(line);
   }
   return lines;
+}
+
+/// Den, kdy řádek odjíždí ze skladu. Starší snapshoty rozsah nemají = den 1.
+export function itemDayFrom(item: { dayFrom?: number }): number {
+  return item.dayFrom ?? 1;
+}
+
+export function dayTagLabel(item: { dayFrom?: number; dayTo?: number | null }, dayCount: number): string | null {
+  if (dayCount <= 1) return null;
+  const from = item.dayFrom ?? 1;
+  const to = item.dayTo ?? dayCount;
+  if (from === 1 && to === dayCount) return "cela akce";
+  return from === to ? `den ${from}` : `dny ${from}-${to}`;
+}
+
+/// Balicí seznam jednoho dne: jen řádky, které ten den odjíždějí ze skladu.
+export function filterSnapshotToDay(snapshot: ExportSnapshot, day: number): ExportSnapshot {
+  return {
+    ...snapshot,
+    groups: snapshot.groups
+      .map((g) => ({ ...g, items: g.items.filter((i) => itemDayFrom(i) === day) }))
+      .filter((g) => g.items.length > 0)
+  };
 }
 
 export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string) {
@@ -239,13 +267,16 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
         page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
 
         // Item Name
-        page.drawText(pdfText(item.name), { x: colName, y: yPos, size: 10, font });
+        // U vícedenní akce se u položky tiskne, na které dny patří.
+        const dayTag = dayTagLabel(item, snapshot.event.dayCount ?? 1);
+        const itemLabel = dayTag ? `${item.name} [${dayTag}]` : item.name;
+        page.drawText(pdfText(itemLabel), { x: colName, y: yPos, size: 10, font });
 
         // U domaciho skladu se nic netiskne - opakovane "Liboc" u kazdeho radku
         // by upozorneni jen rozmelnilo.
         if (item.warehouseName !== undefined && item.warehouseIsHome !== true) {
           const tag = `! ${item.warehouseName ?? "bez skladu"}`;
-          const nameWidth = font.widthOfTextAtSize(pdfText(item.name), 10);
+          const nameWidth = font.widthOfTextAtSize(pdfText(itemLabel), 10);
           page.drawText(pdfText(tag), {
             x: Math.min(colName + nameWidth + 8, colQty - 100),
             y: yPos,

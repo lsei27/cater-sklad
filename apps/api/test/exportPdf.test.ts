@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExportPdf, type ExportSnapshot } from "../src/pdf/exportPdf.js";
+import { buildExportPdf, dayTagLabel, filterSnapshotToDay, type ExportSnapshot } from "../src/pdf/exportPdf.js";
 
 function snapshot(items: ExportSnapshot["groups"][number]["items"]): ExportSnapshot {
   return {
@@ -55,6 +55,38 @@ describe("buildExportPdf", () => {
       warehouseIsHome: false
     }));
     const pdf = await buildExportPdf(snapshot(many));
+    expect(pdf.byteLength).toBeGreaterThan(0);
+  });
+});
+
+describe("vícedenní export", () => {
+  const multi: ExportSnapshot = {
+    ...snapshot([
+      { inventoryItemId: "a", name: "Židle", unit: "ks", qty: 50, dayFrom: 1, dayTo: null },
+      { inventoryItemId: "a", name: "Židle", unit: "ks", qty: 70, dayFrom: 2, dayTo: 2 },
+      { inventoryItemId: "b", name: "Ubrus", unit: "ks", qty: 10 }
+    ]),
+  };
+  multi.event.dayCount = 3;
+
+  it("PDF dne obsahuje jen řádky, které ten den odjíždějí", () => {
+    const day2 = filterSnapshotToDay(multi, 2);
+    expect(day2.groups.flatMap((g) => g.items).map((i) => i.qty)).toEqual([70]);
+    const day1 = filterSnapshotToDay(multi, 1);
+    // Starý řádek bez dayFrom patří do dne 1.
+    expect(day1.groups.flatMap((g) => g.items).map((i) => i.qty)).toEqual([50, 10]);
+    expect(filterSnapshotToDay(multi, 3).groups).toEqual([]);
+  });
+
+  it("štítek dnů se tiskne jen u vícedenní akce", () => {
+    expect(dayTagLabel({ dayFrom: 2, dayTo: 2 }, 3)).toBe("den 2");
+    expect(dayTagLabel({ dayFrom: 1, dayTo: null }, 3)).toBe("cela akce");
+    expect(dayTagLabel({ dayFrom: 2, dayTo: null }, 3)).toBe("dny 2-3");
+    expect(dayTagLabel({}, 1)).toBeNull();
+  });
+
+  it("vícedenní snapshot se vykreslí", async () => {
+    const pdf = await buildExportPdf(multi);
     expect(pdf.byteLength).toBeGreaterThan(0);
   });
 });
