@@ -25,7 +25,8 @@ import {
   warehouseWorkflowAction
 } from "../lib/viewModel";
 import { cn } from "../lib/ui";
-import { dayRangeKey, dayRangeLabel, eventDayCount, eventDayDateLabel, reservationRowKey, sameDayRange, type DayRange } from "../lib/eventDays";
+import { dayRangeKey, dayRangeLabel, defaultDeliveryPickup, eventDayCount, eventDayDateLabel, reservationRowKey, sameDayRange, type DayRange } from "../lib/eventDays";
+import EventDateFields from "../components/EventDateFields";
 import { ArrowLeft, Ban, Copy, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
 
@@ -173,13 +174,15 @@ export default function EventDetailPage() {
   }, [id, reservationRowsKey]);
 
   const isPast = useMemo(() => {
-    if (!event?.eventDate) return false;
+    // Vícedenní akce je v minulosti až po posledním dni.
+    const lastDay = event?.eventEndDate ?? event?.eventDate;
+    if (!lastDay) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const eDate = new Date(event.eventDate);
+    const eDate = new Date(lastDay);
     eDate.setHours(0, 0, 0, 0);
     return eDate.getTime() < today.getTime();
-  }, [event?.eventDate]);
+  }, [event?.eventDate, event?.eventEndDate]);
 
   const canEM = ["admin", "event_manager", "warehouse"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
@@ -764,7 +767,7 @@ export default function EventDetailPage() {
         role={role}
         existingItems={reservationItems}
         dayCount={event.dayCount ?? 1}
-        deliveryDatetime={event.deliveryDatetime}
+        eventDate={event.eventDate ?? null}
         initialSearch={addInitialSearch}
         focusItemId={addFocusItemId}
         onDone={() => load({ silent: true })}
@@ -803,7 +806,14 @@ export default function EventDetailPage() {
               <div><span className="text-slate-500">Název:</span> <strong>{exportPreview.event?.name}</strong></div>
               <div><span className="text-slate-500">Místo:</span> {exportPreview.event?.location}</div>
               {exportPreview.event?.address && <div><span className="text-slate-500">Adresa:</span> {exportPreview.event?.address}</div>}
-              {exportPreview.event?.eventDate && <div><span className="text-slate-500">Datum akce:</span> {new Date(exportPreview.event?.eventDate).toLocaleDateString("cs-CZ")}</div>}
+              {exportPreview.event?.eventDate && (
+                <div>
+                  <span className="text-slate-500">Datum akce:</span> {new Date(exportPreview.event.eventDate).toLocaleDateString("cs-CZ")}
+                  {exportPreview.event.eventEndDate && exportPreview.event.eventEndDate !== exportPreview.event.eventDate
+                    ? ` - ${new Date(exportPreview.event.eventEndDate).toLocaleDateString("cs-CZ")}`
+                    : ""}
+                </div>
+              )}
               <div><span className="text-slate-500">Doručení:</span> {new Date(exportPreview.event?.deliveryDatetime).toLocaleString("cs-CZ")}</div>
               <div><span className="text-slate-500">Svoz:</span> {new Date(exportPreview.event?.pickupDatetime).toLocaleString("cs-CZ")}</div>
             </div>
@@ -948,7 +958,7 @@ function AddItemsPanel(props: {
   role: string;
   existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string; dayFrom: number; dayTo: number | null }>;
   dayCount: number;
-  deliveryDatetime: string;
+  eventDate: string | null;
   onDone: () => void;
   initialSearch?: string;
   focusItemId?: string;
@@ -984,7 +994,7 @@ function AddItemsPanel(props: {
   const rangeKeyRef = useRef(rangeKey);
   rangeKeyRef.current = rangeKey;
   const dayNumbers = useMemo(() => Array.from({ length: props.dayCount }, (_, i) => i + 1), [props.dayCount]);
-  const dayOptionLabel = (d: number) => `Den ${d} (${eventDayDateLabel(props.deliveryDatetime, d)})`;
+  const dayOptionLabel = (d: number) => (props.eventDate ? `Den ${d} (${eventDayDateLabel(props.eventDate, d)})` : `Den ${d}`);
 
   useEffect(() => {
     if (!props.open) setRange({ dayFrom: 1, dayTo: null });
@@ -1594,6 +1604,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
   const [registrationNumber, setRegistrationNumber] = useState(props.event.registrationNumber || "");
   const [notes, setNotes] = useState(props.event.notes || "");
   const [eventDate, setEventDate] = useState(toDateInputValue(props.event.eventDate));
+  const [eventEndDate, setEventEndDate] = useState(toDateInputValue(props.event.eventEndDate));
   const [delivery, setDelivery] = useState(toDatetimeLocalValue(props.event.deliveryDatetime));
   const [pickup, setPickup] = useState(toDatetimeLocalValue(props.event.pickupDatetime));
   const [saving, setSaving] = useState(false);
@@ -1616,6 +1627,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           registration_number: registrationNumber.trim() || null,
           notes: notes.trim() || null,
           event_date: fromDateInputValue(eventDate),
+          event_end_date: fromDateInputValue(eventEndDate),
           delivery_datetime: deliveryIso,
           pickup_datetime: pickupIso
         })
@@ -1664,11 +1676,19 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           Poznámka
           <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />
         </label>
-        <label className="text-sm">
-          Datum akce
-          <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
-        </label>
-        <div />
+        <EventDateFields
+          from={eventDate}
+          to={eventEndDate}
+          onChange={(from, to) => {
+            setEventDate(from);
+            setEventEndDate(to);
+            const times = defaultDeliveryPickup(from, to);
+            if (times) {
+              setDelivery(times.delivery);
+              setPickup(times.pickup);
+            }
+          }}
+        />
         <label className="text-sm">
           Závoz
           <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
@@ -1725,6 +1745,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [notes, setNotes] = useState(props.event.notes || "");
   const [eventDate, setEventDate] = useState(shiftDate(props.event.eventDate));
+  const [eventEndDate, setEventEndDate] = useState(shiftDate(props.event.eventEndDate));
   const [delivery, setDelivery] = useState(shiftLocal(props.event.deliveryDatetime));
   const [pickup, setPickup] = useState(shiftLocal(props.event.pickupDatetime));
   const [saving, setSaving] = useState(false);
@@ -1750,6 +1771,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
             registration_number: registrationNumber.trim() || null,
             notes: notes.trim() || null,
             event_date: fromDateInputValue(eventDate),
+            event_end_date: fromDateInputValue(eventEndDate),
             delivery_datetime: deliveryIso,
             pickup_datetime: pickupIso
           })
@@ -1761,7 +1783,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
         nav(`/events/${res.event.id}`);
         return;
       }
-      setResult({ eventId: res.event.id, dayCount: eventDayCount(deliveryIso, pickupIso), adjustments: res.adjustments });
+      setResult({ eventId: res.event.id, dayCount: eventDayCount(fromDateInputValue(eventDate), fromDateInputValue(eventEndDate)), adjustments: res.adjustments });
     } catch (e: any) {
       toast.error(humanError(e));
     } finally {
@@ -1841,11 +1863,19 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
           Poznámka
           <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />
         </label>
-        <label className="text-sm">
-          Datum akce
-          <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
-        </label>
-        <div />
+        <EventDateFields
+          from={eventDate}
+          to={eventEndDate}
+          onChange={(from, to) => {
+            setEventDate(from);
+            setEventEndDate(to);
+            const times = defaultDeliveryPickup(from, to);
+            if (times) {
+              setDelivery(times.delivery);
+              setPickup(times.pickup);
+            }
+          }}
+        />
         <label className="text-sm">
           Závoz
           <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />

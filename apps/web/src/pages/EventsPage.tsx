@@ -21,11 +21,15 @@ import {
 import { Icons } from "../lib/icons";
 import EventFilters, { EventFiltersData } from "../components/EventFilters";
 import Select from "../components/ui/Select";
+import EventDateFields from "../components/EventDateFields";
+import { defaultDeliveryPickup, eventRangeLabel } from "../lib/eventDays";
 
 type EventRow = {
   id: string;
   name: string;
   location: string;
+  eventDate?: string | null;
+  eventEndDate?: string | null;
   deliveryDatetime: string;
   pickupDatetime: string;
   status: string;
@@ -225,6 +229,9 @@ export default function EventsPage() {
                             <div className="text-gray-400"><Icons.Calendar /></div>
                             <span className="text-xs">
                               {new Date(e.deliveryDatetime).toLocaleDateString()}
+                              {eventRangeLabel(e.eventDate, e.eventEndDate) ? (
+                                <span className="ml-1 text-slate-400">({eventRangeLabel(e.eventDate, e.eventEndDate)})</span>
+                              ) : null}
                             </span>
                           </div>
                         </div>
@@ -272,6 +279,9 @@ export default function EventsPage() {
                               </div>
                               <div className="flex items-center gap-1 font-medium">
                                 <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleDateString()}
+                                {eventRangeLabel(e.eventDate, e.eventEndDate) ? (
+                                  <span className="font-normal text-slate-400">({eventRangeLabel(e.eventDate, e.eventEndDate)})</span>
+                                ) : null}
                               </div>
                             </div>
                             {manager ? (
@@ -320,6 +330,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [eventDate, setEventDate] = useState(toDateInputValue(new Date(Date.now() + 86400000)));
+  const [eventEndDate, setEventEndDate] = useState("");
   const [delivery, setDelivery] = useState(toDatetimeLocalValue(new Date(Date.now() + 86400000)));
   const [pickup, setPickup] = useState(toDatetimeLocalValue(new Date(Date.now() + 2 * 86400000)));
   const [error, setError] = useState<string | null>(null);
@@ -352,6 +363,7 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
                   registration_number: registrationNumber.trim() || null,
                   notes: notes.trim() || null,
                   event_date: fromDateInputValue(eventDate),
+                  event_end_date: fromDateInputValue(eventEndDate),
                   delivery_datetime: deliveryIso,
                   pickup_datetime: pickupIso
                 })
@@ -397,10 +409,19 @@ function CreateEventForm(props: { onClose: () => void; onCreated: (eventId: stri
               placeholder="Např. auto do 3,5 t, omezený vjezd, specifické požadavky..."
             />
           </label>
-          <label className="text-sm">
-            Datum akce
-            <Input className="mt-1" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
-          </label>
+          <EventDateFields
+            from={eventDate}
+            to={eventEndDate}
+            onChange={(from, to) => {
+              setEventDate(from);
+              setEventEndDate(to);
+              const times = defaultDeliveryPickup(from, to);
+              if (times) {
+                setDelivery(times.delivery);
+                setPickup(times.pickup);
+              }
+            }}
+          />
           <label className="text-sm">
             Čas závozu (doručení)
             <Input className="mt-1" type="datetime-local" value={delivery} onChange={(e) => setDelivery(e.target.value)} />

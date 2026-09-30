@@ -31,7 +31,7 @@ function errorMessage(e: unknown, fallback: string): string {
 export default function DayPackingCard(props: {
   eventId: string;
   dayCount: number;
-  deliveryDatetime: string;
+  eventDate: string | null;
   exportVersion: number | null;
   items: DayPackingItem[];
   issuedDays: number[];
@@ -134,7 +134,7 @@ export default function DayPackingCard(props: {
                 d === day ? "border-indigo-300 bg-indigo-50 text-indigo-900" : "border-slate-200 text-slate-700 hover:bg-slate-50"
               )}
             >
-              Den {d} ({eventDayDateLabel(props.deliveryDatetime, d)}){props.issuedDays.includes(d) ? " · vydáno" : ""}
+              Den {d}{props.eventDate ? ` (${eventDayDateLabel(props.eventDate, d)})` : ""}{props.issuedDays.includes(d) ? " · vydáno" : ""}
             </button>
           ))}
         </div>

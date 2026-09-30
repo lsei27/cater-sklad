@@ -1,5 +1,5 @@
 // Dny vícedenní akce na webu. Stejná pravidla jako apps/api/src/lib/eventDays.ts:
-// den 1 je datum závozu v Praze, dayTo === null znamená „do konce akce“.
+// den 1 je datum akce (event_date), dayTo === null znamená „do konce akce“.
 
 export type DayRange = { dayFrom: number; dayTo: number | null };
 
@@ -23,25 +23,51 @@ export function reservationRowKey(row: { inventoryItemId: string; dayFrom?: numb
   return `${row.inventoryItemId}|${dayRangeKey({ dayFrom: row.dayFrom ?? 1, dayTo: row.dayTo ?? null })}`;
 }
 
-const pragueYmd = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Europe/Prague",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
+const DAY_MS = 86_400_000;
 
-/// Kalendární datum N-tého dne akce, např. "7. 10.".
-export function eventDayDateLabel(deliveryIso: string, day: number): string {
-  const [y, m, d] = pragueYmd.format(new Date(deliveryIso)).split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d + day - 1));
+function utcDay(iso: string): number {
+  return Math.floor(new Date(iso).getTime() / DAY_MS);
+}
+
+/// Kalendární datum N-tého dne akce, např. "7. 10.". event_date je UTC půlnoc kalendářního dne.
+export function eventDayDateLabel(eventDateIso: string, day: number): string {
+  const date = new Date((utcDay(eventDateIso) + day - 1) * DAY_MS);
   return `${date.getUTCDate()}. ${date.getUTCMonth() + 1}.`;
 }
 
-/// Počet dnů akce: rozdíl kalendářních dat závozu a svozu v Praze + 1. Stejné pravidlo jako v API.
-export function eventDayCount(deliveryIso: string, pickupIso: string): number {
-  const toUtcMs = (iso: string) => {
-    const [y, m, d] = pragueYmd.format(new Date(iso)).split("-").map(Number);
-    return Date.UTC(y, m - 1, d);
-  };
-  return Math.round((toUtcMs(pickupIso) - toUtcMs(deliveryIso)) / 86_400_000) + 1;
+/// Počet dnů akce: kalendární dny od data akce do konce akce včetně. Bez obou dat
+/// nebo s koncem ne později než začátek je akce jednodenní. Stejné pravidlo jako v API.
+export function eventDayCount(eventDateIso: string | null | undefined, eventEndDateIso: string | null | undefined): number {
+  if (!eventDateIso || !eventEndDateIso) return 1;
+  const days = utcDay(eventEndDateIso) - utcDay(eventDateIso);
+  return days > 0 ? days + 1 : 1;
+}
+
+function addDays(dateValue: string, days: number): string {
+  return new Date(utcDay(dateValue) * DAY_MS + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/// Výchozí závoz a svoz (hodnoty datetime-local) podle data akce od-do: závoz v den "od" v 8:00,
+/// svoz den po "do" (nebo po "od", když "do" chybí) v 8:00. Bez data "od" null.
+export function defaultDeliveryPickup(fromDate: string, toDate: string): { delivery: string; pickup: string } | null {
+  if (!fromDate) return null;
+  const last = toDate && toDate > fromDate ? toDate : fromDate;
+  return { delivery: `${fromDate}T08:00`, pickup: `${addDays(last, 1)}T08:00` };
+}
+
+/// Text pod poli data akce, jen pro vícedenní akci. Hodnoty jsou z inputů type="date" (YYYY-MM-DD).
+export function multiDayLabel(fromDate: string, toDate: string): string | null {
+  if (!fromDate || !toDate) return null;
+  const n = eventDayCount(`${fromDate}T00:00:00Z`, `${toDate}T00:00:00Z`);
+  if (n <= 1) return null;
+  const word = n <= 4 ? "dny" : "dní";
+  const range = `${eventDayDateLabel(`${fromDate}T00:00:00Z`, 1)} - ${eventDayDateLabel(`${fromDate}T00:00:00Z`, n)}`;
+  return `Vícedenní akce: ${n} ${word} (${range})`;
+}
+
+/// Rozsah dat vícedenní akce do seznamu, např. "5. 10. - 7. 10.". Jednodenní akce null.
+export function eventRangeLabel(eventDateIso: string | null | undefined, eventEndDateIso: string | null | undefined): string | null {
+  const n = eventDayCount(eventDateIso, eventEndDateIso);
+  if (n <= 1 || !eventDateIso) return null;
+  return `${eventDayDateLabel(eventDateIso, 1)} - ${eventDayDateLabel(eventDateIso, n)}`;
 }

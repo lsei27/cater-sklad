@@ -826,7 +826,7 @@ export default function WarehouseEventDetailPage() {
         <DayPackingCard
           eventId={event.id}
           dayCount={dayCount}
-          deliveryDatetime={event.deliveryDatetime}
+          eventDate={event.eventDate ?? null}
           exportVersion={snapshot?.event?.version ?? null}
           items={snapshotItems}
           issuedDays={issuedDays}
