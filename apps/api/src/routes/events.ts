@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EventStatus, LedgerReason } from "../../generated/prisma/client.js";
+import { EventStatus } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
@@ -9,15 +9,11 @@ import { duplicateEventTx } from "../services/duplicateEvent.js";
 import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
 import { buildExportPdf, filterSnapshotToDay, type ExportSnapshot } from "../pdf/exportPdf.js";
 import { createExportTx } from "../services/export.js";
-import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
-import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.js";
 import { returnCloseTx } from "../services/returnClose.js";
-import { requireWarehouseId, resolveWarehouseId } from "../services/warehouse.js";
-import { splitKnownIssueItems } from "../lib/issueSelection.js";
 import { eventDayCount } from "../lib/eventDays.js";
-import { getIssuedDaysTx } from "../services/issueDay.js";
+import { getIssuedDaysTx, issueDayTx } from "../services/issueDay.js";
 import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
 
 function safeFilename(value: string) {
@@ -994,11 +990,14 @@ export async function eventRoutes(app: FastifyInstance) {
         idempotency_key: z.string().min(8).optional(),
         warehouse_id: z.string().uuid().optional(),
         pallet_count: z.number().int().min(0).optional().nullable(),
+        /// Den akce, který se vydává. Jednodenní akce má jen den 1.
+        day: z.number().int().min(1).optional(),
         items: z
           .array(
             z.object({
               inventory_item_id: z.string().uuid(),
               issued_quantity: z.number().int().min(0),
+              day_to: z.number().int().min(1).nullable().optional(),
               warehouse_id: z.string().uuid().optional(),
               idempotency_key: z.string().min(8).optional()
             })
@@ -1008,158 +1007,29 @@ export async function eventRoutes(app: FastifyInstance) {
       .parse(request.body);
 
     try {
-      const result = await app.prisma.$transaction(async (tx) => {
-        const [ev] = await tx.$queryRaw<{ status: string; export_needs_revision: boolean }[]>`
-          SELECT status::text, export_needs_revision FROM events WHERE id = ${params.id}::uuid FOR UPDATE
-        `;
-        if (!ev) throw new Error("NOT_FOUND");
-        if (ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
-        if (ev.status === "ISSUED") {
-          const existing = await tx.event.findUnique({ where: { id: params.id } });
-          if (!existing) throw new Error("NOT_FOUND");
-          return { event: existing };
-        }
-        if (ev.status !== "SENT_TO_WAREHOUSE") throw new Error("BAD_STATUS");
-        if (ev.export_needs_revision) throw new Error("NEEDS_REVISION");
-
-        const latest = await tx.eventExport.findFirst({
-          where: { eventId: params.id },
-          orderBy: { version: "desc" }
-        });
-        if (!latest) throw new Error("NO_EXPORT");
-        const snapshot = latest.snapshotJson as any as ExportSnapshot;
-        type IssueItemInput = { inventory_item_id: string; issued_quantity: number; warehouse_id?: string; idempotency_key?: string };
-        const defaultItems: IssueItemInput[] =
-          body.items && body.items.length > 0
-            ? (body.items as IssueItemInput[])
-            : snapshot.groups.flatMap((g) =>
-              g.items.map((i) => ({
-                inventory_item_id: i.inventoryItemId,
-                issued_quantity: i.qty,
-                warehouse_id: body.warehouse_id,
-                idempotency_key: undefined
-              }))
-            );
-
-        const itemsToIssue = defaultItems.filter((i) => i.issued_quantity > 0);
-        if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
-
-        // Duplicitní položka by se do event_issues zapsala jen jednou (stejný
-        // idempotency_key), ale do skladu by se odečetla za každý řádek zvlášť.
-        const duplicateIds = itemsToIssue
-          .map((i) => i.inventory_item_id)
-          .filter((id, index, arr) => arr.indexOf(id) !== index);
-        if (duplicateIds.length > 0) throw new Error("DUPLICATE_ITEMS");
-
-        const inventoryItems = itemsToIssue.length
-          ? await tx.inventoryItem.findMany({
-              where: { id: { in: itemsToIssue.map((item) => item.inventory_item_id) } },
-              select: { id: true, name: true, warehouseId: true }
-            })
-          : [];
-        const itemMetaById = new Map(
-          inventoryItems.map((item) => [item.id, item] as const)
-        );
-
-        // Snapshot exportu drzi UUID polozek bez FK, takze smazana polozka v nem
-        // zustane viset. Driv to shodilo cely vydej (ITEM_NOT_FOUND) a akce se
-        // nedala vyskladnit vubec. Vydat smazanou polozku stejne nejde - nema
-        // rezervaci ani stav - takze se vynecha a vrati se v odpovedi.
-        const snapshotNameById = new Map(
-          snapshot.groups.flatMap((g) => (g.items ?? []).map((it) => [it.inventoryItemId, it.name] as const))
-        );
-        const { known: issuableItems, skipped: skippedItems } = splitKnownIssueItems(
-          itemsToIssue,
-          new Set(itemMetaById.keys()),
-          snapshotNameById
-        );
-        if (issuableItems.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
-
-        // "Kazda vydavana polozka musi mit urceny sklad" samo o sobe nerekne,
-        // ktera to je - operator pak jen hada. Jmena se doplni do hlasky.
-        const withoutWarehouse = issuableItems
-          .filter((i) => !resolveWarehouseId({
-            explicitWarehouseId: i.warehouse_id ?? body.warehouse_id,
-            itemWarehouseId: itemMetaById.get(i.inventory_item_id)?.warehouseId
-          }))
-          .map((i) => itemMetaById.get(i.inventory_item_id)?.name ?? i.inventory_item_id);
-        if (withoutWarehouse.length > 0) {
-          const err = new Error("WAREHOUSE_REQUIRED");
-          (err as Error & { itemNames?: string[] }).itemNames = withoutWarehouse;
-          throw err;
-        }
-
-        const rows = issuableItems.map((i) => {
-          const meta = itemMetaById.get(i.inventory_item_id);
-          if (!meta) throw new Error("ITEM_NOT_FOUND");
-          const warehouseId = requireWarehouseId({
-            explicitWarehouseId: i.warehouse_id ?? body.warehouse_id,
-            itemWarehouseId: meta.warehouseId
-          });
-          return {
-            eventId: params.id,
-            inventoryItemId: i.inventory_item_id,
-            issuedQuantity: i.issued_quantity,
-            warehouseId,
-            issuedById: user.id,
-            idempotencyKey: i.idempotency_key ?? `${body.idempotency_key ?? "issue"}:${params.id}:${i.inventory_item_id}`
-          };
-        });
-        await tx.eventIssue.createMany({ data: rows, skipDuplicates: true });
-
-        // Vaha se pocita az z ulozeneho vydeje, aby sla stejnou cestou jako u doplnkoveho vydeje.
-        const computedWeightKg = await computeIssuedWeightKg(tx, params.id);
-        
-        // Add Ledger entries for issued items
-        for (const row of rows) {
-          await createInventoryLedgerEntry(tx, {
-            inventoryItemId: row.inventoryItemId,
-            deltaQuantity: -row.issuedQuantity,
-            reason: LedgerReason.issue,
-            eventId: params.id,
-            warehouseId: row.warehouseId,
-            createdById: user.id,
-            note: "Výdej na akci"
-          });
-        }
-
-        // Rozpracovaný výdej je po vydání bezpředmětný, stav položek drží event_issues.
-        await tx.eventPacking.deleteMany({ where: { eventId: params.id } });
-
-        const updated = await tx.event.update({
-          where: { id: params.id },
-          data: {
-            status: "ISSUED",
-            ...(body.pallet_count !== undefined ? { palletCount: body.pallet_count } : {}),
-            totalWeight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null
-          }
-        });
-        await tx.auditLog.create({
-          data: {
-            actorUserId: user.id,
-            entityType: "event",
-            entityId: params.id,
-            action: "issue",
-            diffJson: {
-              count: rows.length,
-              pallet_count: body.pallet_count ?? null,
-              total_weight: computedWeightKg > 0 ? formatWeightKg(computedWeightKg) : null,
-              ...(skippedItems.length > 0 ? { skipped_items: skippedItems } : {})
-            }
-          }
-        });
-        return { event: updated, skippedItems };
-      });
+      const result = await app.prisma.$transaction((tx) =>
+        issueDayTx({
+          tx,
+          eventId: params.id,
+          userId: user.id,
+          day: body.day ?? 1,
+          idempotencyKey: body.idempotency_key,
+          warehouseId: body.warehouse_id,
+          palletCount: body.pallet_count,
+          items: body.items
+        })
+      );
 
       sseBus.emit({ type: "event_status_changed", eventId: params.id, status: "ISSUED" });
-      return reply.send(result);
+      return reply.send({ event: result.event, skippedItems: result.skippedItems });
     } catch (e: any) {
       if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
       if (e?.message === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze vydat (už je uzavřená/zrušená).");
-      if (e?.message === "BAD_STATUS") return httpError(reply, 409, "BAD_STATUS", "Akci lze vydat pouze ze stavu Předáno skladu.");
+      if (e?.message === "BAD_STATUS") return httpError(reply, 409, "BAD_STATUS", "Akci lze poprvé vydat pouze ze stavu Předáno skladu.");
       if (e?.message === "NEEDS_REVISION") return httpError(reply, 409, "NEEDS_REVISION", "Akce byla po předání změněna. Je nutný nový export.");
       if (e?.message === "NO_EXPORT") return httpError(reply, 409, "NO_EXPORT", "Akce nemá export. Nejdřív ji předej skladu.");
-      if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Export neobsahuje žádné položky k výdeji.");
+      if (e?.message === "INVALID_DAY") return httpError(reply, 400, "INVALID_DAY", "Akce takový den nemá.");
+      if (e?.message === "NO_ITEMS_TO_ISSUE") return httpError(reply, 409, "NO_ITEMS_TO_ISSUE", "Na tento den nejsou v exportu žádné položky k výdeji.");
       if (e?.message === "DUPLICATE_ITEMS") return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být ve výdeji jen jednou.");
       if (e?.message === "ITEM_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Některá položka už v inventáři neexistuje.");
       if (e?.message === "WAREHOUSE_REQUIRED") {
@@ -1371,7 +1241,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const packing = await app.prisma.eventPacking.findMany({
       where: { eventId: params.id },
-      select: { inventoryItemId: true, state: true }
+      select: { inventoryItemId: true, dayFrom: true, dayTo: true, state: true }
     });
     return reply.send({ packing });
   });
@@ -1383,34 +1253,32 @@ export async function eventRoutes(app: FastifyInstance) {
     const body = z
       .object({
         inventory_item_id: z.string().uuid(),
+        day_from: z.number().int().min(1).optional(),
+        day_to: z.number().int().min(1).nullable().optional(),
         state: z.enum(["idle", "armed", "confirmed"])
       })
       .parse(request.body);
+    const dayFrom = body.day_from ?? 1;
+    const dayTo = body.day_to ?? null;
 
     const event = await app.prisma.event.findUnique({ where: { id: params.id }, select: { status: true } });
     if (!event) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
-    if (event.status !== "SENT_TO_WAREHOUSE") {
-      return httpError(reply, 409, "BAD_STATUS", "Balit lze jen akci ve stavu Předáno skladu.");
+    if (event.status === "ISSUED") {
+      // Vícedenní akce se po vydání prvního dne balí dál na další dny.
+      const issuedDays = await getIssuedDaysTx(app.prisma, params.id);
+      if (issuedDays.includes(dayFrom)) {
+        return httpError(reply, 409, "BAD_STATUS", "Tento den už je vydaný.");
+      }
+    } else if (event.status !== "SENT_TO_WAREHOUSE") {
+      return httpError(reply, 409, "BAD_STATUS", "Balit lze jen akci ve stavu Předáno skladu nebo Vydáno.");
     }
 
-    if (body.state === "idle") {
-      await app.prisma.eventPacking.deleteMany({
-        where: { eventId: params.id, inventoryItemId: body.inventory_item_id }
-      });
-      return reply.send({ ok: true });
-    }
-
-    await app.prisma.eventPacking.upsert({
-      where: {
-        eventId_inventoryItemId: { eventId: params.id, inventoryItemId: body.inventory_item_id }
-      },
-      create: {
-        eventId: params.id,
-        inventoryItemId: body.inventory_item_id,
-        state: body.state,
-        updatedById: user.id
-      },
-      update: { state: body.state, updatedById: user.id }
+    const where = { eventId: params.id, inventoryItemId: body.inventory_item_id, dayFrom, dayTo };
+    await app.prisma.$transaction(async (tx) => {
+      await tx.eventPacking.deleteMany({ where });
+      if (body.state !== "idle") {
+        await tx.eventPacking.create({ data: { ...where, state: body.state, updatedById: user.id } });
+      }
     });
     return reply.send({ ok: true });
   });
