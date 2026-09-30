@@ -1,5 +1,5 @@
-// Dny vicedenni akce na webu. Stejne pravidla jako apps/api/src/lib/eventDays.ts:
-// den 1 je datum zavozn v Praze, dayTo === null znamena "do konce akce".
+// Dny vícedenní akce na webu. Stejná pravidla jako apps/api/src/lib/eventDays.ts:
+// den 1 je datum závozu v Praze, dayTo === null znamená „do konce akce“.
 
 export type DayRange = { dayFrom: number; dayTo: number | null };
 

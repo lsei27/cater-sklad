@@ -25,6 +25,7 @@ import {
   warehouseWorkflowAction
 } from "../lib/viewModel";
 import { cn } from "../lib/ui";
+import { dayRangeKey, dayRangeLabel, eventDayDateLabel, reservationRowKey, sameDayRange, type DayRange } from "../lib/eventDays";
 import { ArrowLeft, Ban, Copy, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
 
@@ -127,17 +128,21 @@ export default function EventDetailPage() {
   }, [event, loc.pathname, loc.search, nav]);
 
   const reservationItems = useMemo<
-    Array<{ inventoryItemId: string; reservedQuantity: number; state: string; item: any }>
+    Array<{ inventoryItemId: string; reservedQuantity: number; state: string; item: any; dayFrom: number; dayTo: number | null }>
   >(() => {
     const list = (event?.reservations ?? []).map((r: any) => ({
       inventoryItemId: r.inventoryItemId as string,
       reservedQuantity: Number(r.reservedQuantity),
       state: String(r.state),
       createdById: r.createdById as string,
-      item: r.item
+      item: r.item,
+      dayFrom: Number(r.dayFrom ?? 1),
+      dayTo: (r.dayTo ?? null) as number | null
     }));
     return list;
   }, [event]);
+
+  const reservationRowsKey = reservationItems.map((r) => reservationRowKey(r)).join(",");
 
   useEffect(() => {
     if (!id) return;
@@ -145,13 +150,27 @@ export default function EventDetailPage() {
       setStockByItemId(new Map());
       return;
     }
-    api<{ rows: StockRow[] }>(`/events/${id}/availability`, {
-      method: "POST",
-      body: JSON.stringify({ inventory_item_ids: reservationItems.map((it) => it.inventoryItemId) })
-    })
-      .then((r) => setStockByItemId(new Map(r.rows.map((x) => [x.inventoryItemId, x]))))
+    // Každý rozsah dnů má jiný interval, dostupnost se proto načítá po rozsazích.
+    const groups = new Map<string, { range: DayRange; ids: string[] }>();
+    for (const r of reservationItems) {
+      const range = { dayFrom: r.dayFrom, dayTo: r.dayTo };
+      const group = groups.get(dayRangeKey(range)) ?? { range, ids: [] };
+      group.ids.push(r.inventoryItemId);
+      groups.set(dayRangeKey(range), group);
+    }
+    Promise.all(
+      Array.from(groups.values()).map((g) =>
+        api<{ rows: StockRow[] }>(`/events/${id}/availability`, {
+          method: "POST",
+          body: JSON.stringify({ inventory_item_ids: g.ids, day_from: g.range.dayFrom, day_to: g.range.dayTo })
+        }).then((r) =>
+          r.rows.map((x) => [reservationRowKey({ inventoryItemId: x.inventoryItemId, ...g.range }), x] as const)
+        )
+      )
+    )
+      .then((lists) => setStockByItemId(new Map(lists.flat())))
       .catch(() => { });
-  }, [id, reservationItems.length]);
+  }, [id, reservationRowsKey]);
 
   const isPast = useMemo(() => {
     if (!event?.eventDate) return false;
@@ -217,6 +236,7 @@ export default function EventDetailPage() {
       g.rows.push(r);
       groups.set(key, g);
     }
+    for (const g of groups.values()) g.rows.sort((a, b) => String(a.item?.name ?? "").localeCompare(String(b.item?.name ?? ""), "cs") || a.dayFrom - b.dayFrom);
 
     const sortedGroups = Array.from(groups.values()).sort((a, b) => {
       return compareByCategoryParentName(a, b);
@@ -636,7 +656,7 @@ export default function EventDetailPage() {
                         </div>
                         <div className="mt-2 space-y-2">
                           {g.rows.map((r: any) => {
-                            const stock = stockByItemId.get(r.inventoryItemId);
+                            const stock = stockByItemId.get(reservationRowKey(r));
                             const tone = stock ? stockTone(stock.available) : "neutral";
                             const canDelete =
                               canEditEvent &&
@@ -646,10 +666,15 @@ export default function EventDetailPage() {
                                 (role === "chef" && String(g.parent).toLowerCase() === "kuchyň"));
 
                             return (
-                              <div key={r.inventoryItemId} className="rounded-2xl border border-slate-200 p-3">
+                              <div key={reservationRowKey(r)} className="rounded-2xl border border-slate-200 p-3">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0">
                                     <div className="truncate text-sm font-semibold">{r.item?.name}</div>
+                                    {event.dayCount > 1 ? (
+                                      <div className="mt-1">
+                                        <Badge tone="neutral">{dayRangeLabel({ dayFrom: r.dayFrom, dayTo: r.dayTo }, event.dayCount)}</Badge>
+                                      </div>
+                                    ) : null}
                                     <div className="mt-1 text-xs text-slate-600">
                                       Požadováno: <span className="font-semibold text-slate-900">{r.reservedQuantity}</span> {r.item?.unit}
                                     </div>
@@ -698,7 +723,9 @@ export default function EventDetailPage() {
                                           try {
                                             await api(`/events/${id}/reserve`, {
                                               method: "POST",
-                                              body: JSON.stringify({ items: [{ inventory_item_id: r.inventoryItemId, qty: 0 }] })
+                                              body: JSON.stringify({
+                                                items: [{ inventory_item_id: r.inventoryItemId, qty: 0, day_from: r.dayFrom, day_to: r.dayTo }]
+                                              })
                                             });
                                             toast.success("Odebráno");
                                             load();
@@ -736,6 +763,8 @@ export default function EventDetailPage() {
         eventId={event.id}
         role={role}
         existingItems={reservationItems}
+        dayCount={event.dayCount ?? 1}
+        deliveryDatetime={event.deliveryDatetime}
         initialSearch={addInitialSearch}
         focusItemId={addFocusItemId}
         onDone={() => load({ silent: true })}
@@ -817,7 +846,11 @@ export default function EventDetailPage() {
                   </div>
                   <ul className="ml-4 list-disc">
                     {g.items?.map((item: any, j: number) => (
-                      <li key={j}>{item.name} — <strong>{item.qty} {item.unit}</strong></li>
+                      <li key={j}>
+                        {item.name}
+                        {exportPreview.event?.dayCount > 1 ? ` (${dayRangeLabel({ dayFrom: item.dayFrom ?? 1, dayTo: item.dayTo ?? null }, exportPreview.event.dayCount)})` : ""}
+                        {" "}— <strong>{item.qty} {item.unit}</strong>
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -913,7 +946,9 @@ function AddItemsPanel(props: {
   onOpenChange: (v: boolean) => void;
   eventId: string;
   role: string;
-  existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>;
+  existingItems: Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string; dayFrom: number; dayTo: number | null }>;
+  dayCount: number;
+  deliveryDatetime: string;
   onDone: () => void;
   initialSearch?: string;
   focusItemId?: string;
@@ -925,7 +960,7 @@ function AddItemsPanel(props: {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [qty, setQty] = useState<Record<string, number>>({});
-  const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string }>>([]);
+  const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string; dayFrom: number; dayTo: number | null }>>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [crossSells, setCrossSells] = useState<{ sourceItem: any, items: any[] } | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -942,6 +977,21 @@ function AddItemsPanel(props: {
   const isChef = props.role === "chef";
   const userId = getCurrentUser()?.id;
 
+  // U vícedenní akce EM volí, pro které dny zadává počty. Panel pak ukazuje
+  // jen řádky tohoto rozsahu a dostupnost pro něj.
+  const [range, setRange] = useState<DayRange>({ dayFrom: 1, dayTo: null });
+  const rangeKey = dayRangeKey(range);
+  const dayNumbers = useMemo(() => Array.from({ length: props.dayCount }, (_, i) => i + 1), [props.dayCount]);
+  const dayOptionLabel = (d: number) => `Den ${d} (${eventDayDateLabel(props.deliveryDatetime, d)})`;
+
+  useEffect(() => {
+    if (!props.open) setRange({ dayFrom: 1, dayTo: null });
+  }, [props.open]);
+
+  useEffect(() => {
+    setQty({});
+  }, [rangeKey]);
+
   const subcats = useMemo(() => {
     if (parentId) {
       const p = parents.find((x: any) => x.id === parentId);
@@ -954,7 +1004,9 @@ function AddItemsPanel(props: {
 
   useEffect(() => {
     if (!props.open) return;
-    const nextItems = props.existingItems.filter((r) => Number(r.reservedQuantity) > 0);
+    const nextItems = props.existingItems.filter(
+      (r) => Number(r.reservedQuantity) > 0 && sameDayRange({ dayFrom: r.dayFrom, dayTo: r.dayTo }, range)
+    );
     setCurrentItems(nextItems);
     setQty((prev) => {
       const next = { ...prev };
@@ -963,7 +1015,7 @@ function AddItemsPanel(props: {
       }
       return next;
     });
-  }, [props.open, props.existingItems]);
+  }, [props.open, props.existingItems, rangeKey]);
 
   useEffect(() => {
     if (!props.open) {
@@ -1003,7 +1055,7 @@ function AddItemsPanel(props: {
       if (ids.length) {
         const a = await api<{ rows: StockRow[] }>(`/events/${props.eventId}/availability`, {
           method: "POST",
-          body: JSON.stringify({ inventory_item_ids: ids })
+          body: JSON.stringify({ inventory_item_ids: ids, day_from: range.dayFrom, day_to: range.dayTo })
         });
         if (seq !== loadSeq.current) return;
         setAvailability(new Map(a.rows.map((x) => [x.inventoryItemId, x])));
@@ -1037,7 +1089,7 @@ function AddItemsPanel(props: {
     if (isChef && !categoriesReady) return;
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
-  }, [props.open, search, parentId, categoryId, categoriesReady, isChef]);
+  }, [props.open, search, parentId, categoryId, categoriesReady, isChef, rangeKey]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -1065,7 +1117,9 @@ function AddItemsPanel(props: {
     try {
       const res = await api<{ masterPackageAdjustments?: any[] }>(`/events/${props.eventId}/reserve`, {
         method: "POST",
-        body: JSON.stringify({ items: [{ inventory_item_id: params.inventoryItemId, qty: normalizedQty }] })
+        body: JSON.stringify({
+          items: [{ inventory_item_id: params.inventoryItemId, qty: normalizedQty, day_from: range.dayFrom, day_to: range.dayTo }]
+        })
       });
 
       const adj = res.masterPackageAdjustments?.find((a) => a.inventoryItemId === params.inventoryItemId);
@@ -1079,6 +1133,8 @@ function AddItemsPanel(props: {
         const nextItem = {
           inventoryItemId: params.inventoryItemId,
           reservedQuantity: finalQty,
+          dayFrom: range.dayFrom,
+          dayTo: range.dayTo,
           item: params.item ?? found?.item,
           createdById: found?.createdById ?? params.createdById ?? userId
         };
@@ -1142,12 +1198,45 @@ function AddItemsPanel(props: {
         open={props.open}
       onOpenChange={props.onOpenChange}
       title="Přidat položky"
-      description="Zobrazujeme dostupnost pro termín této akce."
+      description={props.dayCount > 1 ? `Zobrazujeme dostupnost pro ${dayRangeLabel(range, props.dayCount).toLowerCase()}.` : "Zobrazujeme dostupnost pro termín této akce."}
       contentClassName="max-w-5xl"
       bodyClassName="md:h-[70vh] md:overflow-hidden"
     >
       <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] md:h-full md:min-h-0">
         <div className="flex flex-col gap-4 md:h-full md:min-h-0">
+          {props.dayCount > 1 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm">
+              <span className="font-semibold text-amber-950">Zadávám pro dny:</span>
+              <select
+                className="rounded-md border border-slate-300 bg-white px-2 py-1"
+                value={range.dayFrom}
+                onChange={(e) => {
+                  const from = Number(e.target.value);
+                  setRange((r) => ({ dayFrom: from, dayTo: r.dayTo !== null && r.dayTo < from ? from : r.dayTo }));
+                }}
+              >
+                {dayNumbers.map((d) => (
+                  <option key={d} value={d}>{dayOptionLabel(d)}</option>
+                ))}
+              </select>
+              <span className="text-amber-900">až</span>
+              <select
+                className="rounded-md border border-slate-300 bg-white px-2 py-1"
+                value={range.dayTo ?? props.dayCount}
+                onChange={(e) => {
+                  const to = Number(e.target.value);
+                  setRange((r) => ({ dayFrom: r.dayFrom, dayTo: to >= props.dayCount ? null : to }));
+                }}
+              >
+                {dayNumbers.filter((d) => d >= range.dayFrom).map((d) => (
+                  <option key={d} value={d}>{dayOptionLabel(d)}</option>
+                ))}
+              </select>
+              <span className="text-xs text-amber-800">
+                Stejná položka může mít na jiné dny jiný počet. Volné množství platí pro zvolené dny.
+              </span>
+            </div>
+          ) : null}
           {!isChef ? (
             <div className="flex flex-col gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -1394,6 +1483,7 @@ function AddItemsPanel(props: {
       eventId={props.eventId}
       role={props.role}
       existingItems={currentItems}
+      range={range}
       onDone={props.onDone}
     />
 
@@ -1678,8 +1768,11 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
         </div>
         <div className="mt-3 max-h-80 space-y-1 overflow-y-auto">
           {result.adjustments.map((a) => (
-            <div key={a.inventoryItemId} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
-              <span className="text-slate-800">{a.name}</span>
+            <div key={reservationRowKey(a)} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
+              <span className="text-slate-800">
+                {a.name}
+                {props.event.dayCount > 1 ? ` (${dayRangeLabel({ dayFrom: a.dayFrom ?? 1, dayTo: a.dayTo ?? null }, props.event.dayCount)})` : ""}
+              </span>
               <span className={cn("font-medium", a.copiedQty === 0 ? "text-red-600" : "text-amber-700")}>
                 {a.copiedQty === 0 ? "nepřeneseno" : `${a.sourceQty} → ${a.copiedQty} ${a.unit}`}
               </span>

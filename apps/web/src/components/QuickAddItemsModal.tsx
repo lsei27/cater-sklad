@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { api, getCurrentUser } from "../lib/api";
 import { humanError } from "../lib/viewModel";
 import { cn } from "../lib/ui";
+import type { DayRange } from "../lib/eventDays";
 import Input from "./ui/Input";
 import Modal from "./ui/Modal";
 import Skeleton from "./ui/Skeleton";
@@ -108,6 +109,7 @@ export default function QuickAddItemsModal(props: {
   eventId: string;
   role: string;
   existingItems: QuickAddExistingItem[];
+  range: DayRange;
   onDone: () => Promise<void> | void;
 }) {
   const [items, setItems] = useState<QuickInventoryItem[]>([]);
@@ -158,7 +160,9 @@ export default function QuickAddItemsModal(props: {
           {
             method: "POST",
             body: JSON.stringify({
-              inventory_item_ids: inventoryResponse.items.map((item) => item.itemId)
+              inventory_item_ids: inventoryResponse.items.map((item) => item.itemId),
+              day_from: props.range.dayFrom,
+              day_to: props.range.dayTo
             })
           }
         );
@@ -174,7 +178,7 @@ export default function QuickAddItemsModal(props: {
       .finally(() => {
         if (sequence === loadSequence.current) setLoading(false);
       });
-  }, [props.open, props.eventId, props.existingItems]);
+  }, [props.open, props.eventId, props.existingItems, props.range.dayFrom, props.range.dayTo]);
 
   const visibleItems = useMemo(() => {
     const query = normalizeSearchText(search.trim());
@@ -268,7 +272,9 @@ export default function QuickAddItemsModal(props: {
         body: JSON.stringify({
           items: changes.map((change) => ({
             inventory_item_id: change.item.itemId,
-            qty: change.requestedQuantity
+            qty: change.requestedQuantity,
+            day_from: props.range.dayFrom,
+            day_to: props.range.dayTo
           }))
         })
       });
