@@ -134,7 +134,7 @@ describe("duplicate event (integration)", () => {
     );
 
     expect(result.adjustments).toEqual([
-      { inventoryItemId: item.id, name: "Sklenice", unit: "ks", sourceQty: 10, copiedQty: 3 }
+      { inventoryItemId: item.id, name: "Sklenice", unit: "ks", dayFrom: 1, dayTo: null, sourceQty: 10, copiedQty: 3 }
     ]);
 
     const copied = await prisma.eventReservation.findMany({ where: { eventId: result.event.id } });
