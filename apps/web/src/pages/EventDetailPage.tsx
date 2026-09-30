@@ -1682,7 +1682,7 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
           onChange={(from, to) => {
             setEventDate(from);
             setEventEndDate(to);
-            const times = defaultDeliveryPickup(from, to);
+            const times = defaultDeliveryPickup(from, to, { delivery, pickup });
             if (times) {
               setDelivery(times.delivery);
               setPickup(times.pickup);
@@ -1869,7 +1869,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
           onChange={(from, to) => {
             setEventDate(from);
             setEventEndDate(to);
-            const times = defaultDeliveryPickup(from, to);
+            const times = defaultDeliveryPickup(from, to, { delivery, pickup });
             if (times) {
               setDelivery(times.delivery);
               setPickup(times.pickup);

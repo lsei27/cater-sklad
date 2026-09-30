@@ -49,10 +49,19 @@ function addDays(dateValue: string, days: number): string {
 
 /// Výchozí závoz a svoz (hodnoty datetime-local) podle data akce od-do: závoz v den "od" v 8:00,
 /// svoz den po "do" (nebo po "od", když "do" chybí) v 8:00. Bez data "od" null.
-export function defaultDeliveryPickup(fromDate: string, toDate: string): { delivery: string; pickup: string } | null {
+/// Když už jsou časy vyplněné (current), zachová se jejich HH:mm a mění se jen kalendární den.
+export function defaultDeliveryPickup(
+  fromDate: string,
+  toDate: string,
+  current?: { delivery: string; pickup: string }
+): { delivery: string; pickup: string } | null {
   if (!fromDate) return null;
   const last = toDate && toDate > fromDate ? toDate : fromDate;
-  return { delivery: `${fromDate}T08:00`, pickup: `${addDays(last, 1)}T08:00` };
+  const timeOf = (value: string | undefined) => (value && /T\d{2}:\d{2}$/.test(value) ? value.slice(-5) : "08:00");
+  return {
+    delivery: `${fromDate}T${timeOf(current?.delivery)}`,
+    pickup: `${addDays(last, 1)}T${timeOf(current?.pickup)}`
+  };
 }
 
 /// Text pod poli data akce, jen pro vícedenní akci. Hodnoty jsou z inputů type="date" (YYYY-MM-DD).

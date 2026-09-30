@@ -358,7 +358,7 @@ export async function buildClosureReportPdf(event: any) {
   page.drawText(pdfText(`Misto: ${event.location}`), { x: 50, y: yPos, size: 12, font });
   yPos -= 18;
   if (event.eventDate) {
-    page.drawText(pdfText(`Datum: ${formatCzechDate(event.eventDate.toISOString())}`), { x: 50, y: yPos, size: 12, font });
+    page.drawText(pdfText(`Datum: ${eventDateText(event.eventDate.toISOString(), event.eventEndDate?.toISOString())}`), { x: 50, y: yPos, size: 12, font });
     yPos -= 18;
   }
   yPos -= 20;

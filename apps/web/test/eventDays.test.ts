@@ -51,6 +51,10 @@ describe("dny akce na webu", () => {
     expect(defaultDeliveryPickup("2026-10-05", "")).toEqual({ delivery: "2026-10-05T08:00", pickup: "2026-10-06T08:00" });
     expect(defaultDeliveryPickup("2026-10-31", "")).toEqual({ delivery: "2026-10-31T08:00", pickup: "2026-11-01T08:00" });
     expect(defaultDeliveryPickup("", "2026-10-07")).toBeNull();
+    // Existující časy se zachovají, mění se jen den.
+    expect(
+      defaultDeliveryPickup("2026-10-05", "2026-10-07", { delivery: "2026-09-01T16:30", pickup: "2026-09-02T11:15" })
+    ).toEqual({ delivery: "2026-10-05T16:30", pickup: "2026-10-08T11:15" });
   });
 
   it("rozsah do seznamu akcí jen u vícedenní akce", () => {
