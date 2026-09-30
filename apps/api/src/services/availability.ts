@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
+import { normalizeDayRange, WHOLE_EVENT, type DayRange } from "../lib/eventDays.js";
 
 export type EventItemAvailability = {
   inventoryItemId: string;
@@ -7,6 +8,18 @@ export type EventItemAvailability = {
   available: number;
 };
 
+/// Koho výpočet vynechá z blokace.
+/// - none: skladové přehledy, počítá se všechno.
+/// - event: doplňkový výdej, vlastní akce se vynechá celá.
+/// - row: rezervace a „Volné“ u řádku. Vynechá se jen řádek se stejným klíčem
+///   (akce, položka, rozsah), ostatní řádky téže akce blokují. Jinak by si dva
+///   řádky jedné akce navzájem nekontrolovaly kapacitu.
+/// Ruční blokace vlastní akce se vynechávají v režimu event i row.
+export type AvailabilityExclusion =
+  | { kind: "none" }
+  | { kind: "event"; eventId: string }
+  | { kind: "row"; eventId: string; range: DayRange };
+
 type BulkAvailabilityRow = {
   inventory_item_id: string;
   physical_total: number;
@@ -14,24 +27,29 @@ type BulkAvailabilityRow = {
   available: number;
 };
 
-export async function getAvailabilityForEventItemsTx(
+/**
+ * Jediná implementace dostupnosti. Detail akce i skladové přehledy musí počítat
+ * stejně, dřív byly tři kopie téhož SQL.
+ *
+ * Dostupné = fyzický stav + virtuální návraty - špička souběžného vytížení
+ * v intervalu <start, end). Vytížení se mění jen tam, kde nějaký blokující úsek
+ * začíná, takže špičku stačí hledat v těchto bodech a na začátku intervalu.
+ */
+export async function getItemsAvailabilityTx(
   tx: Prisma.TransactionClient,
-  targetEventId: string,
-  inventoryItemIds: string[]
+  params: { itemIds: string[]; start: Date; end: Date; exclude: AvailabilityExclusion }
 ): Promise<EventItemAvailability[]> {
-  const uniqueItemIds = Array.from(new Set(inventoryItemIds));
+  const uniqueItemIds = Array.from(new Set(params.itemIds));
   if (uniqueItemIds.length === 0) return [];
 
+  const { start, end, exclude } = params;
+  const excludeEventId = exclude.kind === "none" ? null : exclude.eventId;
+  const excludeWholeEvent = exclude.kind === "event";
+  const excludeDayFrom = exclude.kind === "row" ? exclude.range.dayFrom : null;
+  const excludeDayTo = exclude.kind === "row" ? exclude.range.dayTo : null;
+
   const rows = await tx.$queryRaw<BulkAvailabilityRow[]>`
-WITH target AS (
-  SELECT
-    e.id AS event_id,
-    e.delivery_datetime AS t_start,
-    e.pickup_datetime   AS t_end
-  FROM events e
-  WHERE e.id = ${targetEventId}::uuid
-),
-items AS (
+WITH items AS (
   SELECT DISTINCT UNNEST(${uniqueItemIds}::uuid[]) AS inventory_item_id
 ),
 physical AS (
@@ -42,8 +60,9 @@ physical AS (
   WHERE l.inventory_item_id = ANY(${uniqueItemIds}::uuid[])
   GROUP BY l.inventory_item_id
 ),
--- Vratná položka je dostupná až po svozu a své prodlevě. Spotřební zboží
--- se nevrací. Tato pravidla musí zůstat shodná se skladovými přehledy.
+-- Vratná položka je dostupná až po konci svého řádku výdeje a prodlevě.
+-- Doplňkový výdej nemá rozsah (day_to NULL) a platí do svozu akce.
+-- Spotřební zboží se nevrací.
 virtual_returns AS (
   SELECT
     ei.inventory_item_id,
@@ -51,47 +70,91 @@ virtual_returns AS (
   FROM event_issues ei
   JOIN events e ON e.id = ei.event_id
   JOIN inventory_items ii ON ii.id = ei.inventory_item_id
-  CROSS JOIN target t
   WHERE ei.inventory_item_id = ANY(${uniqueItemIds}::uuid[])
     AND e.status = 'ISSUED'
     AND ei.type = 'issued'
     AND ii.consumable = false
-    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= t.t_start
+    AND event_day_end(e.delivery_datetime, e.pickup_datetime, ei.day_to)
+        + make_interval(days => ii.return_delay_days) <= ${start}::timestamptz
   GROUP BY ei.inventory_item_id
 ),
--- Za každou akci blokuje větší hodnota z rezervace a ruční blokace. Cílovou
--- akci vynecháváme, aby bylo možné její současné množství upravit až do maxima.
-per_event_blocked AS (
+-- Blokující úseky: řádek rezervace od začátku svého prvního dne do konce
+-- posledního dne plus prodleva vrácení, nebo ruční blokace skladu do blocked_until.
+loads AS (
   SELECT
-    i.inventory_item_id,
-    e2.id AS event_id,
-    GREATEST(
-      COALESCE(SUM(r.reserved_quantity), 0),
-      COALESCE(MAX(wb.blocked_quantity), 0)
-    ) AS blocked_qty
-  FROM items i
-  CROSS JOIN events e2
-  CROSS JOIN target t
-  LEFT JOIN event_reservations r
-    ON r.event_id = e2.id
-    AND r.inventory_item_id = i.inventory_item_id
+    r.inventory_item_id,
+    r.event_id,
+    r.reserved_quantity AS res_qty,
+    0 AS block_qty,
+    event_day_start(e.delivery_datetime, r.day_from) AS s,
+    event_day_end(e.delivery_datetime, e.pickup_datetime, r.day_to)
+      + make_interval(days => ii.return_delay_days) AS f
+  FROM event_reservations r
+  JOIN events e ON e.id = r.event_id
+  JOIN inventory_items ii ON ii.id = r.inventory_item_id
+  WHERE r.inventory_item_id = ANY(${uniqueItemIds}::uuid[])
     AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND e2.delivery_datetime < t.t_end
-    AND t.t_start < e2.pickup_datetime
-  LEFT JOIN warehouse_blocks wb
-    ON wb.event_id = e2.id
-    AND wb.inventory_item_id = i.inventory_item_id
-    AND t.t_start < wb.blocked_until
-  WHERE e2.id <> t.event_id
-    AND (r.id IS NOT NULL OR wb.id IS NOT NULL)
-  GROUP BY i.inventory_item_id, e2.id
+    AND e.status NOT IN ('CLOSED','CANCELLED')
+    -- Vydaný řádek už snížil fyzický stav výdejem a vrací se virtuálním
+    -- návratem. Kdyby blokoval i rezervací, odečetl by se dvakrát.
+    AND NOT EXISTS (
+      SELECT 1 FROM event_issues ei
+      WHERE ei.event_id = r.event_id
+        AND ei.inventory_item_id = r.inventory_item_id
+        AND ei.type = 'issued'
+        AND ei.day_from = r.day_from
+        AND COALESCE(ei.day_to, 0) = COALESCE(r.day_to, 0)
+    )
+    AND NOT COALESCE(
+      r.event_id = ${excludeEventId}::uuid
+      AND (
+        ${excludeWholeEvent}::boolean
+        OR (r.day_from = ${excludeDayFrom}::int AND COALESCE(r.day_to, 0) = COALESCE(${excludeDayTo}::int, 0))
+      ),
+      false
+    )
+  UNION ALL
+  SELECT
+    wb.inventory_item_id,
+    wb.event_id,
+    0,
+    wb.blocked_quantity,
+    '-infinity'::timestamptz,
+    wb.blocked_until
+  FROM warehouse_blocks wb
+  WHERE wb.inventory_item_id = ANY(${uniqueItemIds}::uuid[])
+    AND wb.event_id IS DISTINCT FROM ${excludeEventId}::uuid
+),
+active AS (
+  SELECT * FROM loads
+  WHERE s < ${end}::timestamptz AND ${start}::timestamptz < f
+),
+points AS (
+  SELECT inventory_item_id, ${start}::timestamptz AS p FROM items
+  UNION
+  SELECT inventory_item_id, s FROM active WHERE s > ${start}::timestamptz
+),
+-- Za každou akci v daném bodě blokuje větší hodnota z rezervací a ruční blokace.
+per_event AS (
+  SELECT
+    pt.inventory_item_id,
+    pt.p,
+    a.event_id,
+    GREATEST(SUM(a.res_qty), MAX(a.block_qty)) AS qty
+  FROM points pt
+  JOIN active a
+    ON a.inventory_item_id = pt.inventory_item_id
+    AND a.s <= pt.p
+    AND pt.p < a.f
+  GROUP BY pt.inventory_item_id, pt.p, a.event_id
 ),
 blocked AS (
-  SELECT
-    inventory_item_id,
-    COALESCE(SUM(blocked_qty), 0) AS blocked_total
-  FROM per_event_blocked
+  SELECT inventory_item_id, MAX(total) AS blocked_total
+  FROM (
+    SELECT inventory_item_id, p, SUM(qty) AS total
+    FROM per_event
+    GROUP BY inventory_item_id, p
+  ) x
   GROUP BY inventory_item_id
 )
 SELECT
@@ -128,12 +191,51 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.inventory_item_id;
   );
 }
 
+export type EventAvailabilityOptions = {
+  /// Rozsah řádku, pro který se dostupnost počítá. Výchozí je celá akce.
+  range?: DayRange;
+  /// Doplňkový výdej: vlastní akce se vynechá celá.
+  excludeWholeEvent?: boolean;
+};
+
+export async function getAvailabilityForEventItemsTx(
+  tx: Prisma.TransactionClient,
+  targetEventId: string,
+  inventoryItemIds: string[],
+  options: EventAvailabilityOptions = {}
+): Promise<EventItemAvailability[]> {
+  const [ev] = await tx.$queryRaw<Array<{ delivery: Date; pickup: Date; day_count: number }>>`
+    SELECT delivery_datetime AS delivery, pickup_datetime AS pickup,
+           event_day_count(delivery_datetime, pickup_datetime)::int AS day_count
+    FROM events WHERE id = ${targetEventId}::uuid
+  `;
+  if (!ev) throw new Error("EVENT_NOT_FOUND");
+
+  const range = normalizeDayRange(options.range ?? WHOLE_EVENT, Number(ev.day_count));
+  if (!range) throw new Error("INVALID_DAY_RANGE");
+
+  const [interval] = await tx.$queryRaw<Array<{ t_start: Date; t_end: Date }>>`
+    SELECT event_day_start(${ev.delivery}::timestamptz, ${range.dayFrom}::int) AS t_start,
+           event_day_end(${ev.delivery}::timestamptz, ${ev.pickup}::timestamptz, ${range.dayTo}::int) AS t_end
+  `;
+
+  return getItemsAvailabilityTx(tx, {
+    itemIds: inventoryItemIds,
+    start: interval.t_start,
+    end: interval.t_end,
+    exclude: options.excludeWholeEvent
+      ? { kind: "event", eventId: targetEventId }
+      : { kind: "row", eventId: targetEventId, range }
+  });
+}
+
 export async function getAvailabilityForEventItemTx(
   tx: Prisma.TransactionClient,
   targetEventId: string,
-  inventoryItemId: string
+  inventoryItemId: string,
+  options: EventAvailabilityOptions = {}
 ) {
-  const [row] = await getAvailabilityForEventItemsTx(tx, targetEventId, [inventoryItemId]);
+  const [row] = await getAvailabilityForEventItemsTx(tx, targetEventId, [inventoryItemId], options);
   return row
     ? {
         physicalTotal: row.physicalTotal,

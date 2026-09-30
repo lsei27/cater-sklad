@@ -4,7 +4,7 @@ import type { Prisma } from "../../generated/prisma/client.js";
 import { EventStatus, LedgerReason, ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
-import { getPhysicalTotal } from "../services/availability.js";
+import { getItemsAvailabilityTx, getPhysicalTotal } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { sseBus } from "../lib/sse.js";
 
@@ -227,81 +227,18 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const itemIds = filtered.map((i) => i.id);
 
     const stockRows = await app.prisma.$transaction(async (tx) => {
-      if (itemIds.length === 0) return [] as Array<{ inventory_item_id: string; physical_total: number; blocked_total: number; available: number }>;
-      return tx.$queryRaw<
-        Array<{ inventory_item_id: string; physical_total: number; blocked_total: number; available: number }>
-      >`
-WITH params AS (
-  SELECT ${startAt}::timestamptz AS t_start, ${endAt}::timestamptz AS t_end
-),
-items AS (
-  SELECT id FROM inventory_items WHERE id = ANY(${itemIds}::uuid[])
-),
-physical AS (
-  SELECT inventory_item_id, COALESCE(SUM(delta_quantity),0)::int AS physical_total
-  FROM inventory_ledger
-  WHERE inventory_item_id = ANY(${itemIds}::uuid[])
-  GROUP BY inventory_item_id
-),
--- Virtual returns: items from ISSUED events whose pickup is before our window start.
--- Stejná pravidla jako v getAvailabilityForEventItemTx: spotřební zboží se nevrací
--- vůbec a vratná položka je k dispozici až po prodlevě return_delay_days od svozu.
-virtual_returns AS (
-  SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
-  FROM event_issues ei
-  JOIN events e ON e.id = ei.event_id
-  JOIN inventory_items ii ON ii.id = ei.inventory_item_id
-  CROSS JOIN params p
-  WHERE ei.inventory_item_id = ANY(${itemIds}::uuid[])
-    AND e.status = 'ISSUED'
-    AND ei.type = 'issued'
-    AND ii.consumable = false
-    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= p.t_start
-  GROUP BY ei.inventory_item_id
-),
--- Per item+event: take GREATEST of reservation vs manual warehouse block.
--- Rezervace platí jen u živé překrývající se akce, ruční blokace se řídí svým
--- blocked_until i na uzavřené akci (špinavé zboží čekající na kontrolu).
-per_event_blocked AS (
-  SELECT
-    i.id AS inventory_item_id,
-    e2.id AS event_id,
-    GREATEST(
-      COALESCE(SUM(r.reserved_quantity), 0),
-      COALESCE(MAX(wb.blocked_quantity), 0)
-    )::int AS blocked_qty
-  FROM items i
-  CROSS JOIN events e2
-  CROSS JOIN params p
-  LEFT JOIN event_reservations r
-    ON r.event_id = e2.id
-    AND r.inventory_item_id = i.id
-    AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND e2.delivery_datetime < p.t_end
-    AND p.t_start < e2.pickup_datetime
-  LEFT JOIN warehouse_blocks wb
-    ON wb.event_id = e2.id
-    AND wb.inventory_item_id = i.id
-    AND p.t_start < wb.blocked_until
-  WHERE r.id IS NOT NULL OR wb.id IS NOT NULL
-  GROUP BY i.id, e2.id
-),
-blocked AS (
-  SELECT inventory_item_id, COALESCE(SUM(blocked_qty), 0)::int AS blocked_total
-  FROM per_event_blocked
-  GROUP BY inventory_item_id
-)
-SELECT
-  i.id::text AS inventory_item_id,
-  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0))::int AS physical_total,
-  COALESCE(b.blocked_total,0)::int AS blocked_total,
-  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0) - COALESCE(b.blocked_total,0))::int AS available
-FROM items i
-LEFT JOIN physical p ON p.inventory_item_id = i.id
-LEFT JOIN virtual_returns vr ON vr.inventory_item_id = i.id
-LEFT JOIN blocked b ON b.inventory_item_id = i.id;
-      `;
+      const rows = await getItemsAvailabilityTx(tx, {
+        itemIds: itemIds,
+        start: startAt,
+        end: endAt,
+        exclude: { kind: "none" }
+      });
+      return rows.map((r) => ({
+        inventory_item_id: r.inventoryItemId,
+        physical_total: r.physicalTotal,
+        blocked_total: r.blockedTotal,
+        available: r.available
+      }));
     });
 
     const stockById = new Map(stockRows.map((r) => [r.inventory_item_id, r]));
@@ -359,75 +296,18 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.id;
     const endAt = query.end_at ? new Date(query.end_at) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
 
     const stockRows = await app.prisma.$transaction(async (tx) => {
-      return tx.$queryRaw<
-        Array<{ inventory_item_id: string; physical_total: number; blocked_total: number; available: number }>
-      >`
-WITH params AS (
-  SELECT ${startAt}::timestamptz AS t_start, ${endAt}::timestamptz AS t_end
-),
-items AS (
-  SELECT id FROM inventory_items WHERE id = ANY(${targetItemIds}::uuid[])
-),
-physical AS (
-  SELECT inventory_item_id, COALESCE(SUM(delta_quantity),0)::int AS physical_total
-  FROM inventory_ledger
-  WHERE inventory_item_id = ANY(${targetItemIds}::uuid[])
-  GROUP BY inventory_item_id
-),
--- Stejná pravidla jako v getAvailabilityForEventItemTx, viz komentář tamtéž.
-virtual_returns AS (
-  SELECT ei.inventory_item_id, COALESCE(SUM(ei.issued_quantity), 0)::int AS virtual_qty
-  FROM event_issues ei
-  JOIN events e ON e.id = ei.event_id
-  JOIN inventory_items ii ON ii.id = ei.inventory_item_id
-  CROSS JOIN params p
-  WHERE ei.inventory_item_id = ANY(${targetItemIds}::uuid[])
-    AND e.status = 'ISSUED'
-    AND ei.type = 'issued'
-    AND ii.consumable = false
-    AND e.pickup_datetime + make_interval(days => ii.return_delay_days) <= p.t_start
-  GROUP BY ei.inventory_item_id
-),
-per_event_blocked AS (
-  SELECT
-    i.id AS inventory_item_id,
-    e2.id AS event_id,
-    GREATEST(
-      COALESCE(SUM(r.reserved_quantity), 0),
-      COALESCE(MAX(wb.blocked_quantity), 0)
-    )::int AS blocked_qty
-  FROM items i
-  CROSS JOIN events e2
-  CROSS JOIN params p
-  LEFT JOIN event_reservations r
-    ON r.event_id = e2.id
-    AND r.inventory_item_id = i.id
-    AND (r.state = 'confirmed' OR (r.state = 'draft' AND r.expires_at IS NOT NULL AND r.expires_at > NOW()))
-    AND e2.status NOT IN ('CLOSED','CANCELLED')
-    AND e2.delivery_datetime < p.t_end
-    AND p.t_start < e2.pickup_datetime
-  LEFT JOIN warehouse_blocks wb
-    ON wb.event_id = e2.id
-    AND wb.inventory_item_id = i.id
-    AND p.t_start < wb.blocked_until
-  WHERE r.id IS NOT NULL OR wb.id IS NOT NULL
-  GROUP BY i.id, e2.id
-),
-blocked AS (
-  SELECT inventory_item_id, COALESCE(SUM(blocked_qty), 0)::int AS blocked_total
-  FROM per_event_blocked
-  GROUP BY inventory_item_id
-)
-SELECT
-  i.id::text AS inventory_item_id,
-  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0))::int AS physical_total,
-  COALESCE(b.blocked_total,0)::int AS blocked_total,
-  (COALESCE(p.physical_total,0) + COALESCE(vr.virtual_qty,0) - COALESCE(b.blocked_total,0))::int AS available
-FROM items i
-LEFT JOIN physical p ON p.inventory_item_id = i.id
-LEFT JOIN virtual_returns vr ON vr.inventory_item_id = i.id
-LEFT JOIN blocked b ON b.inventory_item_id = i.id;
-      `;
+      const rows = await getItemsAvailabilityTx(tx, {
+        itemIds: targetItemIds,
+        start: startAt,
+        end: endAt,
+        exclude: { kind: "none" }
+      });
+      return rows.map((r) => ({
+        inventory_item_id: r.inventoryItemId,
+        physical_total: r.physicalTotal,
+        blocked_total: r.blockedTotal,
+        available: r.available
+      }));
     });
 
     const stockById = new Map(stockRows.map((r) => [r.inventory_item_id, r]));

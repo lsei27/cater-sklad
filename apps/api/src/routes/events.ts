@@ -510,8 +510,13 @@ export async function eventRoutes(app: FastifyInstance) {
       .parse(request.query);
 
     if (query.inventory_item_id) {
-      const a = await app.prisma.$transaction((tx) => getAvailabilityForEventItemTx(tx, params.id, query.inventory_item_id!));
-      return { inventoryItemId: query.inventory_item_id, ...a };
+      try {
+        const a = await app.prisma.$transaction((tx) => getAvailabilityForEventItemTx(tx, params.id, query.inventory_item_id!));
+        return { inventoryItemId: query.inventory_item_id, ...a };
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+        throw e;
+      }
     }
 
     return httpError(reply, 400, "BAD_REQUEST", "inventory_item_id is required for MVP");
@@ -521,14 +526,25 @@ export async function eventRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
-        inventory_item_ids: z.array(z.string().uuid()).min(1).max(1000)
+        inventory_item_ids: z.array(z.string().uuid()).min(1).max(1000),
+        day_from: z.number().int().min(1).optional(),
+        day_to: z.number().int().min(1).nullable().optional()
       })
       .parse(request.body);
 
-    const rows = await app.prisma.$transaction((tx) =>
-      getAvailabilityForEventItemsTx(tx, params.id, body.inventory_item_ids)
-    );
-    return { rows };
+    try {
+      const rows = await app.prisma.$transaction((tx) =>
+        getAvailabilityForEventItemsTx(tx, params.id, body.inventory_item_ids, {
+          range: { dayFrom: body.day_from ?? 1, dayTo: body.day_to ?? null }
+        })
+      );
+      return { rows };
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "";
+      if (message === "EVENT_NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (message === "INVALID_DAY_RANGE") return httpError(reply, 400, "INVALID_DAY_RANGE", "Neplatný rozsah dnů akce.");
+      throw e;
+    }
   });
 
   app.get("/events/:id/cross-sells/:itemId", { preHandler: [app.authenticate] }, async (request, reply) => {
