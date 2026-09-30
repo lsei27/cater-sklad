@@ -57,7 +57,7 @@ Výpočet intervalu je jedna sdílená funkce v SQL i v TypeScriptu, pokrytá te
 - Dostupnost je fyzický stav plus virtuální návraty minus **špička souběžného vytížení** v cílovém intervalu. Špička se hledá v bodech, kde začíná některý blokující interval (plus začátek cílového intervalu), ne jako součet všech překryvů. Příklad: 50 ks na dny 1 až 3 a 70 ks jen na den 2 blokuje na den 2 celkem 120, na dny 1 a 3 jen 50. V každém bodě se za akci bere větší hodnota z rezervací a ruční blokace, jako dnes.
 - Vyloučení při výpočtu:
   - Rezervace a zobrazení „Volné“ u řádku: vynechá se jen řádek se stejným klíčem (akce, položka, rozsah). Ostatní řádky stejné akce se započítávají, jinak by si dva řádky téže akce navzájem nekontrolovaly kapacitu. Ruční blokace vlastní akce se vynechávají jako dnes.
-  - Doplňkový výdej: vynechá se celá vlastní akce, jako dnes.
+  - Doplňkový výdej: vynechají se jen ruční blokace vlastní akce, její rezervace dál blokují (vydané dny už neblokují, nevydané drží zboží, které se později vydá bez další kontroly).
   - Skladové přehledy: nic se nevynechává.
 - Ruční blokace skladem (`warehouse_blocks`) beze změny: blokují do `blocked_until`.
 - Virtuální návrat vydaného zboží: od konce řádku výdeje plus `return_delay_days`. `event_issues` dostane `day_from` a `day_to` (obojí nullable). Plánovaný výdej dne zapisuje rozsah řádku, doplňkový výdej zapisuje `NULL` = celá akce. Stávající řádky výdeje dostanou `day_from = 1`, aby vydané akce vypadaly jako „den 1 vydán“.

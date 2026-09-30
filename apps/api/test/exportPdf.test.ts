@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { PDFPage } from "pdf-lib";
+import { describe, expect, it, vi } from "vitest";
 import { buildExportPdf, dayTagLabel, filterSnapshotToDay, type ExportSnapshot } from "../src/pdf/exportPdf.js";
 
 function snapshot(items: ExportSnapshot["groups"][number]["items"]): ExportSnapshot {
@@ -88,5 +89,31 @@ describe("vícedenní export", () => {
   it("vícedenní snapshot se vykreslí", async () => {
     const pdf = await buildExportPdf(multi);
     expect(pdf.byteLength).toBeGreaterThan(0);
+  });
+
+  it("vicedenni akce se rozdeli na bloky Balit na den N", async () => {
+    const base = snapshot([
+      { inventoryItemId: "a", name: "Talíř", unit: "ks", qty: 10, dayFrom: 1, dayTo: 1 },
+      { inventoryItemId: "b", name: "Sklenice", unit: "ks", qty: 5, dayFrom: 3, dayTo: null }
+    ]);
+    const multi: ExportSnapshot = { ...base, event: { ...base.event, dayCount: 3 } };
+    const drawn: string[] = [];
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text: string) {
+      drawn.push(text);
+      return this;
+    });
+    try {
+      const pdf = await buildExportPdf(multi, undefined, true);
+      expect(pdf.byteLength).toBeGreaterThan(0);
+      expect(drawn).toContain("Balit na den 1");
+      expect(drawn).toContain("Balit na den 3");
+      expect(drawn).not.toContain("Balit na den 2");
+
+      drawn.length = 0;
+      await buildExportPdf(multi, "Den 1", false);
+      expect(drawn.some((t) => t.startsWith("Balit na den"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

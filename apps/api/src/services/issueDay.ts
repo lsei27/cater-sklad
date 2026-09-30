@@ -1,5 +1,6 @@
 import { LedgerReason, type Prisma, type PrismaClient } from "../../generated/prisma/client.js";
 import { itemDayFrom, type ExportSnapshot } from "../pdf/exportPdf.js";
+import { normalizeDayRange } from "../lib/eventDays.js";
 import { splitKnownIssueItems, type SkippedIssueItem } from "../lib/issueSelection.js";
 import { computeIssuedWeightKg, formatWeightKg } from "./issueWeight.js";
 import { createInventoryLedgerEntry } from "./ledger.js";
@@ -81,12 +82,18 @@ export async function issueDayTx(params: {
       ? params.items
       : dayRows.map((i) => ({ inventory_item_id: i.inventoryItemId, issued_quantity: i.qty, day_to: i.dayTo ?? null }));
 
+  // day_to od klienta se ověří a sjednotí stejně jako rozsah rezervace:
+  // konec rozsahu na posledním dni se ukládá jako NULL.
   const itemsToIssue = candidates
     .filter((i) => i.issued_quantity > 0)
-    .map((i) => ({
-      ...i,
-      day_to: i.day_to !== undefined ? i.day_to : (snapshotDayToByItemId.get(i.inventory_item_id) ?? null)
-    }));
+    .map((i) => {
+      const range = normalizeDayRange(
+        { dayFrom: day, dayTo: i.day_to !== undefined ? i.day_to : (snapshotDayToByItemId.get(i.inventory_item_id) ?? null) },
+        Number(ev.day_count)
+      );
+      if (!range) throw new Error("INVALID_DAY");
+      return { ...i, day_to: range.dayTo };
+    });
   if (itemsToIssue.length === 0) throw new Error("NO_ITEMS_TO_ISSUE");
 
   // Duplicitní řádek by se do event_issues zapsal jen jednou (stejný

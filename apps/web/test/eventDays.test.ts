@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayRangeLabel, eventDayDateLabel, reservationRowKey, sameDayRange } from "../src/lib/eventDays";
+import { dayRangeLabel, eventDayCount, eventDayDateLabel, reservationRowKey, sameDayRange } from "../src/lib/eventDays";
 
 describe("dny akce na webu", () => {
   it("popisek rozsahu", () => {
@@ -24,5 +24,13 @@ describe("dny akce na webu", () => {
   it("porovnání rozsahů", () => {
     expect(sameDayRange({ dayFrom: 1, dayTo: null }, { dayFrom: 1, dayTo: null })).toBe(true);
     expect(sameDayRange({ dayFrom: 1, dayTo: 1 }, { dayFrom: 1, dayTo: null })).toBe(false);
+  });
+
+  it("počet dnů akce se počítá z pražských kalendářních dat", () => {
+    expect(eventDayCount("2026-10-05T07:00:00Z", "2026-10-05T17:00:00Z")).toBe(1);
+    expect(eventDayCount("2026-10-05T07:00:00Z", "2026-10-07T17:00:00Z")).toBe(3);
+    // 23:30 UTC je v Praze už další den, svoz o půlnoc UTC je ještě týž den.
+    expect(eventDayCount("2026-10-05T22:30:00Z", "2026-10-06T10:00:00Z")).toBe(1);
+    expect(eventDayCount("2026-10-05T10:00:00Z", "2026-10-05T22:30:00Z")).toBe(2);
   });
 });

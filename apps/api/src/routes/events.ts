@@ -531,7 +531,7 @@ export async function eventRoutes(app: FastifyInstance) {
     }
 
     try {
-      const pdfBytes = await buildExportPdf(snapshot, subtitle);
+      const pdfBytes = await buildExportPdf(snapshot, subtitle, !queryParams.day);
       reply.header("Content-Type", "application/pdf");
       const typeSuffix = queryParams.type ? `_${queryParams.type === "kitchen" ? "kuchyn" : "sklad"}` : "";
       const daySuffix = queryParams.day ? `_den${queryParams.day}` : "";

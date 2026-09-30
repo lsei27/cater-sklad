@@ -49,7 +49,8 @@ export async function issueAdditionalTx(params: {
   }
 
   for (const { inventoryItemId, qty } of positiveItems) {
-    // Doplňkový výdej je navíc k plánu, vlastní rezervace akce ho nesmí blokovat.
+    // Doplňkový výdej je navíc k plánu. Rezervace dosud nevydaných dní téže akce
+    // dál blokují, jinak by se zboží určené na pozdější den vydalo dvakrát.
     const availability = await getAvailabilityForEventItemTx(tx, eventId, inventoryItemId, { excludeWholeEvent: true });
     if (qty > availability.available) {
       throw new InsufficientStockError(inventoryItemId, availability.available);

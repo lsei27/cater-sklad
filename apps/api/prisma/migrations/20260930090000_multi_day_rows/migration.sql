@@ -9,12 +9,12 @@
 -- Hranice dnů. Den 1 začíná závozem, další dny o půlnoci v Praze,
 -- poslední den končí svozem.
 CREATE OR REPLACE FUNCTION event_day_count(delivery timestamptz, pickup timestamptz)
-RETURNS integer LANGUAGE sql STABLE AS $$
+RETURNS integer LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT ((pickup AT TIME ZONE 'Europe/Prague')::date - (delivery AT TIME ZONE 'Europe/Prague')::date) + 1
 $$;
 
 CREATE OR REPLACE FUNCTION event_day_start(delivery timestamptz, day_no integer)
-RETURNS timestamptz LANGUAGE sql STABLE AS $$
+RETURNS timestamptz LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT CASE
     WHEN day_no IS NULL OR day_no <= 1 THEN delivery
     ELSE (((delivery AT TIME ZONE 'Europe/Prague')::date + (day_no - 1))::timestamp AT TIME ZONE 'Europe/Prague')
@@ -22,7 +22,7 @@ RETURNS timestamptz LANGUAGE sql STABLE AS $$
 $$;
 
 CREATE OR REPLACE FUNCTION event_day_end(delivery timestamptz, pickup timestamptz, day_no integer)
-RETURNS timestamptz LANGUAGE sql STABLE AS $$
+RETURNS timestamptz LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT CASE
     WHEN day_no IS NULL OR day_no >= event_day_count(delivery, pickup) THEN pickup
     ELSE (((delivery AT TIME ZONE 'Europe/Prague')::date + day_no)::timestamp AT TIME ZONE 'Europe/Prague')

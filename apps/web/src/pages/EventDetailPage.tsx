@@ -25,7 +25,7 @@ import {
   warehouseWorkflowAction
 } from "../lib/viewModel";
 import { cn } from "../lib/ui";
-import { dayRangeKey, dayRangeLabel, eventDayDateLabel, reservationRowKey, sameDayRange, type DayRange } from "../lib/eventDays";
+import { dayRangeKey, dayRangeLabel, eventDayCount, eventDayDateLabel, reservationRowKey, sameDayRange, type DayRange } from "../lib/eventDays";
 import { ArrowLeft, Ban, Copy, FileDown, PackagePlus, ShieldAlert, Wand2 } from "lucide-react";
 import { Icons } from "../lib/icons";
 
@@ -1728,7 +1728,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
   const [delivery, setDelivery] = useState(shiftLocal(props.event.deliveryDatetime));
   const [pickup, setPickup] = useState(shiftLocal(props.event.pickupDatetime));
   const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState<{ eventId: string; adjustments: any[] } | null>(null);
+  const [result, setResult] = useState<{ eventId: string; dayCount: number; adjustments: any[] } | null>(null);
 
   const submit = async () => {
     const deliveryIso = fromDatetimeLocalValue(delivery);
@@ -1761,7 +1761,7 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
         nav(`/events/${res.event.id}`);
         return;
       }
-      setResult({ eventId: res.event.id, adjustments: res.adjustments });
+      setResult({ eventId: res.event.id, dayCount: eventDayCount(deliveryIso, pickupIso), adjustments: res.adjustments });
     } catch (e: any) {
       toast.error(humanError(e));
     } finally {
@@ -1773,17 +1773,23 @@ function DuplicateEventModal(props: { open: boolean; onOpenChange: (open: boolea
     return (
       <Modal open={props.open} onOpenChange={props.onOpenChange} title="Akce zkopírována" contentClassName="max-w-2xl">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          V novém termínu nebyl dostatek zásob na všechny položky. Zbytek doplň ručně, až se sklad uvolní.
+          V novém termínu nebyl dostatek zásob nebo se řádky nevešly do termínu akce. Zbytek doplň ručně, až se sklad uvolní.
         </div>
         <div className="mt-3 max-h-80 space-y-1 overflow-y-auto">
           {result.adjustments.map((a) => (
             <div key={reservationRowKey(a)} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
               <span className="text-slate-800">
                 {a.name}
-                {props.event.dayCount > 1 ? ` (${dayRangeLabel({ dayFrom: a.dayFrom ?? 1, dayTo: a.dayTo ?? null }, props.event.dayCount)})` : ""}
+                {result.dayCount > 1 && (a.dayFrom ?? 1) <= result.dayCount
+                  ? ` (${dayRangeLabel({ dayFrom: a.dayFrom ?? 1, dayTo: a.dayTo ?? null }, result.dayCount)})`
+                  : ""}
               </span>
               <span className={cn("font-medium", a.copiedQty === 0 ? "text-red-600" : "text-amber-700")}>
-                {a.copiedQty === 0 ? "nepřeneseno" : `${a.sourceQty} → ${a.copiedQty} ${a.unit}`}
+                {a.copiedQty === 0
+                  ? (a.dayFrom ?? 1) > result.dayCount
+                    ? "nevejde se do termínu nové akce"
+                    : "nepřeneseno"
+                  : `${a.sourceQty} → ${a.copiedQty} ${a.unit}`}
               </span>
             </div>
           ))}

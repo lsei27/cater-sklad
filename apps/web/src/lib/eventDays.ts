@@ -36,3 +36,12 @@ export function eventDayDateLabel(deliveryIso: string, day: number): string {
   const date = new Date(Date.UTC(y, m - 1, d + day - 1));
   return `${date.getUTCDate()}. ${date.getUTCMonth() + 1}.`;
 }
+
+/// Počet dnů akce: rozdíl kalendářních dat závozu a svozu v Praze + 1. Stejné pravidlo jako v API.
+export function eventDayCount(deliveryIso: string, pickupIso: string): number {
+  const toUtcMs = (iso: string) => {
+    const [y, m, d] = pragueYmd.format(new Date(iso)).split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUtcMs(pickupIso) - toUtcMs(deliveryIso)) / 86_400_000) + 1;
+}

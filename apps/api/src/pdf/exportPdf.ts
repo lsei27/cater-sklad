@@ -96,7 +96,7 @@ export function filterSnapshotToDay(snapshot: ExportSnapshot, day: number): Expo
   };
 }
 
-export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string) {
+export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string, splitByDay = false) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -223,82 +223,105 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
   const colName = 70;
   const colQty = 420;
 
-  // Group snapshot groups by Role (Sklad/Kitchen)
-  const sections = [
-    { title: "Event Manager", groups: snapshot.groups.filter(g => g.parentCategory.toLowerCase() !== "kuchyn" && g.parentCategory.toLowerCase() !== "kuchyň") },
-    { title: "Kuchyn", groups: snapshot.groups.filter(g => g.parentCategory.toLowerCase() === "kuchyn" || g.parentCategory.toLowerCase() === "kuchyň") }
-  ];
+  const renderItems = (snap: ExportSnapshot) => {
+    // Group snapshot groups by Role (Sklad/Kitchen)
+    const sections = [
+      { title: "Event Manager", groups: snap.groups.filter(g => g.parentCategory.toLowerCase() !== "kuchyn" && g.parentCategory.toLowerCase() !== "kuchyň") },
+      { title: "Kuchyn", groups: snap.groups.filter(g => g.parentCategory.toLowerCase() === "kuchyn" || g.parentCategory.toLowerCase() === "kuchyň") }
+    ];
 
-  for (const s of sections) {
-    if (s.groups.length === 0) continue;
+    for (const s of sections) {
+      if (s.groups.length === 0) continue;
 
-    if (yPos < 60) {
-      page = pdfDoc.addPage();
-      ({ width, height } = page.getSize());
-      yPos = height - 50;
-    }
-
-    // Role Section Header
-    yPos -= 10;
-    page.drawText(pdfText(s.title), { x: colMargin, y: yPos, size: 12, font: bold });
-    yPos -= 4;
-    page.drawLine({ start: { x: colMargin, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 1, color: rgb(0.2, 0.2, 0.2) });
-    yPos -= 14;
-
-    for (const group of s.groups) {
       if (yPos < 60) {
         page = pdfDoc.addPage();
+        ({ width, height } = page.getSize());
         yPos = height - 50;
       }
 
-      // Group Header (Category)
-      const groupLabel = group.category ? `${group.parentCategory} / ${group.category}` : group.parentCategory;
-      page.drawText(pdfText(groupLabel), { x: colMargin, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
+      // Role Section Header
+      yPos -= 10;
+      page.drawText(pdfText(s.title), { x: colMargin, y: yPos, size: 12, font: bold });
+      yPos -= 4;
+      page.drawLine({ start: { x: colMargin, y: yPos }, end: { x: width - 50, y: yPos }, thickness: 1, color: rgb(0.2, 0.2, 0.2) });
       yPos -= 14;
 
-      for (const item of group.items) {
+      for (const group of s.groups) {
         if (yPos < 60) {
           page = pdfDoc.addPage();
-          ({ width, height } = page.getSize());
           yPos = height - 50;
         }
 
-        // Checkbox (moved to the left)
-        page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
+        // Group Header (Category)
+        const groupLabel = group.category ? `${group.parentCategory} / ${group.category}` : group.parentCategory;
+        page.drawText(pdfText(groupLabel), { x: colMargin, y: yPos, size: 10, font: bold, color: rgb(0.3, 0.3, 0.3) });
+        yPos -= 14;
 
-        // Item Name
-        // U vícedenní akce se u položky tiskne, na které dny patří.
-        const dayTag = dayTagLabel(item, snapshot.event.dayCount ?? 1);
-        const itemLabel = dayTag ? `${item.name} [${dayTag}]` : item.name;
-        page.drawText(pdfText(itemLabel), { x: colName, y: yPos, size: 10, font });
+        for (const item of group.items) {
+          if (yPos < 60) {
+            page = pdfDoc.addPage();
+            ({ width, height } = page.getSize());
+            yPos = height - 50;
+          }
 
-        // U domaciho skladu se nic netiskne - opakovane "Liboc" u kazdeho radku
-        // by upozorneni jen rozmelnilo.
-        if (item.warehouseName !== undefined && item.warehouseIsHome !== true) {
-          const tag = `! ${item.warehouseName ?? "bez skladu"}`;
-          const nameWidth = font.widthOfTextAtSize(pdfText(itemLabel), 10);
-          page.drawText(pdfText(tag), {
-            x: Math.min(colName + nameWidth + 8, colQty - 100),
-            y: yPos,
-            size: 9,
-            font: bold,
-            color: rgb(0.7, 0.1, 0.1)
-          });
+          // Checkbox (moved to the left)
+          page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
+
+          // Item Name
+          // U vícedenní akce se u položky tiskne, na které dny patří.
+          const dayTag = dayTagLabel(item, snapshot.event.dayCount ?? 1);
+          const itemLabel = dayTag ? `${item.name} [${dayTag}]` : item.name;
+          page.drawText(pdfText(itemLabel), { x: colName, y: yPos, size: 10, font });
+
+          // U domaciho skladu se nic netiskne - opakovane "Liboc" u kazdeho radku
+          // by upozorneni jen rozmelnilo.
+          if (item.warehouseName !== undefined && item.warehouseIsHome !== true) {
+            const tag = `! ${item.warehouseName ?? "bez skladu"}`;
+            const nameWidth = font.widthOfTextAtSize(pdfText(itemLabel), 10);
+            page.drawText(pdfText(tag), {
+              x: Math.min(colName + nameWidth + 8, colQty - 100),
+              y: yPos,
+              size: 9,
+              font: bold,
+              color: rgb(0.7, 0.1, 0.1)
+            });
+          }
+
+          // Quantity + master package info
+          let qtyLabel = `${item.qty} ${item.unit}`;
+          if (item.masterPackageQty && item.masterPackageQty > 0) {
+            const masterPkgs = Math.ceil(item.qty / item.masterPackageQty);
+            qtyLabel += ` (${masterPkgs} bal.)`;
+          }
+          page.drawText(pdfText(qtyLabel), { x: colQty, y: yPos, size: 10, font });
+
+          yPos -= 16;
         }
-
-        // Quantity + master package info
-        let qtyLabel = `${item.qty} ${item.unit}`;
-        if (item.masterPackageQty && item.masterPackageQty > 0) {
-          const masterPkgs = Math.ceil(item.qty / item.masterPackageQty);
-          qtyLabel += ` (${masterPkgs} bal.)`;
-        }
-        page.drawText(pdfText(qtyLabel), { x: colQty, y: yPos, size: 10, font });
-
-        yPos -= 16;
+        yPos -= 4;
       }
-      yPos -= 4;
+      yPos -= 10;
     }
-    yPos -= 10;
+  };
+
+  // Vícedenní akci lze rozdělit na bloky podle dne, kdy řádek odjíždí ze skladu.
+  const dayCount = snapshot.event.dayCount ?? 1;
+  if (splitByDay && dayCount > 1) {
+    for (let day = 1; day <= dayCount; day++) {
+      const daySnapshot = filterSnapshotToDay(snapshot, day);
+      if (daySnapshot.groups.length === 0) continue;
+
+      if (yPos < 80) {
+        page = pdfDoc.addPage();
+        ({ width, height } = page.getSize());
+        yPos = height - 50;
+      }
+      yPos -= 6;
+      page.drawText(pdfText(`Balit na den ${day}`), { x: colMargin, y: yPos, size: 14, font: bold, color: rgb(0.1, 0.1, 0.5) });
+      yPos -= 10;
+      renderItems(daySnapshot);
+    }
+  } else {
+    renderItems(snapshot);
   }
 
   return pdfDoc.save();

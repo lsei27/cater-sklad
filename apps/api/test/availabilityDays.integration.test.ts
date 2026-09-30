@@ -4,6 +4,8 @@ import { createTestPrisma } from "./testPrisma.js";
 import { fixtureStamp } from "./fixtureStamp.js";
 import { createInventoryLedgerEntry } from "../src/services/ledger.js";
 import { getAvailabilityForEventItemTx } from "../src/services/availability.js";
+import { issueAdditionalTx } from "../src/services/issueAdditional.js";
+import { InsufficientStockError } from "../src/services/reserve.js";
 
 type TestPrisma = ReturnType<typeof createTestPrisma>["prisma"];
 
@@ -108,14 +110,62 @@ describe("dostupnost po dnech (integration)", () => {
     await disconnect();
   });
 
-  maybe("excludeWholeEvent vynechá všechny řádky vlastní akce", async () => {
+  maybe("excludeWholeEvent nevynechává rezervace vlastní akce", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     const f = await setup(prisma, { stock: 100 });
     const a = await f.makeEvent("A", A_DELIVERY, A_PICKUP);
     await f.reserve(a.id, 50);
     await f.reserve(a.id, 30, 2, 2);
 
-    expect((await f.availability(a.id, { excludeWholeEvent: true })).available).toBe(100);
+    // Den 2: 50 + 30 = 80 blokuje dál, doplňkový výdej smí jen zbytek.
+    expect((await f.availability(a.id, { excludeWholeEvent: true })).available).toBe(20);
+    await disconnect();
+  });
+
+  maybe("doplňkový výdej po vydání dne 1 nesáhne na zboží rezervované na den 2", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma, { stock: 100 });
+    const a = await f.makeEvent("A", A_DELIVERY, A_PICKUP, EventStatus.ISSUED);
+    await f.reserve(a.id, 30, 1, 1);
+    await f.reserve(a.id, 70, 2, 2);
+    const warehouse = await prisma.warehouse.create({ data: { name: `SkladX-${a.id}` } });
+    await prisma.eventIssue.create({
+      data: {
+        eventId: a.id,
+        inventoryItemId: f.item.id,
+        issuedQuantity: 30,
+        type: "issued",
+        dayFrom: 1,
+        dayTo: 1,
+        warehouseId: warehouse.id,
+        issuedById: f.user.id,
+        idempotencyKey: `d1:${a.id}:${f.item.id}`
+      }
+    });
+    await createInventoryLedgerEntry(prisma, {
+      inventoryItemId: f.item.id,
+      deltaQuantity: -30,
+      reason: LedgerReason.issue,
+      eventId: a.id,
+      createdById: f.user.id,
+      note: "Výdej dne 1"
+    });
+
+    // Fyzicky zbývá 70 a všech 70 je rezervovaných na den 2. Dodatečně vydané
+    // zboží se vrací až po akci, takže vrácení dne 1 mu nepomůže.
+    expect((await f.availability(a.id, { excludeWholeEvent: true })).available).toBe(0);
+    await expect(
+      prisma.$transaction((tx) =>
+        issueAdditionalTx({
+          tx,
+          eventId: a.id,
+          userId: f.user.id,
+          idempotencyKey: `add-${a.id}`,
+          warehouseId: warehouse.id,
+          items: [{ inventoryItemId: f.item.id, qty: 50 }]
+        })
+      )
+    ).rejects.toBeInstanceOf(InsufficientStockError);
     await disconnect();
   });
 

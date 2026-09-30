@@ -142,7 +142,7 @@ API adresu z `VITE_API_BASE_URL`.
 
 ### Rezervace a Dostupnost (`apps/api/src/services/`)
 
-**Výpočet dostupnosti má jedinou implementaci: `getItemsAvailabilityTx` v `apps/api/src/services/availability.ts`.** Používá ji `getAvailabilityForEventItemsTx` (detail akce, rezervace, kopie akce, doplňkový výdej s `excludeWholeEvent`) a přímo obě přehledové cesty v `apps/api/src/routes/inventory.ts` (`GET /inventory/items?with_stock=true` a cross-sells, vyloučení `none`). Pravidla proto stačí měnit na jednom místě a pustit `apps/api/test/availability.integration.test.ts`.
+**Výpočet dostupnosti má jedinou implementaci: `getItemsAvailabilityTx` v `apps/api/src/services/availability.ts`.** Používá ji `getAvailabilityForEventItemsTx` (detail akce, rezervace, kopie akce, doplňkový výdej s `excludeWholeEvent`, který vynechá jen ruční blokace vlastní akce, ne její rezervace) a přímo obě přehledové cesty v `apps/api/src/routes/inventory.ts` (`GET /inventory/items?with_stock=true` a cross-sells, vyloučení `none`). Pravidla proto stačí měnit na jednom místě a pustit `apps/api/test/availability.integration.test.ts`.
 
 - **Blokace** je špička souběžného vytížení intervalů řádků rezervací (začátek a konec řádku podle dnů akce, konec plus `return_delay_days`), ne prostý součet.
 - **`virtual_returns`** (kusy z vydaných akcí, které se počítají jako zpátky dostupné):
@@ -181,6 +181,7 @@ API adresu z `VITE_API_BASE_URL`.
 - Řádek položky v akci má rozsah `day_from` / `day_to` (`day_to = NULL` = do konce akce). Jedna položka může mít víc řádků s různými dny. Rozsah končící posledním dnem se ukládá jako `NULL`.
 - Dny se neukládají na akci, odvozují se ze závozu a svozu: den 1 = datum závozu, hranice dnů je půlnoc `Europe/Prague`. Počítají je SQL funkce `event_day_count`, `event_day_start`, `event_day_end` z migrace `20260930090000_multi_day_rows`.
 - Unikátní klíč řádků rezervací a balení je výrazový index s `COALESCE(day_to, 0)`. Prisma ho ve schématu neumí, `prisma db push` ho nevytvoří: lokálně po `db push` pusť `prisma db execute --file` s touto migrací.
+- **Pozor při generování migrací:** výrazové unikátní indexy (`event_reservations_event_item_days_key`, `event_packing_event_item_days_key`) nejsou v `schema.prisma`. Každou migraci vygenerovanou přes `prisma migrate dev` / `migrate diff` proto zkontroluj, jestli neobsahuje nechtěné `DROP INDEX "event_reservations_event_item_days_key"` / `"event_packing_event_item_days_key"`. Druhý `prisma db push` je může také zahodit.
 - Dostupnost počítá jediná funkce `getItemsAvailabilityTx` v `services/availability.ts` (detail akce i skladové přehledy). Blokuje špička souběžného vytížení a rezervace blokuje až do konce řádku plus `return_delay_days`.
 - Výdej jde po dnech (`POST /events/:id/issue` s `day`), vydané dny = rozlišné `day_from` v `event_issues`. Doplňkový výdej má `day_from = NULL` a vydaný den nevytváří.
 - Vydaný řádek rezervace (existuje řádek výdeje se stejným klíčem akce, položka, `day_from`, `day_to`) už neblokuje: výdej ho odečetl z fyzického stavu a zpět se počítá virtuálním návratem. Dřív se vydané zboží překrývající se akce odečítalo dvakrát.

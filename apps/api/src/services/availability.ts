@@ -10,7 +10,10 @@ export type EventItemAvailability = {
 
 /// Koho výpočet vynechá z blokace.
 /// - none: skladové přehledy, počítá se všechno.
-/// - event: doplňkový výdej, vlastní akce se vynechá celá.
+/// - event: doplňkový výdej. Vynechají se jen ruční blokace vlastní akce.
+///   Řádky rezervací vlastní akce blokují dál: vydané dny už blokovat přestaly
+///   (párují se s řádkem výdeje), ale rezervace dosud nevydaných dní drží zboží,
+///   které se později vydá bez další kontroly.
 /// - row: rezervace a „Volné“ u řádku. Vynechá se jen řádek se stejným klíčem
 ///   (akce, položka, rozsah), ostatní řádky téže akce blokují. Jinak by si dva
 ///   řádky jedné akce navzájem nekontrolovaly kapacitu.
@@ -44,7 +47,6 @@ export async function getItemsAvailabilityTx(
 
   const { start, end, exclude } = params;
   const excludeEventId = exclude.kind === "none" ? null : exclude.eventId;
-  const excludeWholeEvent = exclude.kind === "event";
   const excludeDayFrom = exclude.kind === "row" ? exclude.range.dayFrom : null;
   const excludeDayTo = exclude.kind === "row" ? exclude.range.dayTo : null;
 
@@ -107,10 +109,8 @@ loads AS (
     )
     AND NOT COALESCE(
       r.event_id = ${excludeEventId}::uuid
-      AND (
-        ${excludeWholeEvent}::boolean
-        OR (r.day_from = ${excludeDayFrom}::int AND COALESCE(r.day_to, 0) = COALESCE(${excludeDayTo}::int, 0))
-      ),
+      AND r.day_from = ${excludeDayFrom}::int
+      AND COALESCE(r.day_to, 0) = COALESCE(${excludeDayTo}::int, 0),
       false
     )
   UNION ALL
@@ -194,7 +194,8 @@ LEFT JOIN blocked b ON b.inventory_item_id = i.inventory_item_id;
 export type EventAvailabilityOptions = {
   /// Rozsah řádku, pro který se dostupnost počítá. Výchozí je celá akce.
   range?: DayRange;
-  /// Doplňkový výdej: vlastní akce se vynechá celá.
+  /// Doplňkový výdej: vynechají se jen ruční blokace vlastní akce, rezervace
+  /// dosud nevydaných dní dál blokují.
   excludeWholeEvent?: boolean;
 };
 

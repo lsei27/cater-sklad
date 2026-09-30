@@ -673,7 +673,9 @@ export default function WarehouseEventDetailPage() {
             <div className="text-sm font-semibold">Akce</div>
             <div className="mt-1 text-sm text-slate-600">
               {event.status === "SENT_TO_WAREHOUSE"
-                ? "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."
+                ? isMultiDay
+                  ? "Vícedenní akce se balí a vydává po dnech v kartě „Balení po dnech“."
+                  : "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."
                 : "Po vydání lze akci už jen uzavřít a zapsat vrácené / rozbité kusy."}
             </div>
           </CardHeader>

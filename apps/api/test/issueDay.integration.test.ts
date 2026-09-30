@@ -93,6 +93,44 @@ describe("výdej po dnech (integration)", () => {
     await disconnect();
   });
 
+  maybe("explicitní day_to rovné poslednímu dni se uloží jako NULL", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma, { days: 3 });
+
+    await prisma.$transaction((tx) =>
+      issueDayTx({
+        tx,
+        eventId: f.event.id,
+        userId: f.user.id,
+        day: 1,
+        idempotencyKey: `t-${f.stamp}`,
+        items: [{ inventory_item_id: f.item.id, issued_quantity: 50, day_to: 3 }]
+      })
+    );
+
+    expect(await f.issueRows()).toEqual([{ issuedQuantity: 50, dayFrom: 1, dayTo: null }]);
+    await disconnect();
+  });
+
+  maybe("explicitní day_to menší než den se odmítne jako INVALID_DAY", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma, { days: 3 });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        issueDayTx({
+          tx,
+          eventId: f.event.id,
+          userId: f.user.id,
+          day: 2,
+          idempotencyKey: `t-${f.stamp}`,
+          items: [{ inventory_item_id: f.item.id, issued_quantity: 70, day_to: 1 }]
+        })
+      )
+    ).rejects.toThrow("INVALID_DAY");
+    await disconnect();
+  });
+
   maybe("opakovaný výdej téhož dne nic nezapíše", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     const f = await setup(prisma, { days: 3 });
