@@ -90,7 +90,7 @@ Databáze běží na **Supabase (PostgreSQL)** přes Session pooler (IPv4 kompat
 - **Vazba na manažera**: `createdBy` (uživatel, který akci vytvořil). Jméno manažera se zobrazuje v UI i PDF; fallback na email, pokud není name.
 
 ### 4. Rezervace a Exporty
-- **EventReservation**: Tabulka spojující akce a položky s rezervovaným počtem. Unikátní na dvojici `(eventId, inventoryItemId)`, takže položka je v akci vždy nejvýš jednou.
+- **EventReservation**: Tabulka spojující akce a položky s rezervovaným počtem. Unikátní na `(event_id, inventory_item_id, day_from, COALESCE(day_to, 0))`; jedna položka může mít v akci víc řádků s různými rozsahy dnů (viz sekce „Vícedenní akce po dnech“).
 - **EventExport**: Snapshot stavu akce v momentě "předání skladu". Obsahuje `snapshotJson` (kompletní data pro PDF) a verzi.
 - **ExportSnapshot**: obsahuje `event.managerName` pro header PDF.
 
@@ -142,22 +142,15 @@ API adresu z `VITE_API_BASE_URL`.
 
 ### Rezervace a Dostupnost (`apps/api/src/services/`)
 
-**⚠️ Výpočet dostupnosti je duplikovaný na třech místech a musí zůstat konzistentní:**
+**Výpočet dostupnosti má jedinou implementaci: `getItemsAvailabilityTx` v `apps/api/src/services/availability.ts`.** Používá ji `getAvailabilityForEventItemsTx` (detail akce, rezervace, kopie akce, doplňkový výdej s `excludeWholeEvent`) a přímo obě přehledové cesty v `apps/api/src/routes/inventory.ts` (`GET /inventory/items?with_stock=true` a cross-sells, vyloučení `none`). Pravidla proto stačí měnit na jednom místě a pustit `apps/api/test/availability.integration.test.ts`.
 
-1. `apps/api/src/services/availability.ts` — `getAvailabilityForEventItemsTx`, jedna nebo více položek vůči jedné akci. `getAvailabilityForEventItemTx` je tenký wrapper pro jednu položku. Používají ji rezervace, doplňkový výdej a `POST /events/:id/availability`. Hromadná varianta počítá všechny požadované položky jedním SQL dotazem. **Je to referenční implementace.**
-2. `GET /inventory/items?with_stock=true` v `apps/api/src/routes/inventory.ts` — pole položek, pohání stránku Sklad.
-3. `GET /inventory/items/:id/cross-sells` tamtéž.
-
-V srpnu 2026 se ukázalo, že dotazy 2 a 3 postrádaly doménová pravidla, která mělo jen `availability.ts`. Stránka Sklad kvůli tomu ukazovala zásobu, která fyzicky neexistovala. Pravidla, která musí mít **všechny tři**:
-
+- **Blokace** je špička souběžného vytížení intervalů řádků rezervací (začátek a konec řádku podle dnů akce, konec plus `return_delay_days`), ne prostý součet.
 - **`virtual_returns`** (kusy z vydaných akcí, které se počítají jako zpátky dostupné):
-  - `ii.consumable = false` — spotřební zboží se nevrací vůbec, takže se nezapočítává
-  - `e.pickup_datetime + make_interval(days => ii.return_delay_days) <= t_start` — vratná položka je k dispozici až po prodlevě na mytí, kontrolu a přepravu
-- **`per_event_blocked`** (bere `GREATEST(rezervace, ruční blokace)` na akci, aby se totéž zboží nezapočítalo dvakrát):
-  - **rezervace** platí jen u živé akce (`status NOT IN ('CLOSED','CANCELLED')`), jejíž termín se překrývá s oknem
-  - **ruční blokace** se řídí **výhradně svým `blocked_until`**, tedy i na už uzavřené akci. Sklad si po akci nechává špinavé zboží stranou, dokud ho nezkontroluje. Tyhle podmínky proto patří do `ON` klauzulí jednotlivých JOINů, ne do společného `WHERE`, jinak by filtr na stav akce zahodil i blokace.
-
-Pokud tenhle výpočet měníš, změň ho na všech třech místech a spusť `apps/api/test/availability.integration.test.ts`.
+  - `ii.consumable = false` - spotřební zboží se nevrací vůbec, takže se nezapočítává
+  - `e.pickup_datetime + make_interval(days => ii.return_delay_days) <= t_start` - vratná položka je k dispozici až po prodlevě na mytí, kontrolu a přepravu
+- **`per_event_blocked`** bere `GREATEST(rezervace, ruční blokace)` na akci, aby se totéž zboží nezapočítalo dvakrát:
+  - **rezervace** platí jen u živé akce (`status NOT IN ('CLOSED','CANCELLED')`), jejíž termín se překrývá s oknem; **vydaný řádek rezervace neblokuje** (viz „Vícedenní akce po dnech“)
+  - **ruční blokace** se řídí **výhradně svým `blocked_until`**, tedy i na už uzavřené akci. Sklad si po akci nechává špinavé zboží stranou, dokud ho nezkontroluje.
 
 - **`reserve.ts`**: Zajišťuje transakční zápis rezervací. Obsahuje logiku pro zamykání řádků (`pg_advisory_xact_lock`), aby nedošlo k overbookingu.
 - **Automatický export po změně**: Pokud je akce `SENT_TO_WAREHOUSE` a kuchyň už potvrdila, přidání položek Event Managerem vytvoří nový export (verze se zvyšuje) a přes SSE se propaguje změna.
