@@ -14,13 +14,15 @@ import { cn } from "../lib/ui";
 import Modal from "../components/ui/Modal";
 import AdditionalIssueModal from "../components/AdditionalIssueModal";
 import { Icons } from "../lib/icons";
+import DayPackingCard from "../components/DayPackingCard";
+import { dayRangeLabel } from "../lib/eventDays";
 import { X, Plus } from "lucide-react";
 
 type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
 
 type Snapshot = {
   event: { version: number };
-  groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number }> }>;
+  groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number; dayFrom?: number; dayTo?: number | null }> }>;
 };
 
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; warehouseName?: string | null; warehouseIsHome?: boolean | null };
@@ -28,7 +30,7 @@ type Warehouse = { id: string; name: string; isHome?: boolean };
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
-type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string };
+type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string; dayFrom?: number; dayTo?: number | null };
 
 function OffSiteBadge(props: { warehouseName?: string | null; warehouseIsHome?: boolean | null }) {
   // Starsi exporty sklad nenesou (undefined) - tam se nehlasi nic.
@@ -176,6 +178,20 @@ export default function WarehouseEventDetailPage() {
     if (fromEvent.length > 0) return fromEvent;
     return snapshotItems as WarehouseItem[];
   }, [event?.warehouseItems, snapshotItems]);
+
+  // Vícedenní akce se balí a vydává v kartě „Balení po dnech“. Stávající
+  // manuální a digitální výdej zůstává jen pro jednodenní akce.
+  const dayCount: number = event?.dayCount ?? 1;
+  const isMultiDay = dayCount > 1;
+  const issuedDays: number[] = event?.issuedDays ?? [];
+  const hasPendingDays = useMemo(
+    () => snapshotItems.some((i) => !issuedDays.includes(i.dayFrom ?? 1)),
+    [snapshotItems, issuedDays]
+  );
+
+  useEffect(() => {
+    if (isMultiDay && issueMode !== null) setIssueMode(null);
+  }, [isMultiDay, issueMode]);
 
   useEffect(() => {
     if (event?.status !== "SENT_TO_WAREHOUSE") {
@@ -531,7 +547,7 @@ export default function WarehouseEventDetailPage() {
               <ul className="mt-2 space-y-1">
                 {packingChanges.map((c, i) => (
                   <li key={i} className="text-xs text-amber-900">
-                    <span className="font-semibold">{c.name}</span>:{" "}
+                    <span className="font-semibold">{c.name}</span>{isMultiDay ? ` (${dayRangeLabel({ dayFrom: c.dayFrom ?? 1, dayTo: c.dayTo ?? null }, dayCount)})` : ""}:{" "}
                     {c.from} → <span className="font-bold">{c.to}</span> {c.unit}
                     <span className="ml-1 text-amber-700">
                       ({c.changedBy}, {new Date(c.changedAt).toLocaleString("cs-CZ")})
@@ -663,6 +679,11 @@ export default function WarehouseEventDetailPage() {
           </CardHeader>
           <CardContent>
             {event.status === "SENT_TO_WAREHOUSE" ? (
+              isMultiDay ? (
+                <div className="text-sm text-slate-600">
+                  Vícedenní akce se vydává po dnech v kartě „Balení po dnech“ níže.
+                </div>
+              ) : (
               <div className="space-y-4">
                 <div className="grid gap-2 md:grid-cols-2">
                   <button
@@ -779,6 +800,7 @@ export default function WarehouseEventDetailPage() {
                   </div>
                 ) : null}
               </div>
+              )
             ) : (
               <>
                 {event.status === "ISSUED" ? (
@@ -797,6 +819,19 @@ export default function WarehouseEventDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {isMultiDay && (event.status === "SENT_TO_WAREHOUSE" || (event.status === "ISSUED" && hasPendingDays)) ? (
+        <DayPackingCard
+          eventId={event.id}
+          dayCount={dayCount}
+          deliveryDatetime={event.deliveryDatetime}
+          exportVersion={snapshot?.event?.version ?? null}
+          items={snapshotItems}
+          issuedDays={issuedDays}
+          warehouses={warehouses}
+          onIssued={load}
+        />
+      ) : null}
 
       <Card>
         <CardHeader>
