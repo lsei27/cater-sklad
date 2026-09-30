@@ -20,6 +20,8 @@ describe("export vícedenní akce (integration)", () => {
       data: {
         name: `Exp-${stamp}`,
         location: "L",
+        eventDate: new Date("2030-10-01T00:00:00Z"),
+        eventEndDate: new Date("2030-10-03T00:00:00Z"),
         deliveryDatetime: new Date("2030-10-01T06:00:00Z"),
         pickupDatetime: new Date("2030-10-03T16:00:00Z"),
         status: EventStatus.READY_FOR_WAREHOUSE,

@@ -32,6 +32,8 @@ async function setup(prisma: TestPrisma, opts: { days: 1 | 3 }) {
     data: {
       name: `Issday-${stamp}`,
       location: "L",
+      eventDate: new Date("2030-11-05T00:00:00Z"),
+      eventEndDate: new Date(opts.days === 3 ? "2030-11-07T00:00:00Z" : "2030-11-05T00:00:00Z"),
       deliveryDatetime: new Date("2030-11-05T07:00:00Z"),
       pickupDatetime: new Date(opts.days === 3 ? "2030-11-07T17:00:00Z" : "2030-11-05T17:00:00Z"),
       status: EventStatus.READY_FOR_WAREHOUSE,

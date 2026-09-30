@@ -170,6 +170,7 @@ model Event {
   deliveryDatetime    DateTime    @map("delivery_datetime") @db.Timestamptz(6)
   pickupDatetime      DateTime    @map("pickup_datetime") @db.Timestamptz(6)
   eventDate           DateTime?   @map("event_date") @db.Timestamptz(6)
+  eventEndDate        DateTime?   @map("event_end_date") @db.Timestamptz(6)
   status              EventStatus @default(DRAFT)
   exportNeedsRevision Boolean     @default(false) @map("export_needs_revision")
   chefConfirmedAt     DateTime?   @map("chef_confirmed_at") @db.Timestamptz(6)

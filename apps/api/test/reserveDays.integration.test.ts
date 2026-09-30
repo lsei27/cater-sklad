@@ -21,6 +21,8 @@ async function setup(prisma: TestPrisma, stock: number) {
     data: {
       name: `Trojdenni-${stamp}`,
       location: "L",
+      eventDate: new Date("2030-08-01T00:00:00Z"),
+      eventEndDate: new Date("2030-08-03T00:00:00Z"),
       deliveryDatetime: new Date("2030-08-01T06:00:00Z"),
       pickupDatetime: new Date("2030-08-03T18:00:00Z"),
       status: EventStatus.READY_FOR_WAREHOUSE,

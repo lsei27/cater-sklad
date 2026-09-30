@@ -19,6 +19,8 @@ async function setup(prisma: TestPrisma) {
     data: {
       name: `Zdroj-${stamp}`,
       location: "L",
+      eventDate: new Date("2031-01-10T00:00:00Z"),
+      eventEndDate: new Date("2031-01-12T00:00:00Z"),
       deliveryDatetime: new Date("2031-01-10T07:00:00Z"),
       pickupDatetime: new Date("2031-01-12T17:00:00Z"),
       status: EventStatus.CLOSED,
@@ -41,7 +43,8 @@ async function setup(prisma: TestPrisma) {
           address: null,
           notes: null,
           registrationNumber: null,
-          eventDate: null,
+          eventDate: new Date(`${delivery.slice(0, 10)}T00:00:00Z`),
+          eventEndDate: new Date(`${pickup.slice(0, 10)}T00:00:00Z`),
           deliveryDatetime: new Date(delivery),
           pickupDatetime: new Date(pickup)
         }

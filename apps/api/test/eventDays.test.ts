@@ -2,17 +2,28 @@ import { describe, expect, it } from "vitest";
 import { dayRangeKey, eventDayCount, normalizeDayRange } from "../src/lib/eventDays.js";
 
 describe("eventDayCount", () => {
-  it("jednodenní akce má 1 den", () => {
-    expect(eventDayCount(new Date("2026-10-05T06:00:00Z"), new Date("2026-10-05T20:00:00Z"))).toBe(1);
+  const d = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+  it("bez data akce nebo konce je akce jednodenní", () => {
+    expect(eventDayCount(null, null)).toBe(1);
+    expect(eventDayCount(d("2026-10-05"), null)).toBe(1);
+    expect(eventDayCount(null, d("2026-10-07"))).toBe(1);
   });
 
-  it("počítá kalendářní dny v Praze, ne v UTC", () => {
-    // Závoz 5. 10. 18:00 Praha, svoz 6. 10. 00:30 Praha. V UTC je to pořád 5. 10.
-    expect(eventDayCount(new Date("2026-10-05T16:00:00Z"), new Date("2026-10-05T22:30:00Z"))).toBe(2);
+  it("stejný den je jeden den", () => {
+    expect(eventDayCount(d("2026-10-05"), d("2026-10-05"))).toBe(1);
+  });
+
+  it("počítá dny včetně obou krajních", () => {
+    expect(eventDayCount(d("2026-10-05"), d("2026-10-07"))).toBe(3);
+  });
+
+  it("konec před začátkem je jednodenní akce", () => {
+    expect(eventDayCount(d("2026-10-07"), d("2026-10-05"))).toBe(1);
   });
 
   it("přechod na zimní čas nerozbije počet dnů", () => {
-    expect(eventDayCount(new Date("2026-10-24T06:00:00Z"), new Date("2026-10-26T18:00:00Z"))).toBe(3);
+    expect(eventDayCount(d("2026-10-24"), d("2026-10-26"))).toBe(3);
   });
 });
 

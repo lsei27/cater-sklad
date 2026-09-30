@@ -50,6 +50,7 @@ describe("duplicate event (integration)", () => {
           notes: "Auto do 3,5 t",
           registrationNumber: null,
           eventDate: null,
+          eventEndDate: null,
           deliveryDatetime: new Date("2030-09-01T08:00:00Z"),
           pickupDatetime: new Date("2030-09-02T08:00:00Z")
         }
@@ -127,6 +128,7 @@ describe("duplicate event (integration)", () => {
           notes: null,
           registrationNumber: null,
           eventDate: null,
+          eventEndDate: null,
           deliveryDatetime: new Date("2030-09-01T08:00:00Z"),
           pickupDatetime: new Date("2030-09-02T08:00:00Z")
         }
@@ -202,6 +204,7 @@ describe("duplicate event (integration)", () => {
           notes: null,
           registrationNumber: null,
           eventDate: null,
+          eventEndDate: null,
           deliveryDatetime: new Date("2030-09-01T08:00:00Z"),
           pickupDatetime: new Date("2030-09-02T08:00:00Z")
         }

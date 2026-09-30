@@ -24,7 +24,7 @@ export async function reserveItemsTx(params: {
 
   const [event] = await tx.$queryRaw<{ id: string; status: string; export_needs_revision: boolean; day_count: number }[]>`
     SELECT id, status::text, export_needs_revision,
-           event_day_count(delivery_datetime, pickup_datetime)::int AS day_count
+           event_row_day_count(events)::int AS day_count
     FROM events
     WHERE id = ${eventId}::uuid
     FOR UPDATE

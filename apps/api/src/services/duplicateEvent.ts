@@ -26,6 +26,7 @@ export async function duplicateEventTx(params: {
     notes: string | null;
     registrationNumber: string | null;
     eventDate: Date | null;
+    eventEndDate: Date | null;
     deliveryDatetime: Date;
     pickupDatetime: Date;
   };
@@ -58,7 +59,7 @@ export async function duplicateEventTx(params: {
   // Řádky se přizpůsobí délce nové akce. Co začíná až po jejím posledním dni,
   // se nepřenese. Konec za posledním dnem se zkrátí na „do konce akce“ a řádky,
   // které tím dostanou stejný rozsah, se sečtou.
-  const dayCount = eventDayCount(data.deliveryDatetime, data.pickupDatetime);
+  const dayCount = eventDayCount(data.eventDate, data.eventEndDate);
   const merged = new Map<string, { inventoryItemId: string; range: DayRange; qty: number; item: (typeof reservations)[number]["item"] }>();
   for (const r of reservations) {
     if (r.dayFrom > dayCount) {

@@ -76,7 +76,7 @@ virtual_returns AS (
     AND e.status = 'ISSUED'
     AND ei.type = 'issued'
     AND ii.consumable = false
-    AND event_day_end(e.delivery_datetime, e.pickup_datetime, ei.day_to)
+    AND event_row_day_end(e, ei.day_to)
         + make_interval(days => ii.return_delay_days) <= ${start}::timestamptz
   GROUP BY ei.inventory_item_id
 ),
@@ -88,8 +88,8 @@ loads AS (
     r.event_id,
     r.reserved_quantity AS res_qty,
     0 AS block_qty,
-    event_day_start(e.delivery_datetime, r.day_from) AS s,
-    event_day_end(e.delivery_datetime, e.pickup_datetime, r.day_to)
+    event_row_day_start(e, r.day_from) AS s,
+    event_row_day_end(e, r.day_to)
       + make_interval(days => ii.return_delay_days) AS f
   FROM event_reservations r
   JOIN events e ON e.id = r.event_id
@@ -205,10 +205,9 @@ export async function getAvailabilityForEventItemsTx(
   inventoryItemIds: string[],
   options: EventAvailabilityOptions = {}
 ): Promise<EventItemAvailability[]> {
-  const [ev] = await tx.$queryRaw<Array<{ delivery: Date; pickup: Date; day_count: number }>>`
-    SELECT delivery_datetime AS delivery, pickup_datetime AS pickup,
-           event_day_count(delivery_datetime, pickup_datetime)::int AS day_count
-    FROM events WHERE id = ${targetEventId}::uuid
+  const [ev] = await tx.$queryRaw<Array<{ day_count: number }>>`
+    SELECT event_row_day_count(e)::int AS day_count
+    FROM events e WHERE e.id = ${targetEventId}::uuid
   `;
   if (!ev) throw new Error("EVENT_NOT_FOUND");
 
@@ -216,8 +215,9 @@ export async function getAvailabilityForEventItemsTx(
   if (!range) throw new Error("INVALID_DAY_RANGE");
 
   const [interval] = await tx.$queryRaw<Array<{ t_start: Date; t_end: Date }>>`
-    SELECT event_day_start(${ev.delivery}::timestamptz, ${range.dayFrom}::int) AS t_start,
-           event_day_end(${ev.delivery}::timestamptz, ${ev.pickup}::timestamptz, ${range.dayTo}::int) AS t_end
+    SELECT event_row_day_start(e, ${range.dayFrom}::int) AS t_start,
+           event_row_day_end(e, ${range.dayTo}::int) AS t_end
+    FROM events e WHERE e.id = ${targetEventId}::uuid
   `;
 
   return getItemsAvailabilityTx(tx, {

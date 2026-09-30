@@ -16,6 +16,8 @@ async function setup(prisma: TestPrisma) {
     data: {
       name: `Chg-${stamp}`,
       location: "L",
+      eventDate: new Date("2030-09-01T00:00:00Z"),
+      eventEndDate: new Date("2030-09-03T00:00:00Z"),
       deliveryDatetime: new Date("2030-09-01T06:00:00Z"),
       pickupDatetime: new Date("2030-09-03T18:00:00Z"),
       status: EventStatus.DRAFT,

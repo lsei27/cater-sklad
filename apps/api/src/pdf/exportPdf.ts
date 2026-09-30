@@ -9,6 +9,8 @@ export type ExportSnapshot = {
     address?: string | null;
     notes?: string | null;
     eventDate?: string | null;
+    /// Konec vícedenní akce. Chybí u exportů před zavedením data od-do.
+    eventEndDate?: string | null;
     deliveryDatetime: string;
     pickupDatetime: string;
     version: number;
@@ -78,6 +80,14 @@ export function itemDayFrom(item: { dayFrom?: number }): number {
   return item.dayFrom ?? 1;
 }
 
+/// Datum akce do hlavičky PDF. Vícedenní akce má rozsah od-do. Obě hodnoty
+/// jsou půlnoc UTC, v Praze tedy pořád stejný kalendářní den.
+export function eventDateText(eventDate: string, eventEndDate?: string | null): string {
+  const from = formatCzechDate(eventDate);
+  const to = eventEndDate ? formatCzechDate(eventEndDate) : "";
+  return to && to !== from ? `${from} - ${to}` : from;
+}
+
 export function dayTagLabel(item: { dayFrom?: number; dayTo?: number | null }, dayCount: number): string | null {
   if (dayCount <= 1) return null;
   const from = item.dayFrom ?? 1;
@@ -116,7 +126,7 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
   // Event Date (if available)
   let yPos = height - 80;
   if (snapshot.event.eventDate) {
-    page.drawText(pdfText(`Datum akce: ${formatCzechDate(snapshot.event.eventDate)}`), { x: 50, y: yPos, size: 12, font });
+    page.drawText(pdfText(`Datum akce: ${eventDateText(snapshot.event.eventDate, snapshot.event.eventEndDate)}`), { x: 50, y: yPos, size: 12, font });
     yPos -= 18;
   }
 

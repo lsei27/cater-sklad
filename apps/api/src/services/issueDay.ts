@@ -52,7 +52,7 @@ export async function issueDayTx(params: {
 
   const [ev] = await tx.$queryRaw<{ status: string; export_needs_revision: boolean; day_count: number }[]>`
     SELECT status::text, export_needs_revision,
-           event_day_count(delivery_datetime, pickup_datetime)::int AS day_count
+           event_row_day_count(events)::int AS day_count
     FROM events WHERE id = ${eventId}::uuid FOR UPDATE
   `;
   if (!ev) throw new Error("NOT_FOUND");

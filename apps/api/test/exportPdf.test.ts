@@ -1,6 +1,6 @@
 import { PDFPage } from "pdf-lib";
 import { describe, expect, it, vi } from "vitest";
-import { buildExportPdf, dayTagLabel, filterSnapshotToDay, type ExportSnapshot } from "../src/pdf/exportPdf.js";
+import { buildExportPdf, dayTagLabel, eventDateText, filterSnapshotToDay, type ExportSnapshot } from "../src/pdf/exportPdf.js";
 
 function snapshot(items: ExportSnapshot["groups"][number]["items"]): ExportSnapshot {
   return {
@@ -115,5 +115,16 @@ describe("vícedenní export", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("eventDateText", () => {
+  it("vícedenní akce tiskne rozsah od-do", () => {
+    expect(eventDateText("2030-10-05T00:00:00Z", "2030-10-07T00:00:00Z")).toBe("5. 10. 2030 - 7. 10. 2030");
+  });
+
+  it("jednodenní akce tiskne jedno datum", () => {
+    expect(eventDateText("2030-10-05T00:00:00Z", null)).toBe("5. 10. 2030");
+    expect(eventDateText("2030-10-05T00:00:00Z", "2030-10-05T00:00:00Z")).toBe("5. 10. 2030");
   });
 });

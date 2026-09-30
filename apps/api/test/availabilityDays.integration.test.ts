@@ -16,6 +16,10 @@ const A_PICKUP = "2030-07-03T18:00:00Z";
 const DAY2 = ["2030-07-02T06:00:00Z", "2030-07-02T18:00:00Z"] as const;
 const DAY3 = ["2030-07-03T06:00:00Z", "2030-07-03T10:00:00Z"] as const;
 
+// Data akce od-do jsou kalendářní dny jako půlnoc UTC. Časy v testech jsou
+// přes den, takže den v Praze je shodný s datem v ISO řetězci.
+const dayOf = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+
 async function setup(prisma: TestPrisma, opts: { stock: number; returnDelayDays?: number }) {
   const stamp = fixtureStamp();
   const user = await prisma.user.create({
@@ -34,6 +38,8 @@ async function setup(prisma: TestPrisma, opts: { stock: number; returnDelayDays?
       data: {
         name: `${name}-${stamp}`,
         location: "L",
+        eventDate: dayOf(delivery),
+        eventEndDate: dayOf(pickup),
         deliveryDatetime: new Date(delivery),
         pickupDatetime: new Date(pickup),
         status,
@@ -64,6 +70,35 @@ describe("dostupnost po dnech (integration)", () => {
     const res = await f.availability(b.id);
     expect(res.blockedTotal).toBe(0);
     expect(res.available).toBe(10);
+    await disconnect();
+  });
+
+  maybe("jednodenní akce se svozem druhý den ráno je pořád jednodenní a blokuje celý interval", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma, { stock: 10 });
+    // Závoz 5. 10. 8:00, svoz 6. 10. 8:00, bez data do.
+    const a = await prisma.event.create({
+      data: {
+        name: `Zitra-${fixtureStamp()}`,
+        location: "L",
+        eventDate: new Date("2030-10-05T00:00:00Z"),
+        deliveryDatetime: new Date("2030-10-05T06:00:00Z"),
+        pickupDatetime: new Date("2030-10-06T06:00:00Z"),
+        status: EventStatus.READY_FOR_WAREHOUSE,
+        createdById: f.user.id
+      }
+    });
+    const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT event_row_day_count(e)::int AS n FROM events e WHERE e.id = ${a.id}::uuid
+    `;
+    expect(n).toBe(1);
+    await f.reserve(a.id, 10);
+
+    // Jiná akce ve svozovém ránu (6. 10. 7:00) je stále blokovaná, po svozu volná.
+    const during = await f.makeEvent("B", "2030-10-06T05:00:00Z", "2030-10-06T05:30:00Z");
+    expect((await f.availability(during.id)).available).toBe(0);
+    const after = await f.makeEvent("C", "2030-10-06T07:00:00Z", "2030-10-06T09:00:00Z");
+    expect((await f.availability(after.id)).available).toBe(10);
     await disconnect();
   });
 

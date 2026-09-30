@@ -36,6 +36,8 @@ Akce zůstává jedna. **Každý řádek položky dostane rozsah dnů** `od dne`
 
 Žádné nové pole na akci. Den 1 je kalendářní datum závozu, poslední den je datum svozu, obojí v čase `Europe/Prague`. Počet dnů N = rozdíl dat + 1. Jednodenní akce má N = 1 a chová se jako dnes.
 
+**Změna 2026-09-30: dny se počítají z data akce od-do.** Původně se dny počítaly ze závozu a svozu. Svoz je v cateringu běžně druhý den ráno a formulář nabízí závoz zítra a svoz pozítří, takže se jako dvoudenní tvářily i obyčejné jednodenní akce (EM viděl volbu dnů, sklad kartu „Balení po dnech“ místo obvyklého výdeje). Dny proto určuje nové nepovinné `events.event_end_date`: počet dnů = kalendářní dny od `event_date` do `event_end_date` včetně, bez konce (nebo s koncem <= začátek) je akce jednodenní. Závoz a svoz jsou na počtu dnů nezávislé. Hranice dnů zůstávají (den 1 začíná závozem, další dny půlnocí v Praze, poslední končí svozem), mění se jen základ výpočtu. SQL funkce `event_row_day_count/start/end(events, ...)` z migrace `20260930150000_event_end_date` nahrazují `event_day_*(delivery, pickup, ...)`, které zůstávají v DB do pozdějšího úklidu kvůli nasazení.
+
 ### Řádek rezervace
 
 - Nové sloupce `day_from INT NOT NULL DEFAULT 1` a `day_to INT NULL`. `day_to = NULL` znamená „do konce akce“: když EM akci prodlouží, řádky „celá akce“ se prodlouží s ní. Stávající řádky dostanou `day_from = 1`, `day_to = NULL`, takže se nic nemění.

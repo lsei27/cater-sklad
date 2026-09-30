@@ -1,28 +1,25 @@
-// Dny vícedenní akce. Hranice dne je půlnoc v Praze: API běží na Renderu
-// v UTC, takže kalendářní datum se musí brát napevno v Europe/Prague.
-// Stejná pravidla drží SQL funkce event_day_* z migrace 20260930090000.
-
-const PRAGUE = "Europe/Prague";
+// Dny vícedenní akce. Počet dnů určuje datum akce od-do (event_date a
+// event_end_date, kalendářní data uložená jako půlnoc UTC). Stejná pravidla
+// drží SQL funkce event_row_day_* z migrace 20260930150000_event_end_date.
+// Hranice dnů uvnitř akce jsou půlnoci v Europe/Prague a počítá je SQL.
 
 /// Rozsah řádku akce. dayTo === null znamená „do konce akce“.
 export type DayRange = { dayFrom: number; dayTo: number | null };
 
 export const WHOLE_EVENT: DayRange = { dayFrom: 1, dayTo: null };
 
-const ymd = new Intl.DateTimeFormat("en-CA", {
-  timeZone: PRAGUE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
+const DAY_MS = 86_400_000;
 
-function pragueDateAsUtcMs(d: Date): number {
-  const [y, m, day] = ymd.format(d).split("-").map(Number);
-  return Date.UTC(y, m - 1, day);
+function utcDay(d: Date): number {
+  return Math.floor(d.getTime() / DAY_MS);
 }
 
-export function eventDayCount(delivery: Date, pickup: Date): number {
-  return Math.round((pragueDateAsUtcMs(pickup) - pragueDateAsUtcMs(delivery)) / 86_400_000) + 1;
+/// Počet kalendářních dnů od data akce do konce akce včetně. Bez obou dat
+/// nebo s koncem ne později než začátek je akce jednodenní.
+export function eventDayCount(eventDate: Date | null, eventEndDate: Date | null): number {
+  if (!eventDate || !eventEndDate) return 1;
+  const days = utcDay(eventEndDate) - utcDay(eventDate);
+  return days > 0 ? days + 1 : 1;
 }
 
 /**

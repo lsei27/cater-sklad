@@ -55,6 +55,15 @@ function compareByCategoryParentName(a: any, b: any) {
 // Databáze má na intervalu check constraint (events_interval_check). Bez téhle
 // validace se překlep v datu projeví až jako 500 z porušeného constraintu.
 const INTERVAL_ERROR = "Svoz musí být později než závoz.";
+const EVENT_DATES_ERROR = "Konec akce musí být stejný nebo pozdější den než začátek.";
+
+// Konec akce bez začátku nebo před začátkem nedává smysl. Obě hodnoty jsou
+// kalendářní data uložená jako půlnoc UTC, porovnává se tedy celý čas.
+function eventDatesInvalid(eventDate: Date | null, eventEndDate: Date | null): boolean {
+  if (!eventEndDate) return false;
+  if (!eventDate) return true;
+  return eventEndDate.getTime() < eventDate.getTime();
+}
 
 const EventCreateSchema = z
   .object({
@@ -64,6 +73,7 @@ const EventCreateSchema = z
     notes: z.string().optional().nullable(),
     registration_number: z.string().max(64).optional().nullable(),
     event_date: z.string().datetime().optional().nullable(),
+    event_end_date: z.string().datetime().optional().nullable(),
     delivery_datetime: z.string().datetime(),
     pickup_datetime: z.string().datetime()
   })
@@ -79,6 +89,7 @@ const EventUpdateSchema = z.object({
   notes: z.string().optional().nullable(),
   registration_number: z.string().max(64).optional().nullable(),
   event_date: z.string().datetime().optional().nullable(),
+  event_end_date: z.string().datetime().optional().nullable(),
   delivery_datetime: z.string().datetime().optional(),
   pickup_datetime: z.string().datetime().optional()
 });
@@ -139,6 +150,8 @@ export async function eventRoutes(app: FastifyInstance) {
         id: true,
         name: true,
         location: true,
+        eventDate: true,
+        eventEndDate: true,
         deliveryDatetime: true,
         pickupDatetime: true,
         status: true,
@@ -154,6 +167,9 @@ export async function eventRoutes(app: FastifyInstance) {
     const user = request.user!;
     requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const body = EventCreateSchema.parse(request.body);
+    if (eventDatesInvalid(body.event_date ? new Date(body.event_date) : null, body.event_end_date ? new Date(body.event_end_date) : null)) {
+      return httpError(reply, 400, "INVALID_EVENT_DATES", EVENT_DATES_ERROR);
+    }
     const event = await app.prisma.event.create({
       data: {
         name: body.name,
@@ -162,6 +178,7 @@ export async function eventRoutes(app: FastifyInstance) {
         notes: body.notes ?? null,
         registrationNumber: body.registration_number ?? null,
         eventDate: body.event_date ? new Date(body.event_date) : null,
+        eventEndDate: body.event_end_date ? new Date(body.event_end_date) : null,
         deliveryDatetime: new Date(body.delivery_datetime),
         pickupDatetime: new Date(body.pickup_datetime),
         createdById: user.id
@@ -184,6 +201,9 @@ export async function eventRoutes(app: FastifyInstance) {
     requireRole(user.role, ["admin", "event_manager", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = EventCreateSchema.parse(request.body);
+    if (eventDatesInvalid(body.event_date ? new Date(body.event_date) : null, body.event_end_date ? new Date(body.event_end_date) : null)) {
+      return httpError(reply, 400, "INVALID_EVENT_DATES", EVENT_DATES_ERROR);
+    }
 
     try {
       // Delší timeout ze stejného důvodu jako u hromadného importu: kopie velké
@@ -201,6 +221,7 @@ export async function eventRoutes(app: FastifyInstance) {
               notes: body.notes ?? null,
               registrationNumber: body.registration_number ?? null,
               eventDate: body.event_date ? new Date(body.event_date) : null,
+              eventEndDate: body.event_end_date ? new Date(body.event_end_date) : null,
               deliveryDatetime: new Date(body.delivery_datetime),
               pickupDatetime: new Date(body.pickup_datetime)
             }
@@ -246,7 +267,8 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    if (existing.eventDate && existing.eventDate.getTime() < today.getTime()) {
+    const lastDay = existing.eventEndDate ?? existing.eventDate;
+    if (lastDay && lastDay.getTime() < today.getTime()) {
       return httpError(reply, 403, "EVENT_IN_PAST", "Akci s datem v minulosti již nelze upravovat.");
     }
 
@@ -262,10 +284,17 @@ export async function eventRoutes(app: FastifyInstance) {
       return httpError(reply, 400, "INVALID_INTERVAL", INTERVAL_ERROR);
     }
 
+    const nextEventDate = body.event_date !== undefined ? (body.event_date ? new Date(body.event_date) : null) : existing.eventDate;
+    const nextEventEndDate =
+      body.event_end_date !== undefined ? (body.event_end_date ? new Date(body.event_end_date) : null) : existing.eventEndDate;
+    if (eventDatesInvalid(nextEventDate, nextEventEndDate)) {
+      return httpError(reply, 400, "INVALID_EVENT_DATES", EVENT_DATES_ERROR);
+    }
+
     let event;
     try {
       event = await app.prisma.$transaction(async (tx) => {
-        const { changed } = await fitReservationsToDayCountTx(tx, params.id, eventDayCount(nextDelivery, nextPickup));
+        const { changed } = await fitReservationsToDayCountTx(tx, params.id, eventDayCount(nextEventDate, nextEventEndDate));
         return tx.event.update({
           where: { id: params.id },
           data: {
@@ -275,6 +304,7 @@ export async function eventRoutes(app: FastifyInstance) {
             ...(body.notes !== undefined ? { notes: body.notes } : {}),
             ...(body.registration_number !== undefined ? { registrationNumber: body.registration_number } : {}),
             ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
+            ...(body.event_end_date !== undefined ? { eventEndDate: body.event_end_date ? new Date(body.event_end_date) : null } : {}),
             ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
             ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {}),
             // Zkrácené řádky mění balení, sklad musí dostat nový export.
@@ -406,7 +436,7 @@ export async function eventRoutes(app: FastifyInstance) {
       warehouseItems = Array.from(byItemId.values());
     }
 
-    const dayCount = eventDayCount(event.deliveryDatetime, event.pickupDatetime);
+    const dayCount = eventDayCount(event.eventDate, event.eventEndDate);
     const issuedDays = await getIssuedDaysTx(app.prisma, event.id);
 
     return { event: { ...event, exports, warehouseItems, dayCount, issuedDays } };
@@ -741,14 +771,15 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const eventCheck = await app.prisma.event.findUnique({
       where: { id: params.id },
-      select: { eventDate: true, createdById: true }
+      select: { eventDate: true, eventEndDate: true, createdById: true }
     });
     if (!eventCheck) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena");
 
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    if (eventCheck.eventDate && eventCheck.eventDate.getTime() < today.getTime()) {
+    const eventLastDay = eventCheck.eventEndDate ?? eventCheck.eventDate;
+    if (eventLastDay && eventLastDay.getTime() < today.getTime()) {
       return httpError(reply, 403, "EVENT_IN_PAST", "Do akce s datem v minulosti nelze přidávat položky.");
     }
 
@@ -897,7 +928,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const ev = await app.prisma.event.findUnique({
       where: { id: params.id },
-      select: { id: true, name: true, location: true, address: true, notes: true, eventDate: true, deliveryDatetime: true, pickupDatetime: true, status: true }
+      select: { id: true, name: true, location: true, address: true, notes: true, eventDate: true, eventEndDate: true, deliveryDatetime: true, pickupDatetime: true, status: true }
     });
     if (!ev) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
 
@@ -938,9 +969,10 @@ export async function eventRoutes(app: FastifyInstance) {
         address: ev.address,
         notes: ev.notes ?? null,
         eventDate: ev.eventDate?.toISOString() ?? null,
+        eventEndDate: ev.eventEndDate?.toISOString() ?? null,
         deliveryDatetime: ev.deliveryDatetime.toISOString(),
         pickupDatetime: ev.pickupDatetime.toISOString(),
-        dayCount: eventDayCount(ev.deliveryDatetime, ev.pickupDatetime)
+        dayCount: eventDayCount(ev.eventDate, ev.eventEndDate)
       },
       groups: Array.from(groupsMap.values())
         .map((group) => ({
