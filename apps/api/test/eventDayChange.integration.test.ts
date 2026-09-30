@@ -32,7 +32,17 @@ async function setup(prisma: TestPrisma) {
       orderBy: [{ dayFrom: "asc" }, { reservedQuantity: "asc" }],
       select: { dayFrom: true, dayTo: true, reservedQuantity: true }
     });
-  return { event, item, add, rows };
+  const pack = (dayFrom: number, dayTo: number | null) =>
+    prisma.eventPacking.create({
+      data: { eventId: event.id, inventoryItemId: item.id, state: "confirmed", dayFrom, dayTo, updatedById: user.id }
+    });
+  const packing = () =>
+    prisma.eventPacking.findMany({
+      where: { eventId: event.id },
+      orderBy: [{ dayFrom: "asc" }, { dayTo: "asc" }],
+      select: { dayFrom: true, dayTo: true }
+    });
+  return { event, item, add, rows, pack, packing };
 }
 
 describe("zkrácení vícedenní akce (integration)", () => {
@@ -83,6 +93,34 @@ describe("zkrácení vícedenní akce (integration)", () => {
       { dayFrom: 1, dayTo: null, reservedQuantity: 10 },
       { dayFrom: 2, dayTo: 2, reservedQuantity: 5 }
     ]);
+    await disconnect();
+  });
+
+  maybe("zahodí balení ořezaného řádku i cíle sloučení, cizí dayFrom nechá", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma);
+    await f.add(10, 1, null);
+    await f.add(5, 1, 2);
+    await f.add(2, 2, null);
+    await f.pack(1, null);
+    await f.pack(1, 2);
+    await f.pack(2, null);
+
+    await prisma.$transaction((tx) => fitReservationsToDayCountTx(tx, f.event.id, 2));
+
+    expect(await f.packing()).toEqual([{ dayFrom: 2, dayTo: null }]);
+    await disconnect();
+  });
+
+  maybe("dva ořezávané řádky bez existujícího NULL řádku se sloučí do jednoho", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const f = await setup(prisma);
+    await f.add(4, 1, 2);
+    await f.add(6, 1, 3);
+
+    await prisma.$transaction((tx) => fitReservationsToDayCountTx(tx, f.event.id, 2));
+
+    expect(await f.rows()).toEqual([{ dayFrom: 1, dayTo: null, reservedQuantity: 10 }]);
     await disconnect();
   });
 });

@@ -53,7 +53,10 @@ export async function fitReservationsToDayCountTx(
 
   if (toTrim.length > 0) {
     // Stav balení se váže na klíč řádku. U změněných řádků ho skladník projde znovu.
-    await tx.eventPacking.deleteMany({ where: { eventId, dayTo: { gte: dayCount } } });
+    // Dotčené jsou i cílové řádky sloučení (dayTo NULL), ty sdílejí položku a dayFrom s ořezaným řádkem.
+    await tx.eventPacking.deleteMany({
+      where: { eventId, OR: toTrim.map((r) => ({ inventoryItemId: r.inventoryItemId, dayFrom: r.dayFrom })) }
+    });
   }
 
   return { changed: toTrim.length > 0 };
