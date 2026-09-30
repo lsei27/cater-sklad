@@ -16,6 +16,8 @@ import { computeIssuedWeightKg, formatWeightKg } from "../services/issueWeight.j
 import { returnCloseTx } from "../services/returnClose.js";
 import { requireWarehouseId, resolveWarehouseId } from "../services/warehouse.js";
 import { splitKnownIssueItems } from "../lib/issueSelection.js";
+import { eventDayCount } from "../lib/eventDays.js";
+import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
 
 function safeFilename(value: string) {
   return value
@@ -263,19 +265,38 @@ export async function eventRoutes(app: FastifyInstance) {
       return httpError(reply, 400, "INVALID_INTERVAL", INTERVAL_ERROR);
     }
 
-    const event = await app.prisma.event.update({
-      where: { id: params.id },
-      data: {
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.location !== undefined ? { location: body.location } : {}),
-        ...(body.address !== undefined ? { address: body.address } : {}),
-        ...(body.notes !== undefined ? { notes: body.notes } : {}),
-        ...(body.registration_number !== undefined ? { registrationNumber: body.registration_number } : {}),
-        ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
-        ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
-        ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {})
+    let event;
+    try {
+      event = await app.prisma.$transaction(async (tx) => {
+        const { changed } = await fitReservationsToDayCountTx(tx, params.id, eventDayCount(nextDelivery, nextPickup));
+        return tx.event.update({
+          where: { id: params.id },
+          data: {
+            ...(body.name !== undefined ? { name: body.name } : {}),
+            ...(body.location !== undefined ? { location: body.location } : {}),
+            ...(body.address !== undefined ? { address: body.address } : {}),
+            ...(body.notes !== undefined ? { notes: body.notes } : {}),
+            ...(body.registration_number !== undefined ? { registrationNumber: body.registration_number } : {}),
+            ...(body.event_date !== undefined ? { eventDate: body.event_date ? new Date(body.event_date) : null } : {}),
+            ...(body.delivery_datetime !== undefined ? { deliveryDatetime: new Date(body.delivery_datetime) } : {}),
+            ...(body.pickup_datetime !== undefined ? { pickupDatetime: new Date(body.pickup_datetime) } : {}),
+            // Zkrácené řádky mění balení, sklad musí dostat nový export.
+            ...(changed && existing.status === "SENT_TO_WAREHOUSE" ? { exportNeedsRevision: true } : {})
+          }
+        });
+      });
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === "DAYS_OUT_OF_RANGE") {
+        const names = (e as Error & { itemNames?: string[] }).itemNames ?? [];
+        return httpError(
+          reply,
+          409,
+          "DAYS_OUT_OF_RANGE",
+          `Tyto položky jsou naplánované na dny, které po změně termínu v akci nebudou: ${names.join(", ")}. Uprav je nejdřív.`
+        );
       }
-    });
+      throw e;
+    }
 
     await app.prisma.auditLog.create({
       data: { actorUserId: user.id, entityType: "event", entityId: event.id, action: "update", diffJson: body }
