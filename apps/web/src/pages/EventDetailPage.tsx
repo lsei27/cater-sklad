@@ -981,6 +981,8 @@ function AddItemsPanel(props: {
   // jen řádky tohoto rozsahu a dostupnost pro něj.
   const [range, setRange] = useState<DayRange>({ dayFrom: 1, dayTo: null });
   const rangeKey = dayRangeKey(range);
+  const rangeKeyRef = useRef(rangeKey);
+  rangeKeyRef.current = rangeKey;
   const dayNumbers = useMemo(() => Array.from({ length: props.dayCount }, (_, i) => i + 1), [props.dayCount]);
   const dayOptionLabel = (d: number) => `Den ${d} (${eventDayDateLabel(props.deliveryDatetime, d)})`;
 
@@ -1113,6 +1115,7 @@ function AddItemsPanel(props: {
     if (!existing && normalizedQty <= 0) return;
     if (existing && normalizedQty === Number(existing.reservedQuantity)) return;
 
+    const savedRangeKey = rangeKey;
     setSaving((prev) => ({ ...prev, [params.inventoryItemId]: true }));
     try {
       const res = await api<{ masterPackageAdjustments?: any[] }>(`/events/${props.eventId}/reserve`, {
@@ -1125,6 +1128,8 @@ function AddItemsPanel(props: {
       const adj = res.masterPackageAdjustments?.find((a) => a.inventoryItemId === params.inventoryItemId);
       const finalQty = adj ? adj.adjustedQty : normalizedQty;
 
+      // Rozsah se mohl během ukládání změnit, pak lokální stav panelu neměníme.
+      if (rangeKeyRef.current === savedRangeKey) {
       setCurrentItems((prev) => {
         const found = prev.find((r) => r.inventoryItemId === params.inventoryItemId);
         if (finalQty <= 0) {
@@ -1144,6 +1149,7 @@ function AddItemsPanel(props: {
         return [...prev, nextItem];
       });
       setQty((prev) => ({ ...prev, [params.inventoryItemId]: finalQty }));
+      }
 
       void props.onDone();
 
@@ -1212,7 +1218,10 @@ function AddItemsPanel(props: {
                 value={range.dayFrom}
                 onChange={(e) => {
                   const from = Number(e.target.value);
-                  setRange((r) => ({ dayFrom: from, dayTo: r.dayTo !== null && r.dayTo < from ? from : r.dayTo }));
+                  setRange((r) => {
+                    const to = r.dayTo !== null && r.dayTo < from ? from : r.dayTo;
+                    return { dayFrom: from, dayTo: to !== null && to >= props.dayCount ? null : to };
+                  });
                 }}
               >
                 {dayNumbers.map((d) => (
