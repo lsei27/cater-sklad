@@ -118,6 +118,29 @@ describe("vícedenní export", () => {
   });
 });
 
+describe("hlavicka na dalsich strankach", () => {
+  it("kazda dalsi strana nese nazev akce, misto a cislo strany", async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({ inventoryItemId: `i${i}`, name: `Položka ${i}`, unit: "ks", qty: 1 }));
+    const drawn: Array<{ text: string; page: PDFPage }> = [];
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text: string) {
+      drawn.push({ text, page: this });
+      return this;
+    });
+    try {
+      await buildExportPdf(snapshot(many));
+      const headers = drawn.filter((d) => d.text.startsWith("Testovaci akce | "));
+      const pages = new Set(drawn.map((d) => d.page));
+      expect(pages.size).toBeGreaterThan(1);
+      // Prvni strana ma plnou hlavicku, kratka hlavicka je na vsech ostatnich.
+      expect(headers).toHaveLength(pages.size - 1);
+      expect(headers[0].text).toContain("Praha");
+      expect(drawn.some((d) => d.text === `Strana 2 / ${pages.size}`)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("eventDateText", () => {
   it("vícedenní akce tiskne rozsah od-do", () => {
     expect(eventDateText("2030-10-05T00:00:00Z", "2030-10-07T00:00:00Z")).toBe("5. 10. 2030 - 7. 10. 2030");

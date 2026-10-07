@@ -46,6 +46,10 @@ model User {
   name         String?  @map("name")
   passwordHash String   @map("password_hash")
   role         Role
+  /// Navíc k roli: smí dělat inventuru (zadat skutečný stav) a přesuny mezi
+  /// sklady, ale ne vydávat a uzavírat akce. Pro event managery, kteří
+  /// pomáhají se skladem.
+  canStocktake Boolean  @default(false) @map("can_stocktake")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   createdEvents       Event[]            @relation("event_created_by")

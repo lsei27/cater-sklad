@@ -68,6 +68,9 @@ export default function WarehouseEventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
+  // Admin může u uzavřené akce zpětně opravit vrácené a rozbité kusy.
+  const [correcting, setCorrecting] = useState(false);
+  const [confirmCorrect, setConfirmCorrect] = useState(false);
   const [rows, setRows] = useState<Array<{ 
     inventory_item_id: string; 
     name: string; 
@@ -636,6 +639,30 @@ export default function WarehouseEventDetailPage() {
               >
                 Stáhnout závěrečný report (PDF)
               </Button>
+              {role === "admin" ? (
+                correcting ? (
+                  <>
+                    <Button size="sm" variant="danger" className="ml-2" onClick={() => setConfirmCorrect(true)}>
+                      Uložit opravu
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ml-2"
+                      onClick={async () => {
+                        setCorrecting(false);
+                        await load();
+                      }}
+                    >
+                      Zrušit
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="secondary" className="ml-2" onClick={() => setCorrecting(true)}>
+                    Opravit vrácené kusy
+                  </Button>
+                )
+              ) : null}
             </div>
           ) : null}
 
@@ -1037,7 +1064,7 @@ export default function WarehouseEventDetailPage() {
                             </div>
                           ) : null}
 
-                          {event.status === "ISSUED" ? (
+                          {event.status === "ISSUED" || (event.status === "CLOSED" && correcting) ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                               <label className="text-xs">
                                 Vráceno
@@ -1090,6 +1117,7 @@ export default function WarehouseEventDetailPage() {
                                   {shortfall} {r.unit}
                                 </div>
                               </div>
+                              {event.status === "ISSUED" ? (
                               <label className="text-xs col-span-2 sm:col-span-1">
                                 Sklad vrácení
                                 <select 
@@ -1104,6 +1132,7 @@ export default function WarehouseEventDetailPage() {
                                   {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                                 </select>
                               </label>
+                              ) : null}
                             </div>
                           ) : null}
 
@@ -1418,6 +1447,35 @@ export default function WarehouseEventDetailPage() {
             await load();
           } catch (e: any) {
             toast.error(e?.error?.message ?? "Nepodařilo se uzavřít akci.");
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmCorrect}
+        onOpenChange={setConfirmCorrect}
+        tone="danger"
+        title="Uložit opravu uzavření?"
+        description="Vrácené a rozbité kusy se přepíšou novými čísly. Sklad se upraví jen o rozdíl proti původnímu uzavření a oprava se zapíše do historie."
+        confirmText="Uložit opravu"
+        onConfirm={async () => {
+          if (!id) return;
+          try {
+            await api(`/events/${id}/return-close/correct`, {
+              method: "POST",
+              body: JSON.stringify({
+                items: rows.map((r) => ({
+                  inventory_item_id: r.inventory_item_id,
+                  returned_quantity: r.returned,
+                  broken_quantity: r.broken
+                }))
+              })
+            });
+            toast.success("Oprava uložena");
+            setCorrecting(false);
+            await load();
+          } catch (e: any) {
+            toast.error(e?.error?.message ?? "Nepodařilo se uložit opravu.");
           }
         }}
       />

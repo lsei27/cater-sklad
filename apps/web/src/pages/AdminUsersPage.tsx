@@ -173,6 +173,23 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [canStocktake, setCanStocktake] = useState<boolean>(user.canStocktake === true);
+  // Admin a sklad inventuru a přesuny smí vždy, přepínač má smysl jen u ostatních rolí.
+  const showStocktakeToggle = user.role !== "admin" && user.role !== "warehouse";
+
+  const toggleStocktake = async (next: boolean) => {
+    setCanStocktake(next);
+    try {
+      await api(`/admin/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ can_stocktake: next })
+      });
+      toast.success(next ? "Inventura a přesuny povoleny" : "Inventura a přesuny zakázány");
+    } catch (e: any) {
+      setCanStocktake(!next);
+      toast.error(e?.error?.message ?? "Nepodařilo se změnit oprávnění.");
+    }
+  };
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,6 +221,17 @@ function UserRow({ user, onDeleted }: { user: any; onDeleted: () => void }) {
           <div className="mt-1 text-xs text-slate-600">{user.name ? user.email : roleLabel(user.role)}</div>
         </div>
         <div className="flex items-center gap-2">
+          {showStocktakeToggle ? (
+            <label className="flex items-center gap-1.5 text-xs text-slate-600" title="Smí dělat inventuru a přesuny, ale ne vydávat a uzavírat akce">
+              <input
+                type="checkbox"
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                checked={canStocktake}
+                onChange={(e) => toggleStocktake(e.target.checked)}
+              />
+              Inventura a přesuny
+            </label>
+          ) : null}
           <Badge tone="neutral">{roleLabel(user.role)}</Badge>
           <button
             onClick={() => setResetOpen(true)}

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { getCurrentUser } from "../lib/api";
+import { getCurrentUser, hasStockAccess } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import { roleLabel } from "../lib/viewModel";
@@ -26,6 +26,7 @@ export default function SettingsPage() {
   const role = getCurrentUser()?.role ?? "";
   const isAdmin = role === "admin";
   const canManageCatalog = role === "admin" || role === "warehouse";
+  const canStocktakeOnly = !canManageCatalog && hasStockAccess(getCurrentUser());
 
   return (
     <div className="space-y-4">
@@ -51,6 +52,9 @@ export default function SettingsPage() {
             <Tile to="/settings/items?import=true" title="Import CSV" desc="Hromadné založení a aktualizace." icon={FileUp} />
             <Tile to="/settings/warehouses" title="Sklady" desc="Správa fyzických skladů." icon={Layers3} />
           </>
+        )}
+        {canStocktakeOnly && (
+          <Tile to="/settings/items" title="Inventura" desc="Zadání skutečného stavu položek." icon={Package} />
         )}
         <Tile to="/settings/password" title="Změna hesla" desc="Změna přihlašovacího hesla." icon={ShieldAlert} />
       </div>

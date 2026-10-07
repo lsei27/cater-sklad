@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { parse } from "csv-parse/sync";
 import { LedgerReason } from "../../generated/prisma/client.js";
-import { requireRole } from "../lib/rbac.js";
+import { requireRole, requireStockAccess } from "../lib/rbac.js";
 import { httpError } from "../lib/httpErrors.js";
 import { getPhysicalTotal, getWarehouseQuantity } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
@@ -136,7 +136,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/users", { preHandler: [app.authenticate] }, async (request) => {
     requireRole(request.user!.role, ["admin"]);
-    const users = await app.prisma.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, name: true, role: true } });
+    const users = await app.prisma.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, name: true, role: true, canStocktake: true } });
     return { users };
   });
 
@@ -187,13 +187,15 @@ export async function adminRoutes(app: FastifyInstance) {
       .object({
         password: z.string().min(6).optional(),
         name: z.string().min(1).optional(),
-        role: z.enum(["admin", "event_manager", "chef", "warehouse"]).optional()
+        role: z.enum(["admin", "event_manager", "chef", "warehouse"]).optional(),
+        can_stocktake: z.boolean().optional()
       })
       .parse(request.body);
 
     const data: any = {};
     if (body.name) data.name = body.name;
     if (body.role) data.role = body.role;
+    if (body.can_stocktake !== undefined) data.canStocktake = body.can_stocktake;
     if (body.password) {
       const bcrypt = await import("bcrypt");
       data.passwordHash = await bcrypt.default.hash(body.password, 10);
@@ -218,7 +220,7 @@ export async function adminRoutes(app: FastifyInstance) {
       }
     });
 
-    return reply.send({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+    return reply.send({ user: { id: user.id, email: user.email, name: user.name, role: user.role, canStocktake: user.canStocktake } });
   });
 
   app.delete("/admin/users/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -254,7 +256,7 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/items", { preHandler: [app.authenticate] }, async (request) => {
-    requireRole(request.user!.role, ["admin", "warehouse"]);
+    requireStockAccess(request.user!);
     const query = z.object({ search: z.string().optional() }).parse(request.query);
     const items = await app.prisma.inventoryItem.findMany({
       where: query.search ? { name: { contains: query.search, mode: "insensitive" } } : {},
@@ -572,7 +574,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/admin/items/:id/stock", { preHandler: [app.authenticate] }, async (request, reply) => {
     const actor = request.user!;
-    requireRole(actor.role, ["admin", "warehouse"]);
+    requireStockAccess(actor);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z
       .object({
@@ -582,6 +584,13 @@ export async function adminRoutes(app: FastifyInstance) {
         reason: z.string().trim().optional()
       })
       .parse(request.body);
+
+    // Uživatel jen s oprávněním na inventuru smí zapsat pouze skutečný stav,
+    // ne nákup, odpis ani jiný pohyb.
+    const isStocktakeOnly = actor.role !== "admin" && actor.role !== "warehouse";
+    if (isStocktakeOnly && (body.set_quantity === undefined || body.change !== undefined || (body.ledger_reason ?? "audit_adjustment") !== "audit_adjustment")) {
+      return httpError(reply, 403, "FORBIDDEN", "Můžeš zadat jen skutečný stav při inventuře.");
+    }
 
     if (body.change === undefined && body.set_quantity === undefined) {
       return httpError(reply, 400, "BAD_REQUEST", "Je nutné zadat změnu nebo cílové množství.");

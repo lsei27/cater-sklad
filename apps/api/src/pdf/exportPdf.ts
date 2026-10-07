@@ -106,6 +106,25 @@ export function filterSnapshotToDay(snapshot: ExportSnapshot, day: number): Expo
   };
 }
 
+/// Krátká hlavička na 2. a další straně, aby šlo každý vytištěný list přiřadit
+/// k akci i po rozdělení. Obsah dalších stran začíná na height - 50, hlavička se
+/// vejde nad něj.
+function drawContinuationHeaders(pdfDoc: PDFDocument, font: PDFFont, bold: PDFFont, title: string) {
+  const pages = pdfDoc.getPages();
+  pages.forEach((page, index) => {
+    if (index === 0) return;
+    const { width, height } = page.getSize();
+    const pageLabel = `Strana ${index + 1} / ${pages.length}`;
+    const pageLabelWidth = font.widthOfTextAtSize(pageLabel, 8);
+    const maxTitleWidth = width - 100 - pageLabelWidth - 16;
+    let text = pdfText(title);
+    while (text.length > 1 && bold.widthOfTextAtSize(text, 9) > maxTitleWidth) text = `${text.slice(0, -4)}...`;
+    page.drawText(text, { x: 50, y: height - 26, size: 9, font: bold, color: rgb(0.3, 0.3, 0.3) });
+    page.drawText(pageLabel, { x: width - 50 - pageLabelWidth, y: height - 26, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
+    page.drawLine({ start: { x: 50, y: height - 32 }, end: { x: width - 50, y: height - 32 }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6) });
+  });
+}
+
 export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string, splitByDay = false) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -334,6 +353,11 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
     renderItems(snapshot);
   }
 
+  const headerDate = snapshot.event.eventDate
+    ? eventDateText(snapshot.event.eventDate, snapshot.event.eventEndDate)
+    : formatCzechDate(snapshot.event.deliveryDatetime);
+  drawContinuationHeaders(pdfDoc, font, bold, `${fullTitle} | ${headerDate} | ${snapshot.event.location}`);
+
   return pdfDoc.save();
 }
 
@@ -445,6 +469,11 @@ export async function buildClosureReportPdf(event: any) {
     yPos = height - 50;
   }
   page.drawText(pdfText("Tento report slouzi pro vyuctovani akce."), { x: 50, y: yPos, size: 10, font });
+
+  const headerParts = [`Zaverecny report: ${event.name}`];
+  if (event.eventDate) headerParts.push(eventDateText(event.eventDate.toISOString(), event.eventEndDate?.toISOString()));
+  headerParts.push(event.location);
+  drawContinuationHeaders(pdfDoc, font, bold, headerParts.join(" | "));
 
   return pdfDoc.save();
 }
