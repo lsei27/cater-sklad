@@ -31,7 +31,12 @@ export function setToken(token: string | null) {
   else localStorage.setItem("token", token);
 }
 
-export type CurrentUser = { id: string; email: string; role: string };
+export type CurrentUser = { id: string; email: string; role: string; canStocktake?: boolean };
+
+/// Inventura a přesuny: sklad, admin, nebo uživatel se zapnutým oprávněním.
+export function hasStockAccess(user: CurrentUser | null) {
+  return user?.role === "admin" || user?.role === "warehouse" || user?.canStocktake === true;
+}
 
 export function getCurrentUser(): CurrentUser | null {
   const raw = localStorage.getItem("user");

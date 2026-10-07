@@ -39,7 +39,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!ok) return httpError(reply, 401, "INVALID_CREDENTIALS", "Invalid credentials");
 
     const token = app.jwt.sign({ sub: user.id }, { expiresIn: "12h" });
-    return reply.send({ token, user: { id: user.id, email: user.email, role: user.role } });
+    return reply.send({ token, user: { id: user.id, email: user.email, role: user.role, canStocktake: user.canStocktake } });
   });
 
   app.post("/auth/change-password", { config: LOGIN_RATE_LIMIT, preHandler: [app.authenticate] }, async (request, reply) => {

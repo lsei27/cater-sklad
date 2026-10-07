@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, apiUrl, getCurrentUser } from "../lib/api";
+import { api, apiUrl, getCurrentUser, hasStockAccess } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
@@ -26,6 +26,9 @@ function normalizeSearchText(value: string) {
 export default function AdminItemsPage() {
   const role = getCurrentUser()?.role ?? "";
   const canManageItems = role === "admin" || role === "warehouse";
+  // Uživatel s oprávněním jen na inventuru vidí seznam a smí zadat skutečný stav.
+  const stocktakeOnly = !canManageItems && hasStockAccess(getCurrentUser());
+  const canOpen = canManageItems || stocktakeOnly;
   const [searchParams, setSearchParams] = useSearchParams();
   const [parents, setParents] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
@@ -226,11 +229,11 @@ export default function AdminItemsPage() {
   };
 
   useEffect(() => {
-    if (!canManageItems) return;
+    if (!canOpen) return;
     load().catch(() => { });
-  }, [canManageItems]);
+  }, [canOpen]);
 
-  if (!canManageItems) {
+  if (!canOpen) {
     return (
       <Card>
         <CardContent>
@@ -243,10 +246,13 @@ export default function AdminItemsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold">Položky</h1>
-        <div className="text-sm text-slate-600">Úprava názvů, obrázků a dostupnosti v katalogu.</div>
+        <h1 className="text-xl font-semibold">{stocktakeOnly ? "Inventura" : "Položky"}</h1>
+        <div className="text-sm text-slate-600">
+          {stocktakeOnly ? "Zadání skutečného fyzického stavu položek." : "Úprava názvů, obrázků a dostupnosti v katalogu."}
+        </div>
       </div>
 
+      {canManageItems ? (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -329,6 +335,7 @@ export default function AdminItemsPage() {
           </form>
         </CardContent>
       </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -457,7 +464,7 @@ export default function AdminItemsPage() {
       ) : (
         <div className="space-y-2">
           {filteredItems.map((i) => (
-            <ItemRow key={i.id} item={i} allItems={items} parents={parents} warehouses={warehouses} onSaved={() => load({ keepLoading: true })} />
+            <ItemRow key={i.id} item={i} allItems={items} parents={parents} warehouses={warehouses} stocktakeOnly={stocktakeOnly} onSaved={() => load({ keepLoading: true })} />
           ))}
         </div>
       )}
@@ -466,7 +473,7 @@ export default function AdminItemsPage() {
   );
 }
 
-function ItemRow({ item, allItems, parents, warehouses, onSaved }: { item: any; allItems: any[]; parents: any[]; warehouses: any[]; onSaved: () => void }) {
+function ItemRow({ item, allItems, parents, warehouses, stocktakeOnly, onSaved }: { item: any; allItems: any[]; parents: any[]; warehouses: any[]; stocktakeOnly: boolean; onSaved: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
 
@@ -501,27 +508,29 @@ function ItemRow({ item, allItems, parents, warehouses, onSaved }: { item: any; 
 
             <div className="flex gap-2">
               <Button variant="secondary" size="sm" onClick={() => setStockOpen(true)}>
-                Sklad
+                {stocktakeOnly ? "Inventura" : "Sklad"}
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-                Upravit
-              </Button>
+              {!stocktakeOnly ? (
+                <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+                  Upravit
+                </Button>
+              ) : null}
             </div>
           </div>
         </CardContent>
       </Card>
 
       <EditItemModal open={editOpen} onOpenChange={setEditOpen} item={item} allItems={allItems} parents={parents} warehouses={warehouses} onSaved={onSaved} />
-      <StockModal open={stockOpen} onOpenChange={setStockOpen} item={item} onSaved={onSaved} />
+      <StockModal open={stockOpen} onOpenChange={setStockOpen} item={item} stocktakeOnly={stocktakeOnly} onSaved={onSaved} />
     </>
   );
 }
 
-function StockModal({ open, onOpenChange, item, onSaved }: any) {
-  const [mode, setMode] = useState<"change" | "set_quantity">("change");
+function StockModal({ open, onOpenChange, item, stocktakeOnly, onSaved }: any) {
+  const [mode, setMode] = useState<"change" | "set_quantity">(stocktakeOnly ? "set_quantity" : "change");
   const [change, setChange] = useState<string>("");
   const [setQuantity, setSetQuantity] = useState<string>("");
-  const [ledgerReason, setLedgerReason] = useState("manual");
+  const [ledgerReason, setLedgerReason] = useState(stocktakeOnly ? "audit_adjustment" : "manual");
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -562,10 +571,10 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
       toast.success("Sklad upraven");
       onSaved();
       onOpenChange(false);
-      setMode("change");
+      setMode(stocktakeOnly ? "set_quantity" : "change");
       setChange("");
       setSetQuantity("");
-      setLedgerReason("manual");
+      setLedgerReason(stocktakeOnly ? "audit_adjustment" : "manual");
       setReason("");
     } catch (e: any) {
       toast.error(e?.error?.message ?? "Nepodařilo se upravit sklad.");
@@ -587,9 +596,11 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
           </div>
         ) : (
           <div className="rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-800">
-            Položka nemá výchozí sklad. Nejdřív jej nastav přes „Upravit“.
+            {stocktakeOnly ? "Položka nemá výchozí sklad. Požádej sklad nebo admina, ať ho nastaví." : "Položka nemá výchozí sklad. Nejdřív jej nastav přes „Upravit“."}
           </div>
         )}
+        {!stocktakeOnly ? (
+        <>
         <label className="text-sm">
           Režim úpravy
           <Select className="mt-1" value={mode} onChange={(e) => {
@@ -612,6 +623,8 @@ function StockModal({ open, onOpenChange, item, onSaved }: any) {
             <option value="purchase">Naskladnění</option>
           </Select>
         </label>
+        </>
+        ) : null}
         <label className="text-sm">
           {mode === "change" ? "Změna (+ naskladnit, - vyskladnit/manko)" : "Skutečný fyzický stav po inventuře"}
           <Input

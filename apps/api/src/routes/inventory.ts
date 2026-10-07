@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { EventStatus, LedgerReason, ReservationState } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
-import { requireRole } from "../lib/rbac.js";
+import { requireStockAccess } from "../lib/rbac.js";
 import { getItemsAvailabilityTx, getPhysicalTotal } from "../services/availability.js";
 import { createInventoryLedgerEntry } from "../services/ledger.js";
 import { sseBus } from "../lib/sse.js";
@@ -400,7 +400,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   });
 
   app.post("/inventory/transfers", { preHandler: [app.authenticate] }, async (request, reply) => {
-    requireRole(request.user!.role, ["warehouse", "admin"]);
+    requireStockAccess(request.user!);
     const body = z
       .object({
         inventory_item_id: z.string().uuid(),
@@ -441,7 +441,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   });
 
   app.post("/inventory/transfers/bulk", { preHandler: [app.authenticate] }, async (request, reply) => {
-    requireRole(request.user!.role, ["warehouse", "admin"]);
+    requireStockAccess(request.user!);
     const body = TransferRequestSchema.parse(request.body);
 
     try {

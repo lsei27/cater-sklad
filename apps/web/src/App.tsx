@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { getCurrentUser } from "./lib/api";
+import { getCurrentUser, hasStockAccess } from "./lib/api";
 import LoginPage from "./pages/LoginPage";
 import EventsPage from "./pages/EventsPage";
 import EventDetailPage from "./pages/EventDetailPage";
@@ -20,8 +20,7 @@ import AdminWarehousesPage from "./pages/AdminWarehousesPage";
 import WarehouseTransfersPage from "./pages/WarehouseTransfersPage";
 
 function WarehouseOnly({ children }: { children: ReactElement }) {
-  const role = getCurrentUser()?.role;
-  if (role !== "warehouse" && role !== "admin") return <Navigate to="/inventory" replace />;
+  if (!hasStockAccess(getCurrentUser())) return <Navigate to="/inventory" replace />;
   return children;
 }
 

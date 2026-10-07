@@ -1,6 +1,6 @@
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo } from "react";
-import { getCurrentUser, getToken, setCurrentUser, setToken } from "../lib/api";
+import { getCurrentUser, getToken, hasStockAccess, setCurrentUser, setToken } from "../lib/api";
 import { cn } from "../lib/ui";
 import { Icons } from "../lib/icons";
 import { roleLabel } from "../lib/viewModel";
@@ -26,6 +26,7 @@ export default function AppShell() {
   const eventsHref = "/events";
   const stockHref = "/inventory";
   const canIssue = role === "warehouse" || role === "admin";
+  const canTransfer = hasStockAccess(user);
   const isSettingsAllowed = true;
 
   const handleLogout = () => {
@@ -63,8 +64,8 @@ export default function AppShell() {
 
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center gap-1 ml-6">
-              <button
-                onClick={() => nav(eventsHref)}
+              <Link
+                to={eventsHref}
                 className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                   loc.pathname.startsWith("/events")
@@ -74,10 +75,10 @@ export default function AppShell() {
               >
                 <Icons.Calendar />
                 Akce
-              </button>
+              </Link>
               {canIssue && (
-                <button
-                  onClick={() => nav("/warehouse")}
+                <Link
+                  to={"/warehouse"}
                   className={cn(
                     "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                     loc.pathname.startsWith("/warehouse")
@@ -87,10 +88,10 @@ export default function AppShell() {
                 >
                   <Icons.Truck />
                   Výdej
-                </button>
+                </Link>
               )}
-              <button
-                onClick={() => nav(stockHref)}
+              <Link
+                to={stockHref}
                 className={cn(
                   "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                   loc.pathname.startsWith("/inventory") && !loc.pathname.startsWith("/inventory/transfers")
@@ -100,10 +101,10 @@ export default function AppShell() {
               >
                 <Icons.Box />
                 Sklad
-              </button>
-              {(role === "warehouse" || role === "admin") && (
-                <button
-                  onClick={() => nav("/inventory/transfers")}
+              </Link>
+              {canTransfer && (
+                <Link
+                  to={"/inventory/transfers"}
                   className={cn(
                     "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                     loc.pathname.startsWith("/inventory/transfers")
@@ -113,11 +114,11 @@ export default function AppShell() {
                 >
                   <Icons.History />
                   Přesuny
-                </button>
+                </Link>
               )}
               {isSettingsAllowed && (
-                <button
-                  onClick={() => nav("/settings")}
+                <Link
+                  to={"/settings"}
                   className={cn(
                     "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
                     loc.pathname.startsWith("/settings")
@@ -128,7 +129,7 @@ export default function AppShell() {
                   {/* We can use Icons.Edit as a placeholder for Settings or add a Settings icon later if needed. Using Edit for now as it's generic enough or just text. 
                              Actually, let's use Icons.User for now or just text. */}
                   <span>Nastavení</span>
-                </button>
+                </Link>
               )}
             </nav>
           </div>
@@ -165,8 +166,8 @@ export default function AppShell() {
       {/* Mobile Navigation Bar */}
       <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-gray-200 bg-white md:hidden pb-safe">
         <div className="flex justify-around items-center h-16">
-          <button
-            onClick={() => nav(eventsHref)}
+          <Link
+            to={eventsHref}
             className={cn(
               "flex flex-col items-center justify-center w-full h-full space-y-1",
               loc.pathname.startsWith("/events") ? "text-indigo-600" : "text-gray-500"
@@ -174,10 +175,10 @@ export default function AppShell() {
           >
             <Icons.Calendar />
             <span className="text-[10px] font-medium">Akce</span>
-          </button>
+          </Link>
           {canIssue && (
-            <button
-              onClick={() => nav("/warehouse")}
+            <Link
+              to={"/warehouse"}
               className={cn(
                 "flex flex-col items-center justify-center w-full h-full space-y-1",
                 loc.pathname.startsWith("/warehouse") ? "text-indigo-600" : "text-gray-500"
@@ -185,10 +186,10 @@ export default function AppShell() {
             >
               <Icons.Truck />
               <span className="text-[10px] font-medium">Výdej</span>
-            </button>
+            </Link>
           )}
-          <button
-            onClick={() => nav(stockHref)}
+          <Link
+            to={stockHref}
             className={cn(
               "flex flex-col items-center justify-center w-full h-full space-y-1",
               loc.pathname.startsWith("/inventory") ? "text-indigo-600" : "text-gray-500"
@@ -196,10 +197,10 @@ export default function AppShell() {
           >
             <Icons.Box />
             <span className="text-[10px] font-medium">Sklad</span>
-          </button>
-          {(role === "warehouse" || role === "admin") && (
-            <button
-              onClick={() => nav("/inventory/transfers")}
+          </Link>
+          {canTransfer && (
+            <Link
+              to={"/inventory/transfers"}
               className={cn(
                 "flex flex-col items-center justify-center w-full h-full space-y-1",
                 loc.pathname.startsWith("/inventory/transfers") ? "text-indigo-600" : "text-gray-500"
@@ -207,11 +208,11 @@ export default function AppShell() {
             >
               <Icons.History />
               <span className="text-[10px] font-medium">Přesuny</span>
-            </button>
+            </Link>
           )}
           {isSettingsAllowed && (
-            <button
-              onClick={() => nav("/settings")}
+            <Link
+              to={"/settings"}
               className={cn(
                 "flex flex-col items-center justify-center w-full h-full space-y-1",
                 loc.pathname.startsWith("/settings") ? "text-indigo-600" : "text-gray-500"
@@ -219,7 +220,7 @@ export default function AppShell() {
             >
               <span className="text-lg">⚙</span>
               <span className="text-[10px] font-medium">Nastavení</span>
-            </button>
+            </Link>
           )}
         </div>
       </nav>

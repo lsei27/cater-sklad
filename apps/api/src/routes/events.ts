@@ -11,7 +11,7 @@ import { buildExportPdf, filterSnapshotToDay, type ExportSnapshot } from "../pdf
 import { createExportTx } from "../services/export.js";
 import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
-import { returnCloseTx } from "../services/returnClose.js";
+import { correctReturnCloseTx, returnCloseTx } from "../services/returnClose.js";
 import { eventDatesError, eventDayCount, eventIsPast } from "../lib/eventDays.js";
 import { getIssuedDaysTx, issueDayTx } from "../services/issueDay.js";
 import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
@@ -1193,6 +1193,50 @@ export async function eventRoutes(app: FastifyInstance) {
         return httpError(reply, 409, "ITEMS_EXCEED_ISSUED", "Vrácené a rozbité množství nesmí být vyšší než skutečně vydané množství.");
       if (e?.message === "WAREHOUSE_REQUIRED")
         return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Každá vracená nebo ztrátová položka musí mít určený cílový sklad.");
+      throw e;
+    }
+  });
+
+  // Oprava vrácených/rozbitých kusů po uzavření. Jen admin, protože zpětně
+  // hýbe stavem skladu.
+  app.post("/events/:id/return-close/correct", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        items: z
+          .array(
+            z.object({
+              inventory_item_id: z.string().uuid(),
+              returned_quantity: z.number().int().min(0),
+              broken_quantity: z.number().int().min(0).default(0)
+            })
+          )
+          .default([])
+      })
+      .parse(request.body);
+
+    try {
+      const out = await app.prisma.$transaction((tx) =>
+        correctReturnCloseTx({ tx, eventId: params.id, userId: user.id, items: body.items })
+      );
+      sseBus.emit({ type: "reservation_changed", eventId: params.id });
+      for (const inventoryItemId of out.changedLedgerItemIds) {
+        sseBus.emit({ type: "ledger_changed", inventoryItemId });
+      }
+      return reply.send(out);
+    } catch (e: any) {
+      if (e?.message === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (e?.message === "NOT_CLOSED") return httpError(reply, 409, "NOT_CLOSED", "Opravit jde jen uzavřenou akci.");
+      if (e?.message === "ITEMS_REQUIRED") return httpError(reply, 409, "ITEMS_REQUIRED", "Vyplň vrácené a rozbité kusy.");
+      if (e?.message === "ITEMS_INCOMPLETE") return httpError(reply, 409, "ITEMS_INCOMPLETE", "V opravě chybí některé vydané položky.");
+      if (e?.message === "DUPLICATE_ITEMS") return httpError(reply, 409, "DUPLICATE_ITEMS", "Každá položka může být v opravě jen jednou.");
+      if (e?.message === "ITEMS_UNEXPECTED") return httpError(reply, 409, "ITEMS_UNEXPECTED", "Oprava obsahuje položky, které nebyly vydané.");
+      if (e?.message === "ITEMS_EXCEED_ISSUED")
+        return httpError(reply, 409, "ITEMS_EXCEED_ISSUED", "Vrácené a rozbité množství nesmí být vyšší než skutečně vydané množství.");
+      if (e?.message === "WAREHOUSE_REQUIRED")
+        return httpError(reply, 409, "WAREHOUSE_REQUIRED", "Položka nemá určený sklad, kam se vrací.");
       throw e;
     }
   });
