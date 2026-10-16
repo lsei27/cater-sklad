@@ -17,17 +17,17 @@ Aplikace je postavena jako **monorepo** s následující strukturou:
 
 ## 🛠 Technologie & Závislosti
 
-Verze níže odpovídají `package.json` (stav srpen 2026). Uvedené jsou minimální
+Verze níže odpovídají `package.json` (stav 16. 10. 2026). Uvedené jsou minimální
 verze podle semver rozsahu `^`.
 
 ### Backend (apps/api)
-- **Runtime**: Node.js 24 (viz `Dockerfile`).
-- **Framework**: Fastify 5.12.1 (rychlý a nízkoúrovňový webový framework pro Node.js).
-- **ORM**: Prisma 7.10.0 (PostgreSQL na Supabase s PrismaPg adapterem).
+- **Runtime**: na produkci Node.js 22.23.2 z `.node-version` (Render nativní build). `Dockerfile` s Node 24 se na produkci nepoužívá, viz sekce Render.
+- **Framework**: Fastify 5.12.7 (rychlý a nízkoúrovňový webový framework pro Node.js).
+- **ORM**: Prisma 7.10.1 (PostgreSQL na Supabase s PrismaPg adapterem).
 - **Validace**: Zod 4.4.3 (schémata pro API requesty).
-- **Autentizace**: JWT (@fastify/jwt 10.2.2) + Bcrypt 6.0.0 pro hašování hesel.
-- **CORS**: @fastify/cors 11.3.0 s whitelistem originů (viz Bezpečnost).
-- **Rate limiting**: @fastify/rate-limit 11.2.0, `global: false`, aktivní jen na auth endpointech.
+- **Autentizace**: JWT (@fastify/jwt 10.2.4) + Bcrypt 6.0.0 pro hašování hesel.
+- **CORS**: @fastify/cors 11.3.1 s whitelistem originů (viz Bezpečnost).
+- **Rate limiting**: @fastify/rate-limit 11.2.1, `global: false`, aktivní jen na auth endpointech.
 - **PDF Generování**: `pdf-lib` 1.17.1 (vytváření exportních dokumentů pro sklad).
 - **Hlášení změn**: SSE (Server-Sent Events) pro real-time aktualizace skladu.
 - **QR Kódy**: `qrcode` 1.5.4 pro generování štítků položek.
@@ -38,11 +38,11 @@ verze podle semver rozsahu `^`.
 ### Frontend (apps/web)
 - **UI Framework**: React 19.2.8 + Vite 8.2.2.
 - **Styling**: Tailwind CSS 4.3.3 (s @tailwindcss/postcss pluginem) + Vanilla CSS.
-- **Routing**: React Router DOM 7.18.2.
+- **Routing**: React Router DOM 7.18.4.
 - **Ikony**: Lucide React 1.34.0.
 - **Komponenty**: Vlastní UI komponenty postavené na základech Radix UI (např. Modals/Dialogs).
 - **Modal body layout**: `Modal` podporuje `bodyClassName` pro řízení scrollu a layoutu obsahu u specifických oken.
-- **Notifikace**: react-hot-toast 2.6.0.
+- **Notifikace**: react-hot-toast 2.6.1.
 - **TypeScript**: 7.0.2 (nativni Go port kompilatoru)
 
 ---
@@ -335,6 +335,15 @@ DATABASE_URL="postgresql://cater:cater@localhost:5432/cater_sklad" \
 # Integrační testy se BEZ RUN_DB_TESTS=1 tiše přeskočí
 DATABASE_URL="postgresql://cater:cater@localhost:5432/cater_sklad" RUN_DB_TESTS=1 npx vitest run
 ```
+Bez sdílené lokální DB stačí jednorázový kontejner, který se po testech sám smaže
+(`--rm`). `migrate deploy` na prázdné DB projde celý (ověřeno 16. 10. 2026):
+```bash
+docker run -d --rm --name sklad-test -e POSTGRES_USER=t -e POSTGRES_PASSWORD=t -e POSTGRES_DB=t -p 55432:5432 postgres:16-alpine
+export DATABASE_URL=postgresql://t:t@localhost:55432/t   # override, jinak míří na produkci
+(cd apps/api && npx prisma migrate deploy)
+RUN_DB_TESTS=1 pnpm test        # stav 16. 10. 2026: 156 testů (API 134, web 22)
+docker stop sklad-test
+```
 Když opravuješ chybu, ověř si, že nový test na **původním** kódu skutečně selže. Test, který projde před i po opravě, nic nehlídá.
 
 ### Lokální dev servery
@@ -605,3 +614,38 @@ nevidí:
 
 Ověřeno kompletním provisioningem od nuly: migrace, seed, start kontejneru,
 přihlášení a čtení i zápis do `warehouses`.
+
+---
+
+## 📦 Říjen 2026 - Aktualizace závislostí (PR #8, PR #10)
+
+Dvě konzervativní aktualizace: 2. 10. 2026 (PR #8) a 16. 10. 2026 (PR #10), detaily
+v `docs/dependency-update-2026-10-02.md` a `docs/dependency-update-2026-10-16.md`.
+Po PR #10 hlásí `pnpm audit` 0 nálezů; Security Exception z PR #8 (`mysql2`,
+`deepmerge-ts` v Prisma CLI) vyřešila Prisma 7.10.1.
+
+### Zavedený postup (aplikace je v ostrém provozu)
+1. Větev `chore/dependency-updates-<datum>`, `pnpm outdated -r` a `pnpm audit`.
+2. Nejdřív změřit výchozí stav: build a všechny testy včetně DB (viz Testy). Uložit
+   si `apps/web/dist` a `apps/api/dist` pro porovnání.
+3. Zvedat jen opravné (patch) verze, cíleně přes
+   `pnpm --filter <app> update <balíček>@^<verze>`. Holé `pnpm update -r` nepoužívat,
+   protože `^` pustí i nové minor řady (např. React 19.3).
+   Zranitelné nepřímé závislosti obnovit přes `pnpm update -r <balíček> --depth Infinity`.
+4. `prisma`, `@prisma/client` a `@prisma/adapter-pg` vždy na stejnou verzi, pak `prisma generate`.
+5. Zkontrolovat `engines` nových balíčků proti Node 22 na Renderu.
+6. Ověřit: `pnpm install --frozen-lockfile --strict-peer-dependencies`, build, všechny
+   testy, `diff -r` buildu proti výchozímu stavu a smoke test zkompilovaného API
+   (`node dist/server.js` proti dočasné DB: health, login, JWT, validace, CORS, 429 po 10 pokusech).
+7. Po merge do `main` počkat na Render a zkontrolovat produkci:
+   `https://cater-sklad.onrender.com/health` musí vrátit `{"ok":true}`, `/events` bez tokenu 401.
+   **Pozor:** `cater-sklad-api.onrender.com` z `apps/web/.env.example` je jen příklad a vrací 404.
+
+### Záměrně odloženo (k 16. 10. 2026)
+Minor řady, které mohou měnit chování nebo vzhled UI: React/React DOM 19.3 a jejich typy
+(mění chování číselných vstupů a formulářů), `@radix-ui/react-dialog` 1.3, `lucide-react` 1.57,
+`tailwind-merge` 3.7, `autoprefixer` 10.6, Vite 8.3. Dál Prisma 8 (jen RC), Vitest 5, dotenv 18
+a typy Node 26. Každý z těchto přechodů patří do samostatného PR s ručním testem UI v preview.
+
+Prisma 7.10.1 si jako volitelnou peer závislost Studia dotahuje `@types/react` 19.3.0. Je to
+jen v dev nástrojích API, web dál používá 19.2.x.
