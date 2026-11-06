@@ -7,7 +7,9 @@ import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { duplicateEventTx } from "../services/duplicateEvent.js";
 import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
-import { buildExportPdf, filterSnapshotToDay, type ExportSnapshot } from "../pdf/exportPdf.js";
+import { buildExportPdf, filterSnapshotByType, filterSnapshotToDay, type ExportSnapshot, type PdfChanges } from "../pdf/exportPdf.js";
+import { diffSnapshots } from "../lib/snapshotDiff.js";
+import { ackChanges, getUnseenChanges, hasUnseenChanges, loadSnapshot } from "../services/warehouseChanges.js";
 import { createExportTx } from "../services/export.js";
 import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
@@ -148,10 +150,21 @@ export async function eventRoutes(app: FastifyInstance) {
         status: true,
         exportNeedsRevision: true,
         chefConfirmedAt: true,
+        warehouseAckVersion: true,
+        exports: { orderBy: { version: "desc" }, take: 1, select: { version: true } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     });
-    return { events: (events as any[]) };
+    return {
+      events: (events as any[]).map(({ exports, ...e }) => ({
+        ...e,
+        hasUnseenChanges: hasUnseenChanges({
+          status: e.status,
+          warehouseAckVersion: e.warehouseAckVersion,
+          latestExportVersion: exports?.[0]?.version ?? null
+        })
+      }))
+    };
   });
 
   app.post("/events", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -454,7 +467,7 @@ export async function eventRoutes(app: FastifyInstance) {
       orderBy: { version: "desc" },
       select: { exportedAt: true, version: true }
     });
-    if (!latestExport) return { changes: [], sinceVersion: null };
+    if (!latestExport) return { changes: [], sinceVersion: null, versionChanges: null };
 
     const entries = await app.prisma.auditLog.findMany({
       where: {
@@ -484,7 +497,33 @@ export async function eventRoutes(app: FastifyInstance) {
       }));
     });
 
-    return { changes, sinceVersion: latestExport.version };
+    // Změny mezi verzí potvrzenou skladem a poslední verzí. Bez toho by sklad
+    // nic neviděl, kdykoli nový export vznikne automaticky hned po úpravě.
+    const versionChanges = await getUnseenChanges(app.prisma, id);
+
+    return { changes, sinceVersion: latestExport.version, versionChanges };
+  });
+
+  // Sklad potvrzuje, že změny do dané verze viděl. Profil skladu je sdílený,
+  // takže potvrzení platí pro všechny skladníky.
+  app.post("/events/:id/ack-changes", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = request.user!;
+    requireRole(user.role, ["admin", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ version: z.number().int().min(1) }).parse(request.body);
+
+    const exists = await app.prisma.eventExport.findFirst({
+      where: { eventId: params.id, version: body.version },
+      select: { id: true }
+    });
+    if (!exists) return httpError(reply, 404, "NOT_FOUND", "Export nenalezen.");
+
+    await ackChanges(app.prisma, params.id, body.version);
+    await app.prisma.auditLog.create({
+      data: { actorUserId: user.id, entityType: "event", entityId: params.id, action: "warehouse_ack_changes", diffJson: { version: body.version } }
+    });
+    sseBus.emit({ type: "reservation_changed", eventId: params.id });
+    return { ok: true };
   });
 
   app.get("/events/:id/exports", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -528,7 +567,12 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const params = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
     const queryParams = z
-      .object({ type: z.enum(["general", "kitchen"]).optional(), day: z.coerce.number().int().min(1).optional() })
+      .object({
+        type: z.enum(["general", "kitchen"]).optional(),
+        day: z.coerce.number().int().min(1).optional(),
+        // Verze, proti které se v PDF barevně vyznačí změny.
+        compare: z.coerce.number().int().min(1).optional()
+      })
       .parse(request.query);
 
     const row = await app.prisma.eventExport.findFirst({
@@ -549,21 +593,27 @@ export async function eventRoutes(app: FastifyInstance) {
       }
     }
 
+    let base =
+      queryParams.compare && queryParams.compare < params.version
+        ? await loadSnapshot(app.prisma, params.id, queryParams.compare)
+        : null;
+
     let subtitle: string | undefined;
-    if (queryParams.type === "kitchen") {
-      snapshot.groups = snapshot.groups.filter((g) => g.parentCategory.toLowerCase() === "kuchyn" || g.parentCategory.toLowerCase() === "kuchyň");
-      subtitle = "Kuchyn";
-    } else if (queryParams.type === "general") {
-      snapshot.groups = snapshot.groups.filter((g) => g.parentCategory.toLowerCase() !== "kuchyn" && g.parentCategory.toLowerCase() !== "kuchyň");
-      subtitle = "Sklad";
+    if (queryParams.type) {
+      snapshot = filterSnapshotByType(snapshot, queryParams.type);
+      if (base) base = filterSnapshotByType(base, queryParams.type);
+      subtitle = queryParams.type === "kitchen" ? "Kuchyn" : "Sklad";
     }
     if (queryParams.day) {
       snapshot = filterSnapshotToDay(snapshot, queryParams.day);
+      if (base) base = filterSnapshotToDay(base, queryParams.day);
       subtitle = subtitle ? `${subtitle} - Den ${queryParams.day}` : `Den ${queryParams.day}`;
     }
+    const pdfChanges: PdfChanges | undefined =
+      base && queryParams.compare ? { baseVersion: queryParams.compare, changes: diffSnapshots(base, snapshot) } : undefined;
 
     try {
-      const pdfBytes = await buildExportPdf(snapshot, subtitle, !queryParams.day);
+      const pdfBytes = await buildExportPdf(snapshot, subtitle, !queryParams.day, pdfChanges);
       reply.header("Content-Type", "application/pdf");
       const typeSuffix = queryParams.type ? `_${queryParams.type === "kitchen" ? "kuchyn" : "sklad"}` : "";
       const daySuffix = queryParams.day ? `_den${queryParams.day}` : "";

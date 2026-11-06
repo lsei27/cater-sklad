@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import { formatCzechDate, formatCzechTime } from "../lib/czechDate.js";
+import { changeKey, type SnapshotItemChange } from "../lib/snapshotDiff.js";
 
 export type ExportSnapshot = {
   event: {
@@ -96,6 +97,19 @@ export function dayTagLabel(item: { dayFrom?: number; dayTo?: number | null }, d
   return from === to ? `den ${from}` : `dny ${from}-${to}`;
 }
 
+export function isKitchenCategory(parentCategory: string) {
+  const c = parentCategory.toLowerCase();
+  return c === "kuchyn" || c === "kuchyň";
+}
+
+/// Checklist jen pro sklad (general) nebo jen pro kuchyň (kitchen).
+export function filterSnapshotByType(snapshot: ExportSnapshot, type: "general" | "kitchen"): ExportSnapshot {
+  return {
+    ...snapshot,
+    groups: snapshot.groups.filter((g) => (type === "kitchen") === isKitchenCategory(g.parentCategory))
+  };
+}
+
 /// Balicí seznam jednoho dne: jen řádky, které ten den odjíždějí ze skladu.
 export function filterSnapshotToDay(snapshot: ExportSnapshot, day: number): ExportSnapshot {
   return {
@@ -125,7 +139,11 @@ function drawContinuationHeaders(pdfDoc: PDFDocument, font: PDFFont, bold: PDFFo
   });
 }
 
-export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string, splitByDay = false) {
+/// Změny proti verzi, kterou sklad naposledy potvrdil. Skladník má v ruce starší
+/// papír, takže nový tisk musí na první pohled ukázat, co je jinak.
+export type PdfChanges = { baseVersion: number; changes: SnapshotItemChange[] };
+
+export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string, splitByDay = false, pdfChanges?: PdfChanges) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -237,6 +255,51 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
     yPos -= 16;
   }
 
+  const changes = pdfChanges?.changes ?? [];
+  const changeByKey = new Map(changes.map((c) => [changeKey(c.inventoryItemId, c.dayFrom, c.dayTo), c] as const));
+  if (pdfChanges && changes.length > 0) {
+    if (yPos < 120) {
+      page = pdfDoc.addPage();
+      ({ width, height } = page.getSize());
+      yPos = height - 50;
+    }
+    const listed = changes.slice(0, 15);
+    const more = changes.length - listed.length;
+    const boxHeight = 22 + (listed.length + (more > 0 ? 1 : 0)) * 12;
+    page.drawRectangle({
+      x: 46,
+      y: yPos - boxHeight + 10,
+      width: width - 96,
+      height: boxHeight,
+      color: rgb(1, 0.97, 0.88),
+      borderColor: rgb(0.8, 0.5, 0),
+      borderWidth: 1.5
+    });
+    page.drawText(pdfText(`ZMENY OD VERZE v${pdfChanges.baseVersion} (${changes.length})`), {
+      x: 54, y: yPos, size: 12, font: bold, color: rgb(0.55, 0.3, 0)
+    });
+    yPos -= 14;
+    const dayCountForTags = snapshot.event.dayCount ?? 1;
+    for (const c of listed) {
+      const tag = dayTagLabel(c, dayCountForTags);
+      const name = tag ? `${c.name} [${tag}]` : c.name;
+      const line =
+        c.kind === "added"
+          ? `+ ${name}: ${c.to} ${c.unit}`
+          : c.kind === "removed"
+            ? `- ${name}: odebrano (bylo ${c.from} ${c.unit})`
+            : `~ ${name}: ${c.from} -> ${c.to} ${c.unit}`;
+      const color = c.kind === "added" ? rgb(0.05, 0.45, 0.15) : c.kind === "removed" ? rgb(0.7, 0.1, 0.1) : rgb(0.55, 0.3, 0);
+      page.drawText(pdfText(line), { x: 58, y: yPos, size: 9, font: bold, color });
+      yPos -= 12;
+    }
+    if (more > 0) {
+      page.drawText(pdfText(`- a dalsich ${more} (viz barevne radky)`), { x: 58, y: yPos, size: 9, font: bold, color: rgb(0.55, 0.3, 0) });
+      yPos -= 12;
+    }
+    yPos -= 16;
+  }
+
   // Section Header: Items to Pack
   if (yPos < 60) {
     page = pdfDoc.addPage();
@@ -293,6 +356,17 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
             yPos = height - 50;
           }
 
+          const change = changeByKey.get(changeKey(item.inventoryItemId, item.dayFrom ?? 1, item.dayTo ?? null));
+          if (change) {
+            page.drawRectangle({
+              x: colCheck - 4,
+              y: yPos - 5,
+              width: width - 92,
+              height: 16,
+              color: change.kind === "added" ? rgb(0.86, 0.96, 0.88) : rgb(1, 0.93, 0.75)
+            });
+          }
+
           // Checkbox (moved to the left)
           page.drawRectangle({ x: colCheck, y: yPos - 2, width: 12, height: 12, borderColor: rgb(0, 0, 0), borderWidth: 1 });
 
@@ -322,7 +396,17 @@ export async function buildExportPdf(snapshot: ExportSnapshot, subtitle?: string
             const masterPkgs = Math.ceil(item.qty / item.masterPackageQty);
             qtyLabel += ` (${masterPkgs} bal.)`;
           }
-          page.drawText(pdfText(qtyLabel), { x: colQty, y: yPos, size: 10, font });
+          page.drawText(pdfText(qtyLabel), { x: colQty, y: yPos, size: 10, font: change ? bold : font });
+          if (change) {
+            const tagText = change.kind === "added" ? "NOVE" : `bylo ${change.from}`;
+            page.drawText(pdfText(tagText), {
+              x: colQty + bold.widthOfTextAtSize(pdfText(qtyLabel), 10) + 6,
+              y: yPos,
+              size: 8,
+              font: bold,
+              color: change.kind === "added" ? rgb(0.05, 0.45, 0.15) : rgb(0.55, 0.3, 0)
+            });
+          }
 
           yPos -= 16;
         }

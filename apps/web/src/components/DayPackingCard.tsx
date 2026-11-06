@@ -33,6 +33,8 @@ export default function DayPackingCard(props: {
   dayCount: number;
   eventDate: string | null;
   exportVersion: number | null;
+  /// Verze potvrzená skladem; PDF proti ní barevně vyznačí změny.
+  compareVersion?: number | null;
   items: DayPackingItem[];
   issuedDays: number[];
   warehouses: Array<{ id: string; name: string }>;
@@ -111,7 +113,7 @@ export default function DayPackingCard(props: {
   const openDayPdf = () => {
     const token = localStorage.getItem("token");
     window.open(
-      `${apiBaseUrl()}/events/${props.eventId}/exports/${props.exportVersion}/pdf?day=${day}&token=${encodeURIComponent(token ?? "")}`,
+      `${apiBaseUrl()}/events/${props.eventId}/exports/${props.exportVersion}/pdf?day=${day}&token=${encodeURIComponent(token ?? "")}${props.compareVersion ? `&compare=${props.compareVersion}` : ""}`,
       "_blank"
     );
   };

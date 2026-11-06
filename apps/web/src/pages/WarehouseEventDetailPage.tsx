@@ -31,6 +31,8 @@ type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
 type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string; dayFrom?: number; dayTo?: number | null };
+type VersionChange = { inventoryItemId: string; name: string; unit: string; dayFrom: number; dayTo: number | null; from: number; to: number; kind: "added" | "removed" | "changed" };
+type VersionChanges = { baseVersion: number; latestVersion: number; changes: VersionChange[] };
 
 function OffSiteBadge(props: { warehouseName?: string | null; warehouseIsHome?: boolean | null }) {
   // Starsi exporty sklad nenesou (undefined) - tam se nehlasi nic.
@@ -89,6 +91,8 @@ export default function WarehouseEventDetailPage() {
   }>>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [packingChanges, setPackingChanges] = useState<PackingChange[]>([]);
+  const [versionChanges, setVersionChanges] = useState<VersionChanges | null>(null);
+  const [acking, setAcking] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [blockModal, setBlockModal] = useState<{ inventoryItemId: string; name: string; maxQty: number } | null>(null);
   const [blockQty, setBlockQty] = useState("");
@@ -127,8 +131,9 @@ export default function WarehouseEventDetailPage() {
   const loadPackingChanges = async () => {
     if (!id) return;
     try {
-      const res = await api<{ changes: PackingChange[] }>(`/events/${id}/packing-changes`);
+      const res = await api<{ changes: PackingChange[]; versionChanges: VersionChanges | null }>(`/events/${id}/packing-changes`);
       setPackingChanges(res.changes);
+      setVersionChanges(res.versionChanges && res.versionChanges.changes.length > 0 ? res.versionChanges : null);
     } catch (e) {}
   };
 
@@ -181,6 +186,32 @@ export default function WarehouseEventDetailPage() {
     if (fromEvent.length > 0) return fromEvent;
     return snapshotItems as WarehouseItem[];
   }, [event?.warehouseItems, snapshotItems]);
+
+  // Seznam položek sčítá dny, takže změna se u položky ukazuje souhrnně.
+  const itemChangeById = useMemo(() => {
+    const map = new Map<string, { added: boolean; from: number }>();
+    for (const c of versionChanges?.changes ?? []) {
+      if (c.kind === "removed") continue;
+      const prev = map.get(c.inventoryItemId);
+      map.set(c.inventoryItemId, { added: (prev?.added ?? true) && c.kind === "added", from: (prev?.from ?? 0) + c.from });
+    }
+    return map;
+  }, [versionChanges]);
+  const compareParam = versionChanges ? `&compare=${versionChanges.baseVersion}` : "";
+
+  const ackVersionChanges = async () => {
+    if (!id || !versionChanges) return;
+    setAcking(true);
+    try {
+      await api(`/events/${id}/ack-changes`, { method: "POST", body: JSON.stringify({ version: versionChanges.latestVersion }) });
+      toast.success("Změny potvrzeny.");
+      await loadPackingChanges();
+    } catch (e: any) {
+      toast.error(e?.error?.message ?? "Nepodařilo se potvrdit změny.");
+    } finally {
+      setAcking(false);
+    }
+  };
 
   // Vícedenní akce se balí a vydává v kartě „Balení po dnech“. Stávající
   // manuální a digitální výdej zůstává jen pro jednodenní akce.
@@ -563,6 +594,67 @@ export default function WarehouseEventDetailPage() {
         </Card>
       ) : null}
 
+      {versionChanges && event.status === "SENT_TO_WAREHOUSE" ? (
+        <Card className="border-2 border-amber-400 bg-amber-50">
+          <CardContent>
+            <div className="text-base font-bold text-amber-900">
+              Akce se změnila od verze v{versionChanges.baseVersion} ({versionChanges.changes.length})
+            </div>
+            <div className="mt-1 text-sm text-amber-800">
+              Vytištěný seznam už neplatí. Nový tisk má změny barevně vyznačené.
+            </div>
+            <ul className="mt-3 space-y-1.5">
+              {versionChanges.changes.map((c) => (
+                <li
+                  key={`${c.inventoryItemId}|${c.dayFrom}|${c.dayTo ?? "end"}`}
+                  className={cn(
+                    "rounded-lg px-2 py-1.5 text-sm",
+                    c.kind === "added" && "bg-emerald-100 text-emerald-900",
+                    c.kind === "changed" && "bg-amber-100 text-amber-900",
+                    c.kind === "removed" && "bg-red-100 text-red-900"
+                  )}
+                >
+                  <span className="mr-1 text-[10px] font-bold uppercase">
+                    {c.kind === "added" ? "Nové" : c.kind === "removed" ? "Odebráno" : "Změna"}
+                  </span>
+                  <span className={cn("font-semibold", c.kind === "removed" && "line-through")}>{c.name}</span>
+                  {isMultiDay ? ` (${dayRangeLabel({ dayFrom: c.dayFrom, dayTo: c.dayTo }, dayCount)})` : ""}:{" "}
+                  {c.kind === "added" ? (
+                    <span className="font-bold">{c.to} {c.unit}</span>
+                  ) : c.kind === "removed" ? (
+                    <span>bylo {c.from} {c.unit}</span>
+                  ) : (
+                    <span>
+                      {c.from} → <span className="font-bold">{c.to}</span> {c.unit}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <Button
+                variant="secondary"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/exports/${versionChanges.latestVersion}/pdf?compare=${versionChanges.baseVersion}&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Vytisknout nový seznam se změnami
+              </Button>
+              {role === "warehouse" || role === "admin" ? (
+                <Button className="w-full sm:w-auto" disabled={acking} onClick={ackVersionChanges}>
+                  Beru na vědomí
+                </Button>
+              ) : null}
+            </div>
+            <div className="mt-2 text-xs text-amber-700">
+              Po potvrzení zvýraznění zmizí, dokud se akce znovu nezmění. Vytiskni si seznam ještě před potvrzením.
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -765,7 +857,7 @@ export default function WarehouseEventDetailPage() {
                           variant="secondary"
                           onClick={() => {
                             const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
                           }}
                         >
                           Otevřít checklist (Sklad)
@@ -775,7 +867,7 @@ export default function WarehouseEventDetailPage() {
                           variant="secondary"
                           onClick={() => {
                             const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}`, "_blank");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
                           }}
                         >
                           Otevřít checklist (Kuchyň)
@@ -785,7 +877,7 @@ export default function WarehouseEventDetailPage() {
                           variant="secondary"
                           onClick={() => {
                             const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
+                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
                           }}
                         >
                           Otevřít checklist (Kompletní)
@@ -855,6 +947,7 @@ export default function WarehouseEventDetailPage() {
           dayCount={dayCount}
           eventDate={event.eventDate ?? null}
           exportVersion={snapshot?.event?.version ?? null}
+          compareVersion={versionChanges?.baseVersion ?? null}
           items={snapshotItems}
           issuedDays={issuedDays}
           warehouses={warehouses}
@@ -948,10 +1041,17 @@ export default function WarehouseEventDetailPage() {
                       // U spotřebního zboží je nevrácený zbytek očekávaný, ne odchylka.
                       const variance = isConsumable ? r.broken : r.broken + shortfall;
                       const existingBlocks = blocks.filter(b => b.inventoryItemId === r.inventory_item_id);
+                      const itemChange = event.status === "SENT_TO_WAREHOUSE" ? itemChangeById.get(r.inventory_item_id) : undefined;
                       return (
                         <div key={r.inventory_item_id} className={cn(
                           "rounded-2xl border p-3 transition-colors",
-                          selectedIds.has(r.inventory_item_id) ? "border-purple-200 bg-purple-50/30" : "border-slate-200"
+                          selectedIds.has(r.inventory_item_id)
+                            ? "border-purple-200 bg-purple-50/30"
+                            : itemChange
+                              ? itemChange.added
+                                ? "border-2 border-emerald-400 bg-emerald-50"
+                                : "border-2 border-amber-400 bg-amber-50"
+                              : "border-slate-200"
                         )}>
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="flex min-w-0 items-start gap-3">
@@ -983,6 +1083,16 @@ export default function WarehouseEventDetailPage() {
                                 <div className="truncate text-sm font-semibold">
                                   {r.name}
                                   <OffSiteBadge warehouseName={r.warehouseName} warehouseIsHome={r.warehouseIsHome} />
+                                  {itemChange ? (
+                                    <span
+                                      className={cn(
+                                        "ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold",
+                                        itemChange.added ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"
+                                      )}
+                                    >
+                                      {itemChange.added ? "NOVÉ" : `ZMĚNA, bylo ${itemChange.from}`}
+                                    </span>
+                                  ) : null}
                                 </div>
                                   <div className="mt-1 text-xs text-slate-600">
                                     Požadováno: <span className="font-semibold text-slate-900">{r.requested}</span> {r.unit}
