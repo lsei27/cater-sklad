@@ -154,6 +154,14 @@ API adresu z `VITE_API_BASE_URL`.
 
 - **`reserve.ts`**: Zajišťuje transakční zápis rezervací. Obsahuje logiku pro zamykání řádků (`pg_advisory_xact_lock`), aby nedošlo k overbookingu.
 - **Automatický export po změně**: Pokud je akce `SENT_TO_WAREHOUSE` a kuchyň už potvrdila, přidání položek Event Managerem vytvoří nový export (verze se zvyšuje) a přes SSE se propaguje změna.
+- **Zvýraznění změn pro sklad (od 2026-11-06)**: `events.warehouse_ack_version` drží verzi exportu, kterou sklad potvrdil tlačítkem „Beru na vědomí“ (`POST /events/:id/ack-changes`, role `warehouse`/`admin`). Sklad má jeden sdílený profil, takže potvrzení platí pro akci, ne pro uživatele.
+  - Změny = porovnání snapshotu potvrzené verze (NULL = v1) s posledním exportem, čistá funkce `diffSnapshots` v `apps/api/src/lib/snapshotDiff.ts`, klíč řádku je položka + `dayFrom` + `dayTo`. Načítá je `getUnseenChanges` v `services/warehouseChanges.ts` a vrací `GET /events/:id/packing-changes` jako `versionChanges`. Ukazují se jen u `SENT_TO_WAREHOUSE`.
+  - Proč nestačil starší rámeček „Balení se po předání změnilo“ (`changes` z audit logu): ukazuje jen změny **po** posledním exportu. Když kuchyň už potvrdila, vznikne export hned po úpravě a rámeček je vždy prázdný.
+  - `GET /events` vrací `hasUnseenChanges` (odznak „Změna v akci“ v seznamu skladu).
+  - PDF bere `?compare=<verze>`: nahoře souhrn „ZMENY OD VERZE vX“, přidané řádky zeleně s „NOVE“, změněné žlutě s „bylo X“, odebrané jen v souhrnu. Filtry `type`/`day` se aplikují na obě verze. Frontend posílá `compare`, jen dokud změny nejsou potvrzené, proto se má tisknout **před** potvrzením.
+  - Potvrzení nikdy nesníží verzi a potvrzuje verzi, kterou skladník viděl, ne poslední (souběžná nová verze se tiše neodklikne).
+  - Migrace `20261106090000_warehouse_ack_version` nastavila rozběhnutým akcím ack na aktuální verzi, aby se po nasazení nerozsvítily staré změny.
+  - Změny hlavičky akce (čas závozu, adresa, poznámka) export nevytvářejí, takže se nezvýrazňují.
 
 ### Výdej skladu (`apps/web/src/pages/WarehouseEventDetailPage.tsx`, `apps/api/src/routes/events.ts`)
 - **Dva režimy výdeje**:

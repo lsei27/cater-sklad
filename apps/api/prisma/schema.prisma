@@ -178,6 +178,9 @@ model Event {
   status              EventStatus @default(DRAFT)
   exportNeedsRevision Boolean     @default(false) @map("export_needs_revision")
   chefConfirmedAt     DateTime?   @map("chef_confirmed_at") @db.Timestamptz(6)
+  /// Verze exportu, kterou sklad potvrdil tlačítkem „Beru na vědomí“. Změny
+  /// v novějších verzích se skladu zvýrazní. NULL = zatím nepotvrzeno (porovnává se s v1).
+  warehouseAckVersion Int?        @map("warehouse_ack_version")
   palletCount         Int?        @map("pallet_count")
   totalWeight         String?     @map("total_weight")
   dismissedCrossSellIds String[]    @default([]) @map("dismissed_cross_sell_ids")

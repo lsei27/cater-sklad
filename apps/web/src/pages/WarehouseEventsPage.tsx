@@ -26,6 +26,7 @@ type EventRow = {
   pickupDatetime: string;
   status: string;
   exportNeedsRevision: boolean;
+  hasUnseenChanges?: boolean;
   chefConfirmedAt: string | null;
   createdBy?: { id?: string; name?: string | null; email?: string };
 };
@@ -206,6 +207,11 @@ export default function WarehouseEventsPage() {
                                 <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
                               </span>
                             ) : null}
+                            {e.hasUnseenChanges ? (
+                              <span className="text-[10px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full">
+                                Změna v akci
+                              </span>
+                            ) : null}
                           </div>
                         </div>
 
@@ -262,6 +268,11 @@ export default function WarehouseEventsPage() {
                               {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
                                 <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
                                   <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
+                                </span>
+                              ) : null}
+                              {e.hasUnseenChanges ? (
+                                <span className="text-[10px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full">
+                                  Změna v akci
                                 </span>
                               ) : null}
                             </div>
