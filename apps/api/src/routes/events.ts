@@ -10,7 +10,7 @@ import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from ".
 import { buildExportPdf, filterSnapshotByType, filterSnapshotToDay, type ExportSnapshot, type PdfChanges } from "../pdf/exportPdf.js";
 import { diffSnapshots } from "../lib/snapshotDiff.js";
 import { ackChanges, getUnseenChanges, hasUnseenChanges, loadSnapshot } from "../services/warehouseChanges.js";
-import { createExportTx } from "../services/export.js";
+import { buildLiveSnapshotTx, createExportTx } from "../services/export.js";
 import { issueAdditionalTx } from "../services/issueAdditional.js";
 import { getIssuedWarehouseItems } from "../services/issuedItems.js";
 import { correctReturnCloseTx, returnCloseTx } from "../services/returnClose.js";
@@ -618,6 +618,31 @@ export async function eventRoutes(app: FastifyInstance) {
       const typeSuffix = queryParams.type ? `_${queryParams.type === "kitchen" ? "kuchyn" : "sklad"}` : "";
       const daySuffix = queryParams.day ? `_den${queryParams.day}` : "";
       reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_v${snapshot.event.version}${typeSuffix}${daySuffix}.pdf"`);
+      reply.header("Cache-Control", "no-store");
+      return reply.send(Buffer.from(pdfBytes));
+    } catch (err) {
+      request.log.error({ err }, "pdf render failed");
+      return httpError(reply, 500, "PDF_RENDER_FAILED", "Nepodařilo se vygenerovat PDF.");
+    }
+  });
+
+  // Živý balicí list kuchyně z aktuálních položek. Kuchyň podle něj balí,
+  // aniž by čekala na předání skladu event managerem. Nic neukládá.
+  app.get("/events/:id/kitchen-pdf", { preHandler: [app.authenticate] }, async (request, reply) => {
+    requireRole(request.user!.role, ["admin", "event_manager", "chef", "warehouse"]);
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const live = await app.prisma.$transaction((tx) => buildLiveSnapshotTx(tx, params.id));
+    if (!live) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena");
+    const snapshot = filterSnapshotByType(live, "kitchen");
+    if (snapshot.groups.length === 0) {
+      return httpError(reply, 404, "NO_KITCHEN_ITEMS", "V akci zatím nejsou žádné položky kuchyně.");
+    }
+
+    try {
+      const pdfBytes = await buildExportPdf(snapshot, "Kuchyn", true);
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `inline; filename="event_${snapshot.event.id}_kuchyn_aktualni.pdf"`);
       reply.header("Cache-Control", "no-store");
       return reply.send(Buffer.from(pdfBytes));
     } catch (err) {
