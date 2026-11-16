@@ -110,10 +110,13 @@ export async function reserveItemsTx(params: {
     existingReservations.map((r) => [`${r.inventoryItemId}|${dayRangeKey({ dayFrom: r.dayFrom, dayTo: r.dayTo })}`, r])
   );
 
+  // Kuchyň si své věci balí sama a nečeká, až event manager akci předá skladu.
+  // Její řádky proto drží sklad hned i v konceptu, jinak by po 30 minutách
+  // přestaly blokovat a kuchyň by balila věci, které jí systém nedrží.
+  const isDraftHold = event.status === "DRAFT" && actor.role !== "chef";
   const now = new Date();
-  const expiresAt =
-    event.status === "DRAFT" ? new Date(now.getTime() + 30 * 60 * 1000) : null;
-  const state = event.status === "DRAFT" ? "draft" : "confirmed";
+  const expiresAt = isDraftHold ? new Date(now.getTime() + 30 * 60 * 1000) : null;
+  const state = isDraftHold ? "draft" : "confirmed";
 
   // Řádky se kontrolují a zapisují postupně, aby druhý řádek téže položky
   // v jednom požadavku viděl první a dohromady nepřekročily sklad.

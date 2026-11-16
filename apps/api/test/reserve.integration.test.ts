@@ -106,4 +106,55 @@ describe("reserve transaction (integration)", () => {
 
     await disconnect();
   });
+
+  maybe("chef reservation in DRAFT holds stock without expiry, event manager's stays a 30min draft", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    await prisma.$connect();
+    const stamp = Date.now();
+
+    const [chef, manager] = await Promise.all([
+      prisma.user.create({ data: { email: `chef-draft-${stamp}@local`, passwordHash: "x", role: Role.chef } }),
+      prisma.user.create({ data: { email: `em-draft-${stamp}@local`, passwordHash: "x", role: Role.event_manager } })
+    ]);
+    const parent = await prisma.category.create({ data: { name: `Chef draft ${stamp}` } });
+    const child = await prisma.category.create({ data: { name: "Položky", parentId: parent.id } });
+    const [kitchenItem, managerItem] = await Promise.all([
+      prisma.inventoryItem.create({ data: { name: "Gastro", categoryId: child.id, unit: "ks" } }),
+      prisma.inventoryItem.create({ data: { name: "Stůl", categoryId: child.id, unit: "ks" } })
+    ]);
+    await prisma.inventoryLedger.createMany({
+      data: [kitchenItem, managerItem].map((i) => ({
+        inventoryItemId: i.id,
+        deltaQuantity: 10,
+        reason: LedgerReason.audit_adjustment,
+        createdById: manager.id
+      }))
+    });
+    const event = await prisma.event.create({
+      data: {
+        name: "Koncept s kuchyní",
+        location: "L",
+        deliveryDatetime: new Date("2030-08-01T08:00:00Z"),
+        pickupDatetime: new Date("2030-08-02T08:00:00Z"),
+        status: "DRAFT",
+        createdById: manager.id
+      }
+    });
+
+    await prisma.$transaction((tx) =>
+      reserveItemsTx({ tx, actor: { id: chef.id, role: chef.role }, eventId: event.id, items: [{ inventoryItemId: kitchenItem.id, qty: 3 }] })
+    );
+    await prisma.$transaction((tx) =>
+      reserveItemsTx({ tx, actor: { id: manager.id, role: manager.role }, eventId: event.id, items: [{ inventoryItemId: managerItem.id, qty: 2 }] })
+    );
+
+    const rows = await prisma.eventReservation.findMany({ where: { eventId: event.id } });
+    const chefRow = rows.find((r) => r.inventoryItemId === kitchenItem.id);
+    const managerRow = rows.find((r) => r.inventoryItemId === managerItem.id);
+    expect(chefRow).toMatchObject({ state: "confirmed", expiresAt: null });
+    expect(managerRow?.state).toBe("draft");
+    expect(managerRow?.expiresAt).not.toBeNull();
+
+    await disconnect();
+  });
 });

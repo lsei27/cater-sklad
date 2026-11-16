@@ -254,6 +254,7 @@ export default function EventDetailPage() {
     }
     return sections;
   }, [reservationItems]);
+  const hasKitchenItems = grouped[1].groups.length > 0;
 
   const issueData = useMemo(() => {
     const issuedMap = new Map<string, number>();
@@ -555,6 +556,17 @@ export default function EventDetailPage() {
               </Button>
             ) : null}
 
+            {/* Kuchyň balí podle aktuálních položek, nečeká na předání skladu. */}
+            {role === "chef" ? (
+              <Button
+                variant="secondary"
+                disabled={!hasKitchenItems}
+                onClick={() => window.open(withToken(`${apiBaseUrl()}/events/${event.id}/kitchen-pdf`), "_blank")}
+              >
+                Otevřít Balení (Kuchyň)
+              </Button>
+            ) : null}
+
             {latestExport?.pdfUrl || latestExport?.pdfPath ? (
               <>
                 {["admin", "event_manager", "warehouse"].includes(role) ? (
@@ -585,19 +597,21 @@ export default function EventDetailPage() {
                 >
                   Otevřít Balení (Sklad)
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() =>
-                    window.open(
-                      latestExport?.pdfUrl
-                        ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}?type=kitchen`)
-                        : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
-                      "_blank"
-                    )
-                  }
-                >
-                  Otevřít Balení (Kuchyň)
-                </Button>
+                {role !== "chef" ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      window.open(
+                        latestExport?.pdfUrl
+                          ? withToken(`${apiBaseUrl()}${latestExport.pdfUrl}?type=kitchen`)
+                          : `${apiBaseUrl()}/storage/${latestExport.pdfPath}`,
+                        "_blank"
+                      )
+                    }
+                  >
+                    Otevřít Balení (Kuchyň)
+                  </Button>
+                ) : null}
               </>
             ) : null}
           </div>

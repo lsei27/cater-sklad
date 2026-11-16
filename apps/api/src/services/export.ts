@@ -1,61 +1,40 @@
 import { Prisma } from "../../generated/prisma/client.js";
 import { type ExportSnapshot } from "../pdf/exportPdf.js";
 
-export async function createExportTx(params: {
-    tx: Prisma.TransactionClient;
-    eventId: string;
-    userId: string;
-}) {
-    const { tx, eventId, userId } = params;
+type SnapshotEventRow = {
+    id: string;
+    name: string;
+    location: string;
+    address: string | null;
+    notes: string | null;
+    event_date: Date | null;
+    event_end_date: Date | null;
+    delivery_datetime: Date;
+    pickup_datetime: Date;
+    status: string;
+    day_count: number;
+    manager_name: string | null;
+    manager_email: string;
+    manager_id: string;
+};
 
-    const [ev] = await tx.$queryRaw<
-        {
-            id: string;
-            name: string;
-            location: string;
-            address: string | null;
-            notes: string | null;
-            event_date: Date | null;
-            event_end_date: Date | null;
-            delivery_datetime: Date;
-            pickup_datetime: Date;
-            status: string;
-            day_count: number;
-            manager_name: string | null;
-            manager_email: string;
-            manager_id: string;
-        }[]
-    >`
+const reservationInclude = { item: { include: { category: { include: { parent: true } }, warehouse: true } } } as const;
+type SnapshotReservation = Prisma.EventReservationGetPayload<{ include: typeof reservationInclude }>;
+
+async function loadSnapshotEventTx(tx: Prisma.TransactionClient, eventId: string, lock: boolean) {
+    const [ev] = await tx.$queryRaw<SnapshotEventRow[]>`
     SELECT e.id, e.name, e.location, e.address, e.notes, e.event_date, e.event_end_date, e.delivery_datetime, e.pickup_datetime, e.status::text,
            event_row_day_count(e)::int AS day_count,
            u.name as manager_name, u.email as manager_email, u.id as manager_id
     FROM events e
     JOIN users u ON u.id = e.created_by
     WHERE e.id = ${eventId}::uuid
-    FOR UPDATE
+    ${lock ? Prisma.sql`FOR UPDATE` : Prisma.empty}
   `;
-    if (!ev) throw new Error("NOT_FOUND");
-    if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
+    return ev ?? null;
+}
 
-    await tx.eventReservation.updateMany({
-        where: { eventId: eventId },
-        data: { state: "confirmed", expiresAt: null }
-    });
-
-    const [v] = await tx.$queryRaw<{ next_version: number }[]>`
-    SELECT COALESCE(MAX(version),0) + 1 AS next_version
-    FROM event_exports
-    WHERE event_id = ${eventId}::uuid
-  `;
-    const version = Number(v?.next_version ?? 1);
-
-    const reservations = await tx.eventReservation.findMany({
-        where: { eventId: eventId, state: "confirmed", reservedQuantity: { gt: 0 } },
-        include: { item: { include: { category: { include: { parent: true } }, warehouse: true } } },
-        orderBy: [{ inventoryItemId: "asc" }, { dayFrom: "asc" }]
-    });
-    if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
-
+function buildSnapshot(ev: SnapshotEventRow, reservations: SnapshotReservation[], version: number, exportedAt: Date): ExportSnapshot {
     const groupsMap = new Map<string, ExportSnapshot["groups"][number] & { sequenceIndex: number; parentSortOrder: number; categorySortOrder: number }>();
     for (const r of reservations) {
         const category = r.item.category;
@@ -67,13 +46,13 @@ export async function createExportTx(params: {
         const group =
             groupsMap.get(key) ??
             (() => {
-                const g = { 
-                    parentCategory: parentName, 
-                    category: childName, 
+                const g = {
+                    parentCategory: parentName,
+                    category: childName,
                     sequenceIndex: parentSortOrder,
-                    parentSortOrder, 
-                    categorySortOrder, 
-                    items: [] as any[] 
+                    parentSortOrder,
+                    categorySortOrder,
+                    items: [] as any[]
                 };
                 groupsMap.set(key, g);
                 return g;
@@ -109,9 +88,8 @@ export async function createExportTx(params: {
         })
         .map(({ sequenceIndex, parentSortOrder, categorySortOrder, ...rest }) => rest);
 
-    const exportedAt = new Date();
     const managerName = (ev.manager_name ?? "").trim() || ev.manager_email;
-    const snapshot: ExportSnapshot = {
+    return {
         event: {
             id: ev.id,
             name: ev.name,
@@ -129,6 +107,55 @@ export async function createExportTx(params: {
         },
         groups: sortedGroups
     };
+}
+
+/// Aktuální stav položek akce bez uložení exportu. Kuchyň podle něj balí
+/// dřív, než event manager akci předá skladu, takže nesmí vzniknout nová verze
+/// exportu (sklad by pak viděl změny, které nejsou) ani změna stavu akce.
+/// Bere všechny řádky s kladným počtem, stejně jako je ukazuje detail akce.
+export async function buildLiveSnapshotTx(tx: Prisma.TransactionClient, eventId: string) {
+    const ev = await loadSnapshotEventTx(tx, eventId, false);
+    if (!ev) return null;
+    const reservations = await tx.eventReservation.findMany({
+        where: { eventId, reservedQuantity: { gt: 0 } },
+        include: reservationInclude,
+        orderBy: [{ inventoryItemId: "asc" }, { dayFrom: "asc" }]
+    });
+    return buildSnapshot(ev, reservations, 0, new Date());
+}
+
+export async function createExportTx(params: {
+    tx: Prisma.TransactionClient;
+    eventId: string;
+    userId: string;
+}) {
+    const { tx, eventId, userId } = params;
+
+    const ev = await loadSnapshotEventTx(tx, eventId, true);
+    if (!ev) throw new Error("NOT_FOUND");
+    if (ev.status === "ISSUED" || ev.status === "CLOSED" || ev.status === "CANCELLED") throw new Error("READ_ONLY");
+
+    await tx.eventReservation.updateMany({
+        where: { eventId: eventId },
+        data: { state: "confirmed", expiresAt: null }
+    });
+
+    const [v] = await tx.$queryRaw<{ next_version: number }[]>`
+    SELECT COALESCE(MAX(version),0) + 1 AS next_version
+    FROM event_exports
+    WHERE event_id = ${eventId}::uuid
+  `;
+    const version = Number(v?.next_version ?? 1);
+
+    const reservations = await tx.eventReservation.findMany({
+        where: { eventId: eventId, state: "confirmed", reservedQuantity: { gt: 0 } },
+        include: reservationInclude,
+        orderBy: [{ inventoryItemId: "asc" }, { dayFrom: "asc" }]
+    });
+    if (reservations.length === 0) throw new Error("NO_ITEMS_TO_EXPORT");
+
+    const exportedAt = new Date();
+    const snapshot = buildSnapshot(ev, reservations, version, exportedAt);
 
     const exportRow = await tx.eventExport.create({
         data: {
