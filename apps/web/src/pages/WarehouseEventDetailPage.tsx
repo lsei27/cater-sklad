@@ -8,6 +8,7 @@ import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Input from "../components/ui/Input";
+import SegmentedControl from "../components/ui/SegmentedControl";
 import toast from "react-hot-toast";
 import { compareByCategoryParentName, managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { cn } from "../lib/ui";
@@ -16,7 +17,7 @@ import AdditionalIssueModal from "../components/AdditionalIssueModal";
 import { Icons } from "../lib/icons";
 import DayPackingCard from "../components/DayPackingCard";
 import { dayRangeLabel } from "../lib/eventDays";
-import { ArrowLeft, CalendarClock, Check, Lock, PackagePlus, Printer, X, Plus } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, FileText, Lock, PackagePlus, Printer, RotateCcw, Smartphone, X, Plus } from "lucide-react";
 import WarehousePackingTable from "../components/WarehousePackingTable";
 import WarehouseReturnTable from "../components/WarehouseReturnTable";
 import EventLoadError from "../components/EventLoadError";
@@ -36,6 +37,7 @@ type PackingChange = { name: string; unit: string; from: number; to: number; cha
 type VersionChange = { inventoryItemId: string; name: string; unit: string; dayFrom: number; dayTo: number | null; from: number; to: number; kind: "added" | "removed" | "changed" };
 type VersionChanges = { baseVersion: number; latestVersion: number; changes: VersionChange[] };
 type ReturnDraft = { issued: number; returned: number; broken: number; targetWarehouseId?: string };
+type ChecklistType = "general" | "kitchen";
 
 function OffSiteBadge(props: { warehouseName?: string | null; warehouseIsHome?: boolean | null }) {
   // Starsi exporty sklad nenesou (undefined) - tam se nehlasi nic.
@@ -104,6 +106,9 @@ export default function WarehouseEventDetailPage() {
   const [blockUntil, setBlockUntil] = useState("");
   const [blockNote, setBlockNote] = useState("");
   const [manualIssueMode, setManualIssueMode] = useState(false);
+  const [manualIssueQuantities, setManualIssueQuantities] = useState(new Map<string, number>());
+  const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
+  const [openedChecklist, setOpenedChecklist] = useState<{ time: Date; type?: ChecklistType } | null>(null);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
   const [savingPacking, setSavingPacking] = useState<Set<string>>(new Set());
   const pendingPacking = useRef(new Set<string>());
@@ -173,6 +178,7 @@ export default function WarehouseEventDetailPage() {
   useEffect(() => {
     if (!canWarehouse) return;
     setCheckedReturnIds(new Set());
+    setManualIssueMode(false);
     load();
     loadBlocks();
     loadWarehouses();
@@ -184,6 +190,12 @@ export default function WarehouseEventDetailPage() {
     const ex = (event?.exports?.[0] ?? null);
     return ex?.snapshotJson ?? null;
   }, [event]);
+  const exportVersion = snapshot?.event.version;
+
+  useEffect(() => {
+    setManualIssueQuantities(new Map());
+    setOpenedChecklist(null);
+  }, [id, exportVersion]);
 
   const snapshotItems = useMemo(() => {
     const list =
@@ -256,6 +268,14 @@ export default function WarehouseEventDetailPage() {
     }
     return codes;
   }, [event?.reservations, event?.issues]);
+
+  const qrCodeByItemId = useMemo(() => {
+    const codes = new Map<string, string>();
+    for (const row of event?.reservations ?? []) {
+      if (typeof row.item?.qrCode === "string") codes.set(row.inventoryItemId, row.item.qrCode);
+    }
+    return codes;
+  }, [event?.reservations]);
 
   const imageByItemId = useMemo(() => {
     const images = new Map<string, string>();
@@ -391,6 +411,20 @@ export default function WarehouseEventDetailPage() {
   const issueDisabled = event?.status !== "SENT_TO_WAREHOUSE" || Boolean(event.exportNeedsRevision) || warehouseItems.length === 0;
   const issueMode = issueDisabled || isMultiDay ? null : manualIssueMode ? "manual" : "digital";
   const digitalPackingActive = issueMode === "digital";
+  const manualPackingActive = issueMode === "manual";
+  const manualFullyIssued = rows.filter((row) => !manualIssueQuantities.has(row.inventory_item_id)).length;
+  const manualHasIssuedItems = rows.some((row) => (manualIssueQuantities.get(row.inventory_item_id) ?? row.requested) > 0);
+
+  const updateManualIssueQuantity = (row: { inventory_item_id: string; requested: number }, quantity: number) => {
+    if (!Number.isFinite(quantity)) return;
+    const issued = Math.min(row.requested, Math.max(0, Math.trunc(quantity)));
+    setManualIssueQuantities((current) => {
+      const next = new Map(current);
+      if (issued === row.requested) next.delete(row.inventory_item_id);
+      else next.set(row.inventory_item_id, issued);
+      return next;
+    });
+  };
 
   const groupedRows = useMemo(() => {
     type CatGroup = { parent: string; sub: string; items: typeof rows };
@@ -448,11 +482,12 @@ export default function WarehouseEventDetailPage() {
       const packageWeightKg = parseWeightValue(packaging?.masterPackageWeight);
       const packageQty = packaging?.masterPackageQty ?? null;
       if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
-      return sum + Math.ceil(row.requested / packageQty) * packageWeightKg;
+      const quantity = issueMode === "manual" ? manualIssueQuantities.get(row.inventory_item_id) ?? row.requested : row.requested;
+      return sum + Math.ceil(quantity / packageQty) * packageWeightKg;
     }, 0);
 
     return totalKg > 0 ? formatWeightKg(totalKg) : "Nelze dopočítat";
-  }, [digitalIssueStates, issueMode, itemPackagingById, rows]);
+  }, [digitalIssueStates, issueMode, itemPackagingById, manualIssueQuantities, rows]);
 
   const updateDigitalIssueState = async (inventoryItemId: string, nextState: DigitalIssueState) => {
     const previousState = digitalIssueStates[inventoryItemId] ?? "idle";
@@ -570,12 +605,27 @@ export default function WarehouseEventDetailPage() {
     }
   };
 
-  const printChecklist = () => {
-    if (!snapshot?.event?.version) return;
+  const printChecklist = (type?: ChecklistType) => {
+    if (!exportVersion) return;
     const token = localStorage.getItem("token");
-    window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
+    const pdf = `${apiBaseUrl()}/events/${id}/exports/${exportVersion}/pdf?token=${encodeURIComponent(token ?? "")}${compareParam}${type ? `&type=${type}` : ""}`;
+    const preview = window.open("", "_blank");
+    if (!preview) {
+      toast.error("Checklist se nepodařilo otevřít. Povol v prohlížeči otevírání nových oken.");
+      return;
+    }
+    preview.opener = null;
+    preview.location.href = pdf;
+    setOpenedChecklist({ time: new Date(), type });
+    setPrintOptionsOpen(false);
   };
   const isPacking = event.status === "SENT_TO_WAREHOUSE";
+  const confirmIssueDisabled = issueDisabled || savingPacking.size > 0 || (manualPackingActive
+    ? !manualHasIssuedItems
+    : !digitalIssueSummary.allConfirmed);
+  const issueCount = manualPackingActive
+    ? `${manualFullyIssued}/${rows.length}`
+    : `${digitalIssueSummary.confirmed}/${digitalIssueSummary.total}`;
 
   return (
     <div className={cn("space-y-4", showMobileActionDock && "pb-36 md:pb-0")}>
@@ -594,7 +644,7 @@ export default function WarehouseEventDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><h1 className="page-title wrap-break-word">{isReturning ? "Uzavření: " : isPacking ? "Vychystání: " : ""}{event.name}</h1>
-              <Badge tone={isReturning ? "ok" : "neutral"} className={isReturning ? undefined : digitalPackingActive ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{digitalPackingActive ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
+              <Badge tone={isReturning ? "ok" : "neutral"} className={isReturning ? undefined : issueMode ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{issueMode ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
             <p className="page-description flex flex-wrap items-center gap-1.5">{!isReturning && <CalendarClock size={15} />} {[
               isReturning
                 ? new Date(event.deliveryDatetime).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -609,10 +659,18 @@ export default function WarehouseEventDetailPage() {
               <Lock size={16} /> Uzavřít akci ({checkedCount}/{rows.length})
             </Button>
           </div>}
-          {isPacking && <div className="flex flex-wrap gap-2">
-            {snapshot?.event?.version && <Button variant="secondary" onClick={printChecklist}><Printer size={16} /> Tisk checklistu</Button>}
-            {digitalPackingActive && <Button variant="secondary" onClick={() => setManualIssueMode(true)}>Manuální režim</Button>}
-            {digitalPackingActive && <Button className="hidden md:inline-flex" disabled={issueDisabled || !digitalIssueSummary.allConfirmed || savingPacking.size > 0} onClick={() => setConfirmIssue(true)}><Check size={16} /> Potvrdit výdej ({digitalIssueSummary.confirmed}/{digitalIssueSummary.total})</Button>}
+          {isPacking && <div className="flex flex-wrap items-center gap-2">
+            {issueMode && <SegmentedControl
+              label="Režim výdeje"
+              value={issueMode}
+              onChange={(mode) => setManualIssueMode(mode === "manual")}
+              options={[
+                { value: "digital", label: <><Smartphone size={14} /> Digitálně</> },
+                { value: "manual", label: <><FileText size={14} /> Podle papíru</> }
+              ]}
+            />}
+            {exportVersion && <Button variant="secondary" onClick={() => manualPackingActive ? setPrintOptionsOpen(true) : printChecklist()}><Printer size={16} /> Tisk checklistu</Button>}
+            {issueMode && <Button className="hidden md:inline-flex" disabled={confirmIssueDisabled} onClick={() => setConfirmIssue(true)}><Check size={16} /> Potvrdit výdej ({issueCount})</Button>}
           </div>}
         </div>
         {!isReturning && <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
@@ -806,116 +864,32 @@ export default function WarehouseEventDetailPage() {
             </div>
           </CardContent>
         </Card>
-      ) : isPacking && !digitalPackingActive ? (
-        <Card>
-          <CardHeader>
-            <div className="text-sm font-semibold">Režim výdeje</div>
-            <div className="mt-1 text-sm text-slate-600">
-              {isMultiDay
-                ? "Vícedenní akce se balí a vydává po dnech v kartě „Balení po dnech“."
-                : "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isMultiDay ? (
-                <div className="text-sm text-slate-600">
-                  Vícedenní akce se vydává po dnech v kartě „Balení po dnech“ níže.
-                </div>
-              ) : (
-              <div className="space-y-4">
-                <div className="grid gap-2 md:grid-cols-2">
-                  <button
-                    type="button"
-                    disabled={issueDisabled}
-                    onClick={() => setManualIssueMode(true)}
-                    className={cn(
-                      "rounded-2xl border p-4 text-left transition",
-                      issueMode === "manual"
-                        ? "border-indigo-300 bg-indigo-50 shadow-sm"
-                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
-                      issueDisabled && "cursor-not-allowed opacity-50"
-                    )}
-                  >
-                    <div className="text-sm font-semibold text-slate-900">Manuální výdej</div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Otevře checklist v PDF, skladník si položky odškrtá na papíře a pak hromadně potvrdí výdej.
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={issueDisabled}
-                    onClick={() => setManualIssueMode(false)}
-                    className={cn(
-                      "rounded-2xl border border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50",
-                      issueDisabled && "cursor-not-allowed opacity-50"
-                    )}
-                  >
-                    <div className="text-sm font-semibold text-slate-900">Digitální výdej</div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Položky se potvrzují v aplikaci po jedné. Každá položka má krok „Vydat“ a následné „Potvrdit“.
-                      Rozbalená akce se ukládá, dá se dokončit na víckrát.
-                    </div>
-                  </button>
-                </div>
-
-                {issueMode === "manual" ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm font-semibold text-slate-900">Manuální checklist</div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Nejprve otevři PDF podle potřeby, po fyzickém odškrtnutí položek potvrď celé vydání.
-                    </div>
-                    {snapshot?.event?.version ? (
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=general&token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
-                          }}
-                        >
-                          Otevřít checklist (Sklad)
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?type=kitchen&token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
-                          }}
-                        >
-                          Otevřít checklist (Kuchyň)
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const token = localStorage.getItem("token");
-                            window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
-                          }}
-                        >
-                          Otevřít checklist (Kompletní)
-                        </Button>
-                      </div>
-                    ) : null}
-                    <div className="mt-4">
-                      <Button full disabled={issueDisabled} onClick={() => setConfirmIssue(true)}>
-                        Potvrdit manuální vydání
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {!issueMode ? (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    Vyber režim vydání. Manuální ponechá práci s PDF checklistem, digitální zobrazí odškrtávání přímo u položek níže.
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       ) : null}
+
+      {manualPackingActive && (
+        <Card className="flex flex-wrap items-center gap-x-3 gap-y-2 border-indigo-100 bg-indigo-50 px-4 py-3">
+          <div className="flex min-w-0 flex-1 basis-full items-start gap-3 sm:basis-auto sm:items-center">
+            <Printer size={18} className="shrink-0 text-indigo-700" />
+            <div className="text-sm">
+              <div className="font-semibold">
+                {openedChecklist
+                  ? `Checklist otevřen v ${openedChecklist.time.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}`
+                  : "Checklist pro výdej podle papíru"}
+                {exportVersion && ` (verze v${exportVersion})`}
+                {openedChecklist?.type && ` · ${openedChecklist.type === "kitchen" ? "Kuchyň" : "Sklad"}`}
+              </div>
+              <p className="mt-0.5 text-muted">Položky odškrtávejte na papíře. V aplikaci jsou předvyplněné jako vydané. Upravte jen množství, která se liší.</p>
+              {!manualHasIssuedItems && <p className="mt-1 font-semibold text-red-700">Pro potvrzení výdeje zadejte alespoň jednu vydanou položku.</p>}
+            </div>
+          </div>
+          {exportVersion && (
+            <Button variant="ghost" size="sm" className="ml-6 shrink-0 text-indigo-700 hover:bg-indigo-100 sm:ml-0" onClick={() => printChecklist(openedChecklist?.type)}>
+              {openedChecklist ? <RotateCcw size={14} /> : <Printer size={14} />}
+              {openedChecklist ? "Vytisknout znovu" : "Vytisknout checklist"}
+            </Button>
+          )}
+        </Card>
+      )}
 
       {isMultiDay && (event.status === "SENT_TO_WAREHOUSE" || (event.status === "ISSUED" && hasPendingDays)) ? (
         <DayPackingCard
@@ -958,10 +932,12 @@ export default function WarehouseEventDetailPage() {
           onBlock={startBlock}
           onRemoveBlock={(block) => void removeBlock(block)}
         />
-      ) : digitalPackingActive ? (
-        <WarehousePackingTable rows={rows} states={digitalIssueStates} saving={savingPacking} disabled={issueDisabled}
+      ) : issueMode ? (
+        <WarehousePackingTable rows={rows} disabled={issueDisabled}
           codes={skuByItemId} changes={itemChangeById} blocks={blocks}
-          onUpdate={(itemId, state) => void updateDigitalIssueState(itemId, state)}
+          mode={issueMode === "manual"
+            ? { kind: "manual", quantities: manualIssueQuantities, qrCodes: qrCodeByItemId, onQuantityChange: updateManualIssueQuantity }
+            : { kind: "digital", states: digitalIssueStates, saving: savingPacking, onUpdate: (itemId, state) => void updateDigitalIssueState(itemId, state) }}
           onBlock={startBlock} onRemoveBlock={(block) => void removeBlock(block)} />
       ) : (
       <Card>
@@ -1180,10 +1156,8 @@ export default function WarehouseEventDetailPage() {
           <div className="mx-auto flex max-w-xl items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
-                <span>{issueMode === "digital" ? "Finální potvrzení" : "Manuální výdej"}</span>
-                {issueMode === "digital" ? (
-                  <span>{digitalIssueSummary.confirmed}/{digitalIssueSummary.total}</span>
-                ) : null}
+                <span>{manualPackingActive ? "Výdej podle papíru" : "Finální potvrzení"}</span>
+                <span>{issueCount}</span>
               </div>
               {issueMode === "digital" ? (
                 <>
@@ -1204,12 +1178,12 @@ export default function WarehouseEventDetailPage() {
                   </div>
                 </>
               ) : (
-                <div className="mt-1 truncate text-[11px] text-slate-500">Po kontrole PDF potvrď celý výdej.</div>
+                <div className="mt-1 text-[11px] text-slate-500">Výjimky: {rows.length - manualFullyIssued}</div>
               )}
             </div>
             <Button
               className="h-12 shrink-0 px-4"
-              disabled={issueDisabled || (issueMode === "digital" && (!digitalIssueSummary.allConfirmed || savingPacking.size > 0))}
+              disabled={confirmIssueDisabled}
               onClick={() => setConfirmIssue(true)}
             >
               <Icons.Check className="h-4 w-4" />
@@ -1219,6 +1193,14 @@ export default function WarehouseEventDetailPage() {
         </div>
       ) : null}
 
+      <Modal open={printOptionsOpen && manualPackingActive} onOpenChange={setPrintOptionsOpen} title="Tisk checklistu">
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => printChecklist()}><Printer size={16} /> Kompletní checklist</Button>
+          <Button variant="secondary" onClick={() => printChecklist("general")}>Sklad</Button>
+          <Button variant="secondary" onClick={() => printChecklist("kitchen")}>Kuchyň</Button>
+        </div>
+      </Modal>
+
       <ConfirmDialog
         open={confirmIssue}
         onOpenChange={setConfirmIssue}
@@ -1226,31 +1208,27 @@ export default function WarehouseEventDetailPage() {
         description={
           issueMode === "digital"
             ? "Digitální checklist je kompletní. Tímto krokem se skutečně odečtou položky ze skladu a akce se přepne do stavu Vydáno."
-            : "Výdej uzamkne akci pro běžné úpravy."
+            : `${manualFullyIssued} z ${rows.length} položek odpovídá checklistu. Ze skladu se odečtou množství ze sloupce Vydáno a akce se přepne do stavu Vydáno.`
         }
         confirmText={issueMode === "digital" ? "Potvrdit digitální výdej" : "Potvrdit výdej"}
         onConfirm={async () => {
-          if (!id) return;
-          if (issueMode === "digital" && !digitalIssueSummary.allConfirmed) {
-            toast.error("Nejdřív potvrď všechny položky v digitálním checklistu.");
-            return;
-          }
+          if (!id || !issueMode || confirmIssueDisabled) return false;
           try {
+            const items = issueMode === "digital" || manualIssueQuantities.size > 0
+              ? rows.filter((row) => issueMode === "manual" || digitalIssueStates[row.inventory_item_id] === "confirmed").map((row) => ({
+                  inventory_item_id: row.inventory_item_id,
+                  issued_quantity: issueMode === "manual"
+                    ? manualIssueQuantities.get(row.inventory_item_id) ?? row.requested
+                    : row.requested
+                }))
+              : undefined;
             const res = await api<{ skippedItems?: Array<{ inventoryItemId: string; name: string }> }>(`/events/${id}/issue`, {
               method: "POST", 
               body: JSON.stringify({ 
                 idempotency_key: `${issueMode ?? "issue"}:${Date.now()}`,
                 warehouse_id: issueWarehouseId || undefined,
                 pallet_count: issuePalletCount === "" ? null : Number(issuePalletCount),
-                items:
-                  issueMode === "digital"
-                    ? rows
-                        .filter((row) => (digitalIssueStates[row.inventory_item_id] ?? "idle") === "confirmed")
-                        .map((row) => ({
-                          inventory_item_id: row.inventory_item_id,
-                          issued_quantity: row.requested
-                        }))
-                    : undefined
+                items
               }) 
             });
             toast.success(issueMode === "digital" ? "Digitální vydání potvrzeno" : "Vydání potvrzeno");
@@ -1263,8 +1241,9 @@ export default function WarehouseEventDetailPage() {
               );
             }
             await load();
-          } catch (e: any) {
-            toast.error(e?.error?.message ?? "Nepodařilo se potvrdit výdej.");
+          } catch (e) {
+            toast.error((e as { error?: { message?: string } })?.error?.message ?? "Nepodařilo se potvrdit výdej.");
+            return false;
           }
         }}
       >

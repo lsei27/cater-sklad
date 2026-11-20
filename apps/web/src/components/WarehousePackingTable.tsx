@@ -1,4 +1,4 @@
-import { Check, MapPin, PackageCheck, ScanLine, X } from "lucide-react";
+import { Check, Lock, MapPin, PackageCheck, ScanLine, X } from "lucide-react";
 import { useState } from "react";
 import { apiUrl } from "../lib/api";
 import { Icons } from "../lib/icons";
@@ -7,6 +7,7 @@ import Badge from "./ui/Badge";
 import Button from "./ui/Button";
 import { Card } from "./ui/Card";
 import Input from "./ui/Input";
+import QuantityStepper from "./ui/QuantityStepper";
 import SegmentedControl from "./ui/SegmentedControl";
 
 type PackingRow = {
@@ -22,42 +23,53 @@ type PackingRow = {
 };
 type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
 type PackingState = "idle" | "armed" | "confirmed";
+type PackingMode =
+  | { kind: "digital"; states: Record<string, PackingState>; saving: Set<string>; onUpdate: (id: string, state: PackingState) => void }
+  | { kind: "manual"; quantities: ReadonlyMap<string, number>; qrCodes: ReadonlyMap<string, string>; onQuantityChange: (row: PackingRow, quantity: number) => void };
+
+function normalizeSearch(value: string) {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLocaleLowerCase("cs");
+}
 
 export default function WarehousePackingTable({
   rows,
-  states,
-  saving,
+  mode,
   disabled,
   codes,
   changes,
   blocks,
-  onUpdate,
   onBlock,
   onRemoveBlock,
 }: {
   rows: PackingRow[];
-  states: Record<string, PackingState>;
-  saving: Set<string>;
+  mode: PackingMode;
   disabled: boolean;
   codes: Map<string, string>;
   changes: Map<string, { added: boolean; from?: number }>;
   blocks: Block[];
-  onUpdate: (id: string, state: PackingState) => void;
   onBlock: (row: PackingRow) => void;
   onRemoveBlock: (block: Block) => void;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"pending" | "done" | "missing" | "all">("all");
   const [byWarehouse, setByWarehouse] = useState(true);
-  const completed = rows.filter((row) => states[row.inventory_item_id] === "confirmed").length;
-  const shortage = (row: PackingRow) =>
-    states[row.inventory_item_id] !== "confirmed" && row.total !== undefined && row.total < row.requested;
+  const manual = mode.kind === "manual";
+  const issuedQuantity = (row: PackingRow) => mode.kind === "manual"
+    ? mode.quantities.get(row.inventory_item_id) ?? row.requested
+    : mode.states[row.inventory_item_id] === "confirmed" ? row.requested : 0;
+  const isCompleted = (row: PackingRow) => mode.kind === "manual"
+    ? issuedQuantity(row) === row.requested
+    : mode.states[row.inventory_item_id] === "confirmed";
+  const completed = rows.filter(isCompleted).length;
+  const shortage = (row: PackingRow) => manual
+    ? issuedQuantity(row) < row.requested
+    : !isCompleted(row) && row.total !== undefined && row.total < row.requested;
   const missing = rows.filter(shortage).length;
   const percentage = rows.length ? Math.round((100 * completed) / rows.length) : 0;
-  const term = search.trim().toLocaleLowerCase("cs");
+  const term = normalizeSearch(search);
   const groups = new Map<string, PackingRow[]>();
   for (const row of rows) {
-    const checked = states[row.inventory_item_id] === "confirmed";
+    const checked = isCompleted(row);
     if (
       (filter === "done" && !checked) ||
       (filter === "pending" && checked) ||
@@ -66,9 +78,8 @@ export default function WarehousePackingTable({
       continue;
     if (
       term &&
-      ![row.name, row.inventory_item_id, codes.get(row.inventory_item_id) ?? ""].some((value) =>
-        value.toLocaleLowerCase("cs").includes(term)
-      )
+      ![row.name, row.inventory_item_id, codes.get(row.inventory_item_id), mode.kind === "manual" ? mode.qrCodes.get(row.inventory_item_id) : undefined]
+        .some((value) => value && normalizeSearch(value).includes(term))
     )
       continue;
     const key = byWarehouse ? row.warehouseName || "Sklad neurčen" : row.parentCategory || "Ostatní";
@@ -81,17 +92,17 @@ export default function WarehousePackingTable({
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-4 p-4">
-        <div className="min-w-40 flex-1">
+        <div className={cn("min-w-40 flex-1", manual && "max-sm:basis-full")}>
           <div className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold">
             <span>
-              {completed} z {rows.length} položek vychystáno
+              {completed} z {rows.length} položek {manual ? `vydáno podle checklistu · Výjimky ${missing}` : "vychystáno"}
             </span>
           <span className="whitespace-nowrap text-indigo-700">{percentage} %</span>
           </div>
           <progress
             value={completed}
             max={Math.max(rows.length, 1)}
-            aria-label="Vychystané položky"
+            aria-label={manual ? "Položky vydané podle checklistu" : "Vychystané položky"}
             className="block h-2 w-full overflow-hidden rounded-full bg-canvas accent-indigo-600 [&::-webkit-progress-bar]:bg-canvas [&::-webkit-progress-value]:bg-indigo-600"
           />
         </div>
@@ -102,7 +113,7 @@ export default function WarehousePackingTable({
           </div>
           <div>
             <dt>Zbývá</dt>
-            <dd className="text-lg font-bold leading-6 text-ink">{rows.length - completed}</dd>
+            <dd className="text-lg font-bold leading-6 text-ink">{manual ? 0 : rows.length - completed}</dd>
           </div>
           <div>
             <dt>Chybí</dt>
@@ -120,7 +131,7 @@ export default function WarehousePackingTable({
             type="search"
             aria-label="Hledat ve vychystávání"
             className="pl-9"
-            placeholder="Naskenujte kód nebo napište název položky…"
+            placeholder={manual ? "Zapsat výjimku: kód nebo název položky…" : "Naskenujte kód nebo napište název položky…"}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -130,8 +141,8 @@ export default function WarehousePackingTable({
           value={filter}
           onChange={setFilter}
           options={[
-            { value: "pending", label: `Zbývá ${rows.length - completed}` },
-            { value: "done", label: `Hotovo ${completed}` },
+            { value: "pending", label: manual ? `Výjimky ${missing}` : `Zbývá ${rows.length - completed}` },
+            { value: "done", label: manual ? `Podle checklistu ${completed}` : `Hotovo ${completed}` },
             { value: "missing", label: <span className="text-red-700">Chybí {missing}</span> },
             { value: "all", label: "Vše" },
           ]}
@@ -142,17 +153,28 @@ export default function WarehousePackingTable({
           onClick={() => setByWarehouse(!byWarehouse)}
           aria-pressed={byWarehouse}
         >
-          <MapPin size={16} /> {byWarehouse ? "Podle umístění" : "Podle kategorie"}
+          <MapPin size={16} /> {manual
+            ? `Seskupit: podle ${byWarehouse ? "umístění" : "kategorie"}`
+            : byWarehouse ? "Podle umístění" : "Podle kategorie"}
         </Button>
       </div>
       <Card className="overflow-x-auto">
-        <table className="work-table w-full sm:min-w-[565px] text-sm">
+        <table className={cn("work-table w-full text-sm sm:min-w-[565px]", manual && "lg:table-fixed")}>
+          {manual && (
+            <colgroup className="max-lg:hidden">
+              <col />
+              <col className="w-[15%]" />
+              <col className="w-[10%]" />
+              <col className="w-[12%]" />
+              <col className="w-[16%]" />
+            </colgroup>
+          )}
           <thead className="table-header max-sm:sr-only">
             <tr>
               <th scope="col">Položka</th>
               <th scope="col">Umístění</th>
               <th scope="col">Požadováno</th>
-              <th scope="col">Vychystáno</th>
+              <th scope="col">{manual ? "Vydáno" : "Vychystáno"}</th>
               <th scope="col">Stav</th>
             </tr>
           </thead>
@@ -176,8 +198,9 @@ export default function WarehousePackingTable({
               </tr>
               {group.map((row) => {
                 const id = row.inventory_item_id;
-                const state = states[id] ?? "idle";
-                const checked = state === "confirmed";
+                const state = mode.kind === "digital" ? mode.states[id] ?? "idle" : null;
+                const checked = isCompleted(row);
+                const issued = issuedQuantity(row);
                 const short = shortage(row);
                 const itemChange = changes.get(id);
                 const relatedBlocks = blocks.filter((block) => block.inventoryItemId === id);
@@ -186,7 +209,19 @@ export default function WarehousePackingTable({
                   <tr key={id} className={cn("packing-line", short ? "bg-red-50/60" : itemChange && "bg-amber-50/70")}>
                     <td className="px-4 py-2.5">
                       <div className="flex min-w-0 items-center gap-2.5">
-                        {checked && <Check size={16} className="shrink-0 text-emerald-700" aria-label="Vychystáno" />}
+                        {mode.kind === "manual" ? (
+                          <label className="relative grid size-8 shrink-0 cursor-pointer place-items-center">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled}
+                              aria-label={`Vydáno podle checklistu: ${row.name}`}
+                              className={cn("size-[22px] cursor-pointer appearance-none rounded-md border bg-white checked:border-emerald-700 checked:bg-emerald-700", checked ? "border-emerald-700" : "border-red-700")}
+                              onChange={(event) => mode.onQuantityChange(row, event.currentTarget.checked ? row.requested : 0)}
+                            />
+                            {checked && <Check size={15} aria-hidden="true" className="pointer-events-none absolute text-white" />}
+                          </label>
+                        ) : checked && <Check size={16} className="shrink-0 text-emerald-700" aria-label="Vychystáno" />}
                         <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-[#eceff2] text-slate-400">
                           {row.imageUrl ? (
                             <img loading="lazy" className="size-full object-cover" src={apiUrl(row.imageUrl)} alt="" />
@@ -195,7 +230,7 @@ export default function WarehousePackingTable({
                           )}
                         </span>
                         <div className="min-w-0">
-                          <div className="font-medium">{row.name}</div>
+                          <div className="font-medium wrap-break-word">{row.name}</div>
                           {code && <span className="font-mono text-xs text-muted">{code}</span>}
                           {itemChange && (
                             <Badge className="ml-2" tone={itemChange.added ? "ok" : "warn"}>
@@ -221,27 +256,58 @@ export default function WarehousePackingTable({
                       ))}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-muted">
-                      {row.warehouseName || "–"}
+                      {manual && row.warehouseName ? <Badge>{row.warehouseName}</Badge> : row.warehouseName || "–"}
                       {row.category && <div>{row.category}</div>}
+                      {manual && row.total !== undefined && row.total < row.requested && (
+                        <Badge tone="warn" className="mt-1">Skladem {row.total} {row.unit}</Badge>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 font-semibold tabular-nums whitespace-nowrap">
                       <span className="mb-0.5 block text-xs font-normal text-muted sm:hidden">Požadováno</span>
                       {row.requested} {row.unit}
                     </td>
                     <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
-                      <span className="mb-0.5 block text-xs font-normal text-muted sm:hidden">Vychystáno</span>
-                      {checked ? row.requested : "0"} {row.unit}
+                      <span className="mb-0.5 block text-xs font-normal text-muted sm:hidden">{manual ? "Vydáno" : "Vychystáno"}</span>
+                      {mode.kind === "manual" ? (
+                        <QuantityStepper
+                          label={`Vydáno – ${row.name}`}
+                          className={cn("w-[116px] sm:w-[104px] [&>button]:size-9 sm:[&>button]:size-7 [&>span]:min-w-0 [&>span]:flex-1", short && "text-red-700")}
+                          value={
+                            <input
+                              aria-label={`Vydáno: ${row.name}`}
+                              className="w-full rounded-sm bg-transparent text-center [appearance:textfield] focus-visible:outline-offset-0 [&::-webkit-inner-spin-button]:appearance-none"
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              max={row.requested}
+                              step={1}
+                              value={issued}
+                              disabled={disabled}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onChange={(event) => mode.onQuantityChange(row, Number(event.currentTarget.value))}
+                            />
+                          }
+                          onDecrease={() => mode.onQuantityChange(row, issued - 1)}
+                          onIncrease={() => mode.onQuantityChange(row, issued + 1)}
+                          decreaseDisabled={disabled || issued <= 0}
+                          increaseDisabled={disabled || issued >= row.requested}
+                        />
+                      ) : `${issued} ${row.unit}`}
                     </td>
                     <td className="px-4 py-2.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {checked ? (
+                      <div className={cn("flex items-center gap-1.5", manual ? "justify-between" : "flex-wrap")}>
+                        {mode.kind === "manual" ? (
+                          <Badge tone={short ? "danger" : "neutral"}>
+                            {checked ? "Podle checklistu" : issued === 0 ? "Nevydáno · chybí" : `Vydáno částečně · chybí ${row.requested - issued} ${row.unit}`}
+                          </Badge>
+                        ) : checked ? (
                           <>
                             <Badge tone="ok">Hotovo</Badge>
                             <Button
                               size="sm"
                               variant="ghost"
-                              disabled={saving.has(id) || disabled}
-                              onClick={() => onUpdate(id, "idle")}
+                              disabled={mode.saving.has(id) || disabled}
+                              onClick={() => mode.onUpdate(id, "idle")}
                             >
                               Vrátit do seznamu
                             </Button>
@@ -250,16 +316,16 @@ export default function WarehousePackingTable({
                           <>
                             <Button
                               size="sm"
-                              disabled={saving.has(id) || disabled}
-                              onClick={() => onUpdate(id, "confirmed")}
+                              disabled={mode.saving.has(id) || disabled}
+                              onClick={() => mode.onUpdate(id, "confirmed")}
                             >
                               <Check size={14} /> Potvrdit
                             </Button>
                             <Button
                               size="sm"
                               variant="ghost"
-                              disabled={saving.has(id) || disabled}
-                              onClick={() => onUpdate(id, "idle")}
+                              disabled={mode.saving.has(id) || disabled}
+                              onClick={() => mode.onUpdate(id, "idle")}
                             >
                               Zrušit
                             </Button>
@@ -270,14 +336,26 @@ export default function WarehousePackingTable({
                             <Button
                               size="sm"
                               variant="dark"
-                              disabled={saving.has(id) || disabled}
-                              onClick={() => onUpdate(id, "armed")}
+                              disabled={mode.saving.has(id) || disabled}
+                              onClick={() => mode.onUpdate(id, "armed")}
                             >
                               <PackageCheck size={14} /> Vydat vše
                             </Button>
                           </>
                         )}
-                        {!checked && (
+                        {manual ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Manuální blokace: ${row.name}`}
+                            title="Manuální blokace"
+                            className="size-9 shrink-0 p-0 text-indigo-700 sm:size-7"
+                            onClick={() => onBlock(row)}
+                          >
+                            <Lock size={14} />
+                          </Button>
+                        ) : !checked && (
                           <Button
                             size="sm"
                             variant="ghost"

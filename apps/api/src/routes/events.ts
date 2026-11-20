@@ -465,9 +465,9 @@ export async function eventRoutes(app: FastifyInstance) {
       warehouseIsHome?: boolean | null;
     }> = [];
 
-    // U vydané akce je pravdou o obsahu skutečný výdej, ne export: doplňkový
-    // výdej přidává položky, které v exportu nejsou.
-    if (event.status === "ISSUED") {
+    // Vydaná i uzavřená akce mají vycházet ze skutečného výdeje, včetně
+    // doplňkových položek a odchylek z výdeje podle papíru.
+    if (event.status === "ISSUED" || event.status === "CLOSED") {
       warehouseItems = await getIssuedWarehouseItems(app.prisma, event.id);
     }
 
