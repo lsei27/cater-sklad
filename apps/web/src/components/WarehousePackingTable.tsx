@@ -22,9 +22,10 @@ type PackingRow = {
   imageUrl?: string | null;
 };
 type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
-type PackingState = "idle" | "armed" | "confirmed";
+export type PackingState = "idle" | "armed" | "confirmed";
+export type DigitalPackingItem = { state: PackingState; packedQuantity: number | null };
 type PackingMode =
-  | { kind: "digital"; states: Record<string, PackingState>; saving: Set<string>; onUpdate: (id: string, state: PackingState) => void }
+  | { kind: "digital"; items: Record<string, DigitalPackingItem>; saving: Set<string>; onUpdate: (id: string, state: PackingState, quantity: number) => void }
   | { kind: "manual"; quantities: ReadonlyMap<string, number>; qrCodes: ReadonlyMap<string, string>; onQuantityChange: (row: PackingRow, quantity: number) => void };
 
 function normalizeSearch(value: string) {
@@ -53,17 +54,22 @@ export default function WarehousePackingTable({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"pending" | "done" | "missing" | "all">("all");
   const [byWarehouse, setByWarehouse] = useState(true);
+  const [digitalDrafts, setDigitalDrafts] = useState(new Map<string, number>());
   const manual = mode.kind === "manual";
-  const issuedQuantity = (row: PackingRow) => mode.kind === "manual"
-    ? mode.quantities.get(row.inventory_item_id) ?? row.requested
-    : mode.states[row.inventory_item_id] === "confirmed" ? row.requested : 0;
+  const issuedQuantity = (row: PackingRow) => {
+    const id = row.inventory_item_id;
+    if (mode.kind === "manual") return mode.quantities.get(id) ?? row.requested;
+    const item = mode.items[id];
+    const quantity = item?.state === "confirmed" ? item.packedQuantity : digitalDrafts.get(id) ?? item?.packedQuantity;
+    return Math.min(row.requested, quantity ?? row.requested);
+  };
   const isCompleted = (row: PackingRow) => mode.kind === "manual"
     ? issuedQuantity(row) === row.requested
-    : mode.states[row.inventory_item_id] === "confirmed";
+    : mode.items[row.inventory_item_id]?.state === "confirmed";
   const completed = rows.filter(isCompleted).length;
   const shortage = (row: PackingRow) => manual
     ? issuedQuantity(row) < row.requested
-    : !isCompleted(row) && row.total !== undefined && row.total < row.requested;
+    : isCompleted(row) ? issuedQuantity(row) < row.requested : row.total !== undefined && row.total < row.requested;
   const missing = rows.filter(shortage).length;
   const percentage = rows.length ? Math.round((100 * completed) / rows.length) : 0;
   const term = normalizeSearch(search);
@@ -95,14 +101,14 @@ export default function WarehousePackingTable({
         <div className={cn("min-w-40 flex-1", manual && "max-sm:basis-full")}>
           <div className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold">
             <span>
-              {completed} z {rows.length} položek {manual ? `vydáno podle checklistu · Výjimky ${missing}` : "vychystáno"}
+              {completed} z {rows.length} položek {manual ? `vydáno podle checklistu · Výjimky ${missing}` : "potvrzeno"}
             </span>
           <span className="whitespace-nowrap text-indigo-700">{percentage} %</span>
           </div>
           <progress
             value={completed}
             max={Math.max(rows.length, 1)}
-            aria-label={manual ? "Položky vydané podle checklistu" : "Vychystané položky"}
+            aria-label={manual ? "Položky vydané podle checklistu" : "Potvrzené položky"}
             className="block h-2 w-full overflow-hidden rounded-full bg-canvas accent-indigo-600 [&::-webkit-progress-bar]:bg-canvas [&::-webkit-progress-value]:bg-indigo-600"
           />
         </div>
@@ -198,10 +204,20 @@ export default function WarehousePackingTable({
               </tr>
               {group.map((row) => {
                 const id = row.inventory_item_id;
-                const state = mode.kind === "digital" ? mode.states[id] ?? "idle" : null;
+                const state = mode.kind === "digital" ? mode.items[id]?.state ?? "idle" : null;
                 const checked = isCompleted(row);
                 const issued = issuedQuantity(row);
                 const short = shortage(row);
+                const quantityLabel = manual ? "Vydáno" : "Vychystáno";
+                const rowDisabled = disabled || (mode.kind === "digital" && mode.saving.has(id));
+                const updateQuantity = (value: number) => {
+                  if (mode.kind === "manual") {
+                    mode.onQuantityChange(row, value);
+                  } else if (Number.isFinite(value)) {
+                    setDigitalDrafts((previous) => new Map(previous).set(id, Math.min(row.requested, Math.max(0, Math.trunc(value)))));
+                  }
+                };
+                const packingStatus = issued === row.requested ? "Hotovo" : issued === 0 ? "Nevydáno · chybí" : `Částečně · chybí ${row.requested - issued} ${row.unit}`;
                 const itemChange = changes.get(id);
                 const relatedBlocks = blocks.filter((block) => block.inventoryItemId === id);
                 const code = codes.get(id);
@@ -267,14 +283,14 @@ export default function WarehousePackingTable({
                       {row.requested} {row.unit}
                     </td>
                     <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
-                      <span className="mb-0.5 block text-xs font-normal text-muted sm:hidden">{manual ? "Vydáno" : "Vychystáno"}</span>
-                      {mode.kind === "manual" ? (
+                      <span className="mb-0.5 block text-xs font-normal text-muted sm:hidden">{quantityLabel}</span>
+                      {manual || !checked ? (
                         <QuantityStepper
-                          label={`Vydáno – ${row.name}`}
+                          label={`${quantityLabel} – ${row.name}`}
                           className={cn("w-[116px] sm:w-[104px] [&>button]:size-9 sm:[&>button]:size-7 [&>span]:min-w-0 [&>span]:flex-1", short && "text-red-700")}
                           value={
                             <input
-                              aria-label={`Vydáno: ${row.name}`}
+                              aria-label={`${quantityLabel}: ${row.name}`}
                               className="w-full rounded-sm bg-transparent text-center [appearance:textfield] focus-visible:outline-offset-0 [&::-webkit-inner-spin-button]:appearance-none"
                               type="number"
                               inputMode="numeric"
@@ -282,15 +298,15 @@ export default function WarehousePackingTable({
                               max={row.requested}
                               step={1}
                               value={issued}
-                              disabled={disabled}
+                              disabled={rowDisabled}
                               onFocus={(event) => event.currentTarget.select()}
-                              onChange={(event) => mode.onQuantityChange(row, Number(event.currentTarget.value))}
+                              onChange={(event) => updateQuantity(Number(event.currentTarget.value))}
                             />
                           }
-                          onDecrease={() => mode.onQuantityChange(row, issued - 1)}
-                          onIncrease={() => mode.onQuantityChange(row, issued + 1)}
-                          decreaseDisabled={disabled || issued <= 0}
-                          increaseDisabled={disabled || issued >= row.requested}
+                          onDecrease={() => updateQuantity(issued - 1)}
+                          onIncrease={() => updateQuantity(issued + 1)}
+                          decreaseDisabled={rowDisabled || issued <= 0}
+                          increaseDisabled={rowDisabled || issued >= row.requested}
                         />
                       ) : `${issued} ${row.unit}`}
                     </td>
@@ -302,12 +318,12 @@ export default function WarehousePackingTable({
                           </Badge>
                         ) : checked ? (
                           <>
-                            <Badge tone="ok">Hotovo</Badge>
+                            <Badge tone={short ? "danger" : "ok"}>{packingStatus}</Badge>
                             <Button
                               size="sm"
                               variant="ghost"
-                              disabled={mode.saving.has(id) || disabled}
-                              onClick={() => mode.onUpdate(id, "idle")}
+                              disabled={rowDisabled}
+                              onClick={() => mode.onUpdate(id, "idle", issued)}
                             >
                               Vrátit do seznamu
                             </Button>
@@ -316,16 +332,16 @@ export default function WarehousePackingTable({
                           <>
                             <Button
                               size="sm"
-                              disabled={mode.saving.has(id) || disabled}
-                              onClick={() => mode.onUpdate(id, "confirmed")}
+                              disabled={rowDisabled}
+                              onClick={() => mode.onUpdate(id, "confirmed", issued)}
                             >
                               <Check size={14} /> Potvrdit
                             </Button>
                             <Button
                               size="sm"
                               variant="ghost"
-                              disabled={mode.saving.has(id) || disabled}
-                              onClick={() => mode.onUpdate(id, "idle")}
+                              disabled={rowDisabled}
+                              onClick={() => mode.onUpdate(id, "idle", issued)}
                             >
                               Zrušit
                             </Button>
@@ -336,10 +352,10 @@ export default function WarehousePackingTable({
                             <Button
                               size="sm"
                               variant="dark"
-                              disabled={mode.saving.has(id) || disabled}
-                              onClick={() => mode.onUpdate(id, "armed")}
+                              disabled={rowDisabled}
+                              onClick={() => mode.onUpdate(id, "armed", issued)}
                             >
-                              <PackageCheck size={14} /> Vydat vše
+                              <PackageCheck size={14} /> Vychystat
                             </Button>
                           </>
                         )}

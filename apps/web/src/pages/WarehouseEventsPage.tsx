@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, CalendarClock, PackageCheck, Play } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { api, getCurrentUser, type ApiError } from "../lib/api";
+import { toDatetimeLocalValue } from "../lib/datetime";
 import { cn } from "../lib/ui";
 import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
 import { startSSE } from "../lib/sse";
+import EventFilters, { emptyEventFilters, EventSearch, matchesEventFilters, type EventFiltersData } from "../components/EventFilters";
 import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
+import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import { CreateEventLink, type EventListRow } from "./EventsPage";
@@ -20,12 +24,18 @@ const PERIODS = [
 type Period = (typeof PERIODS)[number]["value"];
 
 const LANES = [
-  { id: "waiting", label: "Čeká na vychystání", tone: "bg-white text-muted" },
-  { id: "packing", label: "Vychystává se", tone: "bg-indigo-50 text-indigo-700" },
-  { id: "issued", label: "Vydáno, na akci", tone: "bg-emerald-100 text-emerald-700" },
-  { id: "returning", label: "Vrací se", tone: "bg-amber-100 text-amber-800" },
+  { id: "waiting", label: "Čeká na vychystání", status: "K vychystání", tone: "bg-white text-muted" },
+  { id: "packing", label: "Vychystává se", status: "Vychystává se", tone: "bg-indigo-50 text-indigo-700" },
+  { id: "issued", label: "Vydáno, na akci", status: "Vydáno", tone: "bg-emerald-100 text-emerald-700" },
+  { id: "returning", label: "Vrací se", status: "Vrací se", tone: "bg-amber-100 text-amber-800" },
 ] as const;
 type Lane = (typeof LANES)[number]["id"];
+const STATUS_FILTERS = [
+  { value: "all", label: "Všechny stavy" },
+  ...LANES.map(({ id, label }) => ({ value: id, label: id === "packing" ? "Rozpracováno" : label })),
+  { value: "DRAFT", label: "Koncept akce" },
+  ...["READY_FOR_WAREHOUSE", "CLOSED", "CANCELLED"].map((value) => ({ value, label: statusLabel(value) }))
+];
 
 const schedule = new Intl.DateTimeFormat("cs-CZ", {
   weekday: "short",
@@ -58,12 +68,17 @@ function inPeriod(event: EventListRow, lane: Lane | null, period: Period, now: D
 }
 
 export default function WarehouseEventsPage() {
-  const canIssue = ["admin", "warehouse"].includes(getCurrentUser()?.role ?? "");
+  const user = getCurrentUser();
+  const role = user?.role ?? "";
+  const canIssue = ["admin", "warehouse"].includes(role);
+  const nav = useNavigate();
   const [events, setEvents] = useState<EventListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [period, setPeriod] = useState<Period>("week");
   const [archive, setArchive] = useState(false);
+  const [filters, setFilters] = useState(emptyEventFilters);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     if (!canIssue) return;
@@ -85,7 +100,7 @@ export default function WarehouseEventsPage() {
 
     void load();
     const off = startSSE((event) => {
-      if (["event_status_changed", "export_created", "reservation_changed"].includes(event.type)) void load();
+      if (["event_status_changed", "event_packing_changed", "export_created", "reservation_changed"].includes(event.type)) void load();
     });
     const interval = setInterval(load, 15_000);
     return () => {
@@ -105,20 +120,43 @@ export default function WarehouseEventsPage() {
     );
 
   const now = new Date();
-  const entries = events
+  const scoped = events
     .map((event) => ({ event, lane: laneFor(event, now) }))
-    .filter(({ event, lane }) => inPeriod(event, lane, period, now));
-  const waiting = entries.filter(({ lane }) => lane === "waiting");
-  const packing = entries.filter(({ lane }) => lane === "packing");
-  const issued = entries.filter(({ lane }) => lane === "issued" || lane === "returning");
-  const problems = entries.filter(
+    .filter(({ event, lane }) => matchesEventFilters(event, filters, user?.id) && (filters.period
+      ? toDatetimeLocalValue(event.deliveryDatetime).startsWith(filters.period)
+      : inPeriod(event, lane, period, now)));
+  const { status } = filters;
+  const entries = scoped.filter(({ event, lane }) => status === "all" || (lane ?? event.status) === status);
+  const waiting = scoped.filter(({ lane }) => lane === "waiting");
+  const packing = scoped.filter(({ lane }) => lane === "packing");
+  const issued = scoped.filter(({ lane }) => lane === "issued" || lane === "returning");
+  const problems = scoped.filter(
     ({ event, lane }) =>
       lane &&
       (event.exportNeedsRevision ||
-        event.hasUnseenChanges ||
+        event.hasUnseenChanges || Boolean(event.packingProgress?.missing) ||
         (event.status === "SENT_TO_WAREHOUSE" && !event.chefConfirmedAt))
   );
   const other = entries.filter(({ lane }) => !lane).reverse();
+  const visibleLanes = LANES.filter(({ id }) => status === "all" || status === id);
+
+  const changeFilters = (next: EventFiltersData) => {
+    if (next.period !== filters.period) setPeriod("all");
+    setFilters(next);
+  };
+
+  const startPacking = async (eventId: string) => {
+    if (starting) return;
+    setStarting(true);
+    try {
+      await api(`/events/${eventId}/packing/start`, { method: "POST" });
+      nav(`/warehouse/${eventId}`);
+    } catch (err) {
+      toast.error((err as ApiError)?.error?.message ?? "Vychystávání se nepodařilo zahájit.");
+    } finally {
+      setStarting(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -127,10 +165,19 @@ export default function WarehouseEventsPage() {
           <h1 className="page-title">Výdej</h1>
           <p className="page-description">Akce k vychystání, výdeji a vrácení. Seřazeno podle času závozu.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl label="Období výdeje" options={PERIODS} value={period} onChange={setPeriod} />
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <EventSearch value={filters.search} onChange={(search) => setFilters((current) => ({ ...current, search }))} />
           <CreateEventLink fromWarehouse />
         </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <EventFilters events={events} activeRole={role} filters={filters} statuses={STATUS_FILTERS} onChange={changeFilters} />
+        </div>
+        <SegmentedControl label="Období výdeje" options={PERIODS} value={period} onChange={(next) => {
+          setPeriod(next);
+          setFilters((current) => ({ ...current, period: "" }));
+        }} />
       </div>
       {error && (
         <Card className="border-red-100 bg-red-50 p-4 text-sm text-red-700" role="alert">
@@ -151,7 +198,7 @@ export default function WarehouseEventsPage() {
           count={packing.length}
           description={
             packing.length
-              ? `${packing.reduce((sum, { event }) => sum + (event.packingProgress?.confirmed ?? 0), 0)} vychystaných položek`
+              ? `${packing.reduce((sum, { event }) => sum + (event.packingProgress?.confirmed ?? 0), 0)} / ${packing.reduce((sum, { event }) => sum + (event.packingProgress?.total ?? 0), 0)} položek`
               : undefined
           }
           color="text-indigo-700"
@@ -161,13 +208,13 @@ export default function WarehouseEventsPage() {
         <Metric
           title="K prověření"
           count={problems.length}
-          description="Změny nebo čekání na kuchyň"
+          description="Změny, chybějící položky nebo čekání na kuchyň"
           color="text-red-700"
           loading={loading}
         />
       </div>
-      <div className="grid items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {LANES.map(({ id, label, tone }) => {
+      {visibleLanes.length > 0 && <div className={cn("grid items-stretch gap-4", status === "all" && "sm:grid-cols-2 xl:grid-cols-4")}>
+        {visibleLanes.map(({ id, label, tone }) => {
           const cards = entries.filter(({ lane }) => lane === id);
           return (
             <section key={id} className="min-w-0 space-y-3 rounded-xl bg-[#eceff2] p-3" aria-label={label}>
@@ -178,24 +225,27 @@ export default function WarehouseEventsPage() {
               {loading ? (
                 <Skeleton className="h-36 bg-white" />
               ) : cards.length ? (
-                cards.map(({ event }) => <WarehouseCard key={event.id} event={event} lane={id} />)
+                <div className={status === "all" ? "space-y-3" : "grid gap-3 sm:grid-cols-2 xl:grid-cols-4"}>
+                  {cards.map(({ event }) => <WarehouseCard key={event.id} event={event} lane={id} starting={starting} onStart={() => void startPacking(event.id)} />)}
+                </div>
               ) : (
                 <p className="rounded-lg border border-dashed border-line p-3 text-xs text-muted">Žádné akce</p>
               )}
             </section>
           );
         })}
-      </div>
-      <Card className="overflow-hidden">
+      </div>}
+      {(status === "all" || visibleLanes.length === 0) && <Card className="overflow-hidden">
         <button
           type="button"
-          aria-expanded={archive}
+          aria-expanded={status !== "all" || archive}
           className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold hover:bg-table"
-          onClick={() => setArchive(!archive)}
+          onClick={status === "all" ? () => setArchive(!archive) : undefined}
+          disabled={status !== "all"}
         >
           Ostatní akce <Badge>{other.length}</Badge>
         </button>
-        {archive && (
+        {(status !== "all" || archive) && (
           <ul className="divide-y divide-line border-t border-line">
             {other.length ? (
               other.map(({ event }) => (
@@ -217,7 +267,7 @@ export default function WarehouseEventsPage() {
             )}
           </ul>
         )}
-      </Card>
+      </Card>}
     </div>
   );
 }
@@ -250,20 +300,19 @@ function Metric({
   );
 }
 
-function WarehouseCard({ event, lane }: { event: EventListRow; lane: Lane }) {
+function WarehouseCard({ event, lane, starting, onStart }: { event: EventListRow; lane: Lane; starting: boolean; onStart: () => void }) {
   const progress = event.packingProgress;
   const needsKitchen = event.status === "SENT_TO_WAREHOUSE" && !event.chefConfirmedAt;
   const hasChange = event.exportNeedsRevision || event.hasUnseenChanges;
   const href = `/warehouse/${event.id}`;
+  const badge = LANES.find(({ id }) => id === lane);
   const action =
-    lane === "waiting"
-      ? "Začít vychystávat"
-      : lane === "packing"
+    lane === "packing"
         ? "Pokračovat"
         : lane === "returning"
           ? "Přijmout zpět"
           : null;
-  const Icon = lane === "waiting" ? Play : lane === "returning" ? PackageCheck : ArrowRight;
+  const Icon = lane === "returning" ? PackageCheck : ArrowRight;
   return (
     <Card className={cn("space-y-2.5 p-3.5", needsKitchen && "border-red-300")}>
       <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs font-semibold text-muted">
@@ -273,7 +322,9 @@ function WarehouseCard({ event, lane }: { event: EventListRow; lane: Lane }) {
         </time>
         {needsKitchen && <Badge tone="danger">Čeká na kuchyň</Badge>}
         {hasChange && <Badge tone="warn">Změna v akci</Badge>}
+        {Boolean(progress?.missing) && <Badge tone="danger">Chybí položky ({progress?.missing})</Badge>}
       </div>
+      {badge && <Badge className={badge.tone}>{badge.status}</Badge>}
       <div>
         <Link to={href} className="block text-sm font-semibold wrap-break-word hover:text-indigo-700">
           {event.name}
@@ -301,14 +352,21 @@ function WarehouseCard({ event, lane }: { event: EventListRow; lane: Lane }) {
       {lane === "returning" && (
         <div className="text-xs text-muted">Svoz {schedule.format(new Date(event.pickupDatetime))}</div>
       )}
+      {lane === "waiting" && (event.exportNeedsRevision || !progress?.total ? (
+        <Link to={href} className="flex min-h-9 items-center justify-center gap-2 rounded-lg border border-line text-[13px] font-semibold hover:bg-table">
+          <ArrowRight size={15} /> Otevřít výdej
+        </Link>
+      ) : (
+        <Button type="button" size="sm" variant="dark" full disabled={starting} onClick={onStart}>
+          <Play size={15} /> Začít vychystávat
+        </Button>
+      ))}
       {action && (
         <Link
           to={href}
           className={cn(
             "flex min-h-9 items-center justify-center gap-2 rounded-lg px-2 text-center text-[13px] font-semibold",
-            lane === "waiting"
-              ? "bg-ink text-white hover:bg-slate-700"
-              : lane === "packing"
+            lane === "packing"
                 ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                 : "bg-amber-100 text-amber-800 hover:bg-amber-200"
           )}

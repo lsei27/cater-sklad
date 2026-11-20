@@ -18,7 +18,7 @@ import { Icons } from "../lib/icons";
 import DayPackingCard from "../components/DayPackingCard";
 import { dayRangeLabel } from "../lib/eventDays";
 import { ArrowLeft, CalendarClock, Check, FileText, Lock, PackagePlus, Printer, RotateCcw, Smartphone, X, Plus } from "lucide-react";
-import WarehousePackingTable from "../components/WarehousePackingTable";
+import WarehousePackingTable, { type DigitalPackingItem, type PackingState } from "../components/WarehousePackingTable";
 import WarehouseReturnTable from "../components/WarehouseReturnTable";
 import EventLoadError from "../components/EventLoadError";
 
@@ -31,8 +31,7 @@ type Snapshot = {
 
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; masterPackageQty?: number; warehouseName?: string | null; warehouseIsHome?: boolean | null };
 type Warehouse = { id: string; name: string; isHome?: boolean };
-type DigitalIssueState = "idle" | "armed" | "confirmed";
-type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
+type PackingRow = DigitalPackingItem & { inventoryItemId: string };
 type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string; dayFrom?: number; dayTo?: number | null };
 type VersionChange = { inventoryItemId: string; name: string; unit: string; dayFrom: number; dayTo: number | null; from: number; to: number; kind: "added" | "removed" | "changed" };
 type VersionChanges = { baseVersion: number; latestVersion: number; changes: VersionChange[] };
@@ -106,10 +105,12 @@ export default function WarehouseEventDetailPage() {
   const [blockUntil, setBlockUntil] = useState("");
   const [blockNote, setBlockNote] = useState("");
   const [manualIssueMode, setManualIssueMode] = useState(false);
+  const [packingStarted, setPackingStarted] = useState(false);
   const [manualIssueQuantities, setManualIssueQuantities] = useState(new Map<string, number>());
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
   const [openedChecklist, setOpenedChecklist] = useState<{ time: Date; type?: ChecklistType } | null>(null);
-  const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
+  const [digitalPacking, setDigitalPacking] = useState<Record<string, DigitalPackingItem>>({});
+  const [loadingPacking, setLoadingPacking] = useState(true);
   const [savingPacking, setSavingPacking] = useState<Set<string>>(new Set());
   const pendingPacking = useRef(new Set<string>());
   const [additionalIssueOpen, setAdditionalIssueOpen] = useState(false);
@@ -164,15 +165,12 @@ export default function WarehouseEventDetailPage() {
     if (!id) return;
     try {
       const res = await api<{ packing: PackingRow[] }>(`/events/${id}/packing`);
-      if (res.packing.length === 0) return;
-      setDigitalIssueStates((prev) => {
-        const next = { ...prev };
-        for (const row of res.packing) {
-          next[row.inventoryItemId] = row.state;
-        }
-        return next;
-      });
-    } catch (e) {}
+      setDigitalPacking(Object.fromEntries(res.packing.map((row) => [row.inventoryItemId, row])));
+    } catch (err) {
+      toast.error((err as { error?: { message?: string } })?.error?.message ?? "Rozpracované vychystávání se nepodařilo načíst.");
+    } finally {
+      setLoadingPacking(false);
+    }
   };
 
   useEffect(() => {
@@ -248,16 +246,6 @@ export default function WarehouseEventDetailPage() {
   useEffect(() => {
     setIssuePalletCount(event?.palletCount ?? "");
   }, [event?.palletCount]);
-
-  useEffect(() => {
-    setDigitalIssueStates((prev) => {
-      const next: Record<string, DigitalIssueState> = {};
-      for (const item of warehouseItems) {
-        next[item.inventoryItemId] = prev[item.inventoryItemId] ?? "idle";
-      }
-      return next;
-    });
-  }, [warehouseItems]);
 
   const skuByItemId = useMemo(() => {
     const codes = new Map<string, string>();
@@ -458,23 +446,28 @@ export default function WarehouseEventDetailPage() {
 
   const digitalIssueSummary = useMemo(() => {
     let confirmed = 0;
+    let hasIssuedItems = false;
     for (const item of warehouseItems) {
-      const state = digitalIssueStates[item.inventoryItemId] ?? "idle";
-      if (state === "confirmed") confirmed += 1;
+      const packed = digitalPacking[item.inventoryItemId];
+      if (packed?.state === "confirmed") {
+        confirmed += 1;
+        if ((packed.packedQuantity ?? item.qty) > 0) hasIssuedItems = true;
+      }
     }
     const total = warehouseItems.length;
     return {
       total,
       confirmed,
       remaining: Math.max(0, total - confirmed),
-      allConfirmed: total > 0 && confirmed === total
+      allConfirmed: total > 0 && confirmed === total,
+      hasIssuedItems
     };
-  }, [digitalIssueStates, warehouseItems]);
+  }, [digitalPacking, warehouseItems]);
 
   const computedIssueWeightLabel = useMemo(() => {
     const itemsForWeight =
       issueMode === "digital"
-        ? rows.filter((row) => (digitalIssueStates[row.inventory_item_id] ?? "idle") === "confirmed")
+        ? rows.filter((row) => digitalPacking[row.inventory_item_id]?.state === "confirmed")
         : rows;
 
     const totalKg = itemsForWeight.reduce((sum, row) => {
@@ -482,24 +475,28 @@ export default function WarehouseEventDetailPage() {
       const packageWeightKg = parseWeightValue(packaging?.masterPackageWeight);
       const packageQty = packaging?.masterPackageQty ?? null;
       if (!packageWeightKg || !packageQty || packageQty <= 0) return sum;
-      const quantity = issueMode === "manual" ? manualIssueQuantities.get(row.inventory_item_id) ?? row.requested : row.requested;
+      const quantity = Math.min(row.requested, (issueMode === "manual"
+        ? manualIssueQuantities.get(row.inventory_item_id)
+        : digitalPacking[row.inventory_item_id]?.packedQuantity) ?? row.requested);
       return sum + Math.ceil(quantity / packageQty) * packageWeightKg;
     }, 0);
 
     return totalKg > 0 ? formatWeightKg(totalKg) : "Nelze dopočítat";
-  }, [digitalIssueStates, issueMode, itemPackagingById, manualIssueQuantities, rows]);
+  }, [digitalPacking, issueMode, itemPackagingById, manualIssueQuantities, rows]);
 
-  const updateDigitalIssueState = async (inventoryItemId: string, nextState: DigitalIssueState) => {
-    const previousState = digitalIssueStates[inventoryItemId] ?? "idle";
+  const updateDigitalIssueState = async (inventoryItemId: string, nextState: PackingState, quantity: number) => {
+    const previousState = digitalPacking[inventoryItemId]?.state ?? "idle";
     if (previousState === nextState || pendingPacking.current.has(inventoryItemId)) return;
     pendingPacking.current.add(inventoryItemId);
     setSavingPacking(new Set(pendingPacking.current));
     try {
+      const packedQuantity = nextState === "idle" ? null : quantity;
       await api(`/events/${id}/packing`, {
         method: "PUT",
-        body: JSON.stringify({ inventory_item_id: inventoryItemId, state: nextState })
+        body: JSON.stringify({ inventory_item_id: inventoryItemId, state: nextState, packed_quantity: packedQuantity ?? undefined })
       });
-      setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
+      setDigitalPacking((prev) => ({ ...prev, [inventoryItemId]: { state: nextState, packedQuantity } }));
+      if (nextState !== "idle") setPackingStarted(true);
     } catch (err) {
       toast.error((err as { error?: { message?: string } })?.error?.message ?? "Nepodařilo se uložit rozbalenou položku.");
     } finally {
@@ -620,9 +617,21 @@ export default function WarehouseEventDetailPage() {
     setPrintOptionsOpen(false);
   };
   const isPacking = event.status === "SENT_TO_WAREHOUSE";
+  const showPackingStatus = isPacking && (packingStarted || Boolean(event.packingStartedAt) ||
+    Object.values(digitalPacking).some(({ state }) => state !== "idle"));
+  const changePackingMode = async (mode: "manual" | "digital") => {
+    setManualIssueMode(mode === "manual");
+    if (mode !== "manual" || !id || showPackingStatus) return;
+    try {
+      await api(`/events/${id}/packing/start`, { method: "POST" });
+      setPackingStarted(true);
+    } catch (err) {
+      toast.error((err as { error?: { message?: string } })?.error?.message ?? "Začátek vychystávání se nepodařilo uložit.");
+    }
+  };
   const confirmIssueDisabled = issueDisabled || savingPacking.size > 0 || (manualPackingActive
     ? !manualHasIssuedItems
-    : !digitalIssueSummary.allConfirmed);
+    : loadingPacking || !digitalIssueSummary.allConfirmed || !digitalIssueSummary.hasIssuedItems);
   const issueCount = manualPackingActive
     ? `${manualFullyIssued}/${rows.length}`
     : `${digitalIssueSummary.confirmed}/${digitalIssueSummary.total}`;
@@ -644,7 +653,7 @@ export default function WarehouseEventDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><h1 className="page-title wrap-break-word">{isReturning ? "Uzavření: " : isPacking ? "Vychystání: " : ""}{event.name}</h1>
-              <Badge tone={isReturning ? "ok" : "neutral"} className={isReturning ? undefined : issueMode ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{issueMode ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
+              <Badge tone={isReturning ? "ok" : "neutral"} className={isReturning ? undefined : showPackingStatus ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{showPackingStatus ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
             <p className="page-description flex flex-wrap items-center gap-1.5">{!isReturning && <CalendarClock size={15} />} {[
               isReturning
                 ? new Date(event.deliveryDatetime).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -663,7 +672,7 @@ export default function WarehouseEventDetailPage() {
             {issueMode && <SegmentedControl
               label="Režim výdeje"
               value={issueMode}
-              onChange={(mode) => setManualIssueMode(mode === "manual")}
+              onChange={(mode) => void changePackingMode(mode)}
               options={[
                 { value: "digital", label: <><Smartphone size={14} /> Digitálně</> },
                 { value: "manual", label: <><FileText size={14} /> Podle papíru</> }
@@ -891,6 +900,12 @@ export default function WarehouseEventDetailPage() {
         </Card>
       )}
 
+      {digitalPackingActive && digitalIssueSummary.allConfirmed && !digitalIssueSummary.hasIssuedItems && (
+        <p role="status" className="rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          Pro potvrzení výdeje musí mít alespoň jedna položka vychystané množství větší než nula.
+        </p>
+      )}
+
       {isMultiDay && (event.status === "SENT_TO_WAREHOUSE" || (event.status === "ISSUED" && hasPendingDays)) ? (
         <DayPackingCard
           eventId={event.id}
@@ -933,11 +948,11 @@ export default function WarehouseEventDetailPage() {
           onRemoveBlock={(block) => void removeBlock(block)}
         />
       ) : issueMode ? (
-        <WarehousePackingTable rows={rows} disabled={issueDisabled}
+        <WarehousePackingTable rows={rows} disabled={issueDisabled || (digitalPackingActive && loadingPacking)}
           codes={skuByItemId} changes={itemChangeById} blocks={blocks}
           mode={issueMode === "manual"
             ? { kind: "manual", quantities: manualIssueQuantities, qrCodes: qrCodeByItemId, onQuantityChange: updateManualIssueQuantity }
-            : { kind: "digital", states: digitalIssueStates, saving: savingPacking, onUpdate: (itemId, state) => void updateDigitalIssueState(itemId, state) }}
+            : { kind: "digital", items: digitalPacking, saving: savingPacking, onUpdate: (itemId, state, quantity) => void updateDigitalIssueState(itemId, state, quantity) }}
           onBlock={startBlock} onRemoveBlock={(block) => void removeBlock(block)} />
       ) : (
       <Card>
@@ -1173,7 +1188,7 @@ export default function WarehouseEventDetailPage() {
                   </div>
                   <div className="mt-1 truncate text-[11px] text-slate-500">
                     {digitalIssueSummary.allConfirmed
-                      ? "Vše je potvrzeno — můžeš dokončit výdej."
+                      ? digitalIssueSummary.hasIssuedItems ? "Vše je potvrzeno — můžeš dokončit výdej." : "Vychystané množství je u všech položek nula."
                       : `Zbývá potvrdit ${digitalIssueSummary.remaining} položek.`}
                   </div>
                 </>
@@ -1207,7 +1222,7 @@ export default function WarehouseEventDetailPage() {
         title="Potvrdit vydání?"
         description={
           issueMode === "digital"
-            ? "Digitální checklist je kompletní. Tímto krokem se skutečně odečtou položky ze skladu a akce se přepne do stavu Vydáno."
+            ? "Ze skladu se odečtou potvrzená množství ze sloupce Vychystáno a akce se přepne do stavu Vydáno."
             : `${manualFullyIssued} z ${rows.length} položek odpovídá checklistu. Ze skladu se odečtou množství ze sloupce Vydáno a akce se přepne do stavu Vydáno.`
         }
         confirmText={issueMode === "digital" ? "Potvrdit digitální výdej" : "Potvrdit výdej"}
@@ -1215,11 +1230,11 @@ export default function WarehouseEventDetailPage() {
           if (!id || !issueMode || confirmIssueDisabled) return false;
           try {
             const items = issueMode === "digital" || manualIssueQuantities.size > 0
-              ? rows.filter((row) => issueMode === "manual" || digitalIssueStates[row.inventory_item_id] === "confirmed").map((row) => ({
+              ? rows.filter((row) => issueMode === "manual" || digitalPacking[row.inventory_item_id]?.state === "confirmed").map((row) => ({
                   inventory_item_id: row.inventory_item_id,
-                  issued_quantity: issueMode === "manual"
-                    ? manualIssueQuantities.get(row.inventory_item_id) ?? row.requested
-                    : row.requested
+                  issued_quantity: Math.min(row.requested, (issueMode === "manual"
+                    ? manualIssueQuantities.get(row.inventory_item_id)
+                    : digitalPacking[row.inventory_item_id]?.packedQuantity) ?? row.requested)
                 }))
               : undefined;
             const res = await api<{ skippedItems?: Array<{ inventoryItemId: string; name: string }> }>(`/events/${id}/issue`, {

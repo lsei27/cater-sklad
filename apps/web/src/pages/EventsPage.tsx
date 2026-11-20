@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List, Plus, Search, User } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, getCurrentUser, type ApiError } from "../lib/api";
 import { toDateInputValue, toDatetimeLocalValue } from "../lib/datetime";
 import { startSSE } from "../lib/sse";
 import { Card, CardContent } from "../components/ui/Card";
-import Input from "../components/ui/Input";
+import EventFilters, { emptyEventFilters, EventSearch, matchesEventFilters } from "../components/EventFilters";
 import Badge from "../components/ui/Badge";
 import Select from "../components/ui/Select";
 import Skeleton from "../components/ui/Skeleton";
@@ -34,7 +34,7 @@ export type EventListRow = {
   chefConfirmedAt: string | null;
   hasUnseenChanges?: boolean;
   itemCount?: number;
-  packingProgress?: { total: number; confirmed: number; started: boolean };
+  packingProgress?: { total: number; confirmed: number; started: boolean; missing?: number };
   createdBy?: { id?: string; name?: string | null; email?: string };
 };
 
@@ -134,12 +134,8 @@ export default function EventsPage() {
   const [events, setEvents] = useState<EventListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("active");
-  const [onlyMine, setOnlyMine] = useState(false);
-  const [period, setPeriod] = useState("");
-  const [manager, setManager] = useState("");
-  const [location, setLocation] = useState("");
+  const [filters, setFilters] = useState({ ...emptyEventFilters, status: "active" });
+  const { status, period } = filters;
   const [view, setView] = useState<(typeof VIEW_OPTIONS)[number]["value"]>("list");
   const [sort, setSort] = useState<EventSortMode>("date_asc");
 
@@ -172,39 +168,11 @@ export default function EventsPage() {
     };
   }, []);
 
-  const managers = new Map(
-    events.filter((event) => event.createdBy?.id).map((event) => [event.createdBy?.id, managerLabel(event.createdBy)])
+  const availableStatuses = STATUS_FILTERS.filter(
+    (option) => option.value !== "READY_FOR_WAREHOUSE" || status === option.value || events.some((event) => event.status === option.value)
   );
-  const places = [...new Set(events.map((event) => event.location).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "cs")
-  );
-  const currentYear = String(new Date().getFullYear());
-  const yearOptions = [
-    ...new Set([
-      currentYear,
-      String(Number(currentYear) + 1),
-      period.slice(0, 4),
-      ...events.flatMap((event) => [
-        toDatetimeLocalValue(event.deliveryDatetime).slice(0, 4),
-        dateKey(event).slice(0, 4),
-        eventEndKey(event).slice(0, 4),
-      ]),
-    ]),
-  ]
-    .filter(Boolean)
-    .sort()
-    .reverse();
-  const term = search.trim().toLocaleLowerCase("cs");
-  const scoped = events.filter(
-    (event) =>
-      (!term ||
-        [event.name, event.location, managerLabel(event.createdBy)].some((value) =>
-          value.toLocaleLowerCase("cs").includes(term)
-        )) &&
-      (!onlyMine || event.createdBy?.id === user?.id) &&
-      matchesPeriod(event, period, view === "calendar") &&
-      (!manager || event.createdBy?.id === manager) &&
-      (!location || event.location === location)
+  const scoped = events.filter((event) =>
+    matchesEventFilters(event, filters, user?.id) && matchesPeriod(event, period, view === "calendar")
   );
   const filtered = scoped.filter(
     (event) => status === "all" || (status === "active" ? isActive(event) : event.status === status)
@@ -219,24 +187,13 @@ export default function EventsPage() {
           <p className="page-description">Plánování a předání do skladu.</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <label className="relative block min-w-40 flex-1 sm:w-80">
-            <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
-            <Input
-              className="pl-9"
-              aria-label="Hledat akce"
-              placeholder="Hledat akci, manažera, místo…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
+          <EventSearch value={filters.search} onChange={(search) => setFilters((current) => ({ ...current, search }))} />
           {["admin", "event_manager"].includes(role) && <CreateEventLink />}
         </div>
       </div>
 
       <div role="group" aria-label="Stav akce" className="flex gap-1 overflow-x-auto border-b border-line">
-        {STATUS_FILTERS.filter(
-          (option) => option.value !== "READY_FOR_WAREHOUSE" || events.some((event) => event.status === option.value)
-        ).map((option) => {
+        {availableStatuses.map((option) => {
           const count = scoped.filter(
             (event) =>
               option.value === "all" || (option.value === "active" ? isActive(event) : event.status === option.value)
@@ -246,7 +203,7 @@ export default function EventsPage() {
               key={option.value}
               type="button"
               aria-pressed={status === option.value}
-              onClick={() => setStatus(option.value)}
+              onClick={() => setFilters((current) => ({ ...current, status: option.value }))}
               className={cn(
                 "inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 border-transparent px-3 text-sm font-medium whitespace-nowrap text-muted hover:text-ink focus-visible:outline-offset-[-2px]",
                 status === option.value && "border-indigo-600 text-indigo-700"
@@ -268,66 +225,13 @@ export default function EventsPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          {["admin", "event_manager", "warehouse"].includes(role) && (
-            <button
-              type="button"
-              aria-pressed={onlyMine}
-              onClick={() => setOnlyMine(!onlyMine)}
-              className={cn(
-                "inline-flex min-h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-[13px] font-medium",
-                onlyMine && "border-ink bg-ink text-white"
-              )}
-            >
-              <User size={14} /> Moje akce
-            </button>
-          )}
-          <Select
-            className="h-9 w-auto max-w-full rounded-full"
-            aria-label="Období"
-            value={period}
-            onChange={(event) => setPeriod(event.target.value)}
-          >
-            <option value="">Všechna období</option>
-            {yearOptions.map((year) => (
-              <optgroup label={year} key={year}>
-                <option value={year}>Celý rok {year}</option>
-                {Array.from({ length: 12 }, (_, i) => {
-                  const month = `${year}-${String(i + 1).padStart(2, "0")}`;
-                  return (
-                    <option key={month} value={month}>
-                      {new Date(Number(year), i).toLocaleDateString("cs-CZ", { month: "long", year: "numeric" })}
-                    </option>
-                  );
-                })}
-              </optgroup>
-            ))}
-          </Select>
-          <Select
-            className="h-9 w-auto max-w-48 rounded-full"
-            aria-label="Manažer"
-            value={manager}
-            onChange={(event) => setManager(event.target.value)}
-          >
-            <option value="">Všichni manažeři</option>
-            {[...managers]
-              .sort(([, a], [, b]) => a.localeCompare(b, "cs"))
-              .map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-          </Select>
-          <Select
-            className="h-9 w-auto max-w-44 rounded-full"
-            aria-label="Místo"
-            value={location}
-            onChange={(event) => setLocation(event.target.value)}
-          >
-            <option value="">Místo</option>
-            {places.map((place) => (
-              <option key={place}>{place}</option>
-            ))}
-          </Select>
+          <EventFilters
+            events={events}
+            activeRole={role}
+            filters={filters}
+            statuses={availableStatuses.map((option) => option.value === "all" ? { ...option, label: "Všechny stavy" } : option)}
+            onChange={setFilters}
+          />
           {view !== "calendar" && (
             <Select
               className="h-9 w-auto max-w-full rounded-full"
@@ -360,7 +264,7 @@ export default function EventsPage() {
           ))}
         </Card>
       ) : view === "calendar" ? (
-        <EventCalendar events={filtered} period={period} onMonthChange={setPeriod} />
+        <EventCalendar events={filtered} period={period} onMonthChange={(period) => setFilters((current) => ({ ...current, period }))} />
       ) : !filtered.length ? (
         <Card className="py-12 text-center text-sm text-muted">Žádná akce neodpovídá zvoleným filtrům.</Card>
       ) : view === "list" ? (
