@@ -210,22 +210,27 @@ export default function ItemDetailModal({
 
   if (inline && wide)
     return (
-      <aside aria-label={`Detail položky ${item.name}`} className="relative min-h-full border-l border-line bg-white">
-        {photo}
+      <aside
+        aria-label={`Detail položky ${item.name}`}
+        className="sticky top-[60px] flex max-h-[calc(100dvh-60px-2rem)] min-w-0 self-start flex-col border-l border-line bg-white"
+      >
         <button
           type="button"
           onClick={onClose}
           aria-label="Zavřít detail položky"
-          className="absolute top-3 right-3 grid size-8 place-items-center rounded-full border border-line bg-white hover:bg-canvas"
+          className="absolute top-3 right-3 z-10 grid size-8 place-items-center rounded-full border border-line bg-white hover:bg-canvas"
         >
           <X size={17} />
         </button>
-        <div className="space-y-4 p-5">
-          <div>
-            <h2 className="text-lg font-bold wrap-break-word">{item.name}</h2>
-            <p className="mt-1 text-xs text-muted">{metadata}</p>
+        <div key={itemId} className="min-h-0 overflow-y-auto overscroll-y-contain">
+          {photo}
+          <div className="space-y-4 p-5">
+            <div>
+              <h2 className="text-lg font-bold wrap-break-word">{item.name}</h2>
+              <p className="mt-1 text-xs text-muted">{metadata}</p>
+            </div>
+            {content}
           </div>
-          {content}
         </div>
       </aside>
     );
