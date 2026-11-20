@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, apiBaseUrl, apiUrl, getCurrentUser } from "../lib/api";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -30,7 +30,6 @@ type Snapshot = {
 
 type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; masterPackageQty?: number; warehouseName?: string | null; warehouseIsHome?: boolean | null };
 type Warehouse = { id: string; name: string; isHome?: boolean };
-type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
 type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
 type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string; dayFrom?: number; dayTo?: number | null };
@@ -71,8 +70,6 @@ export default function WarehouseEventDetailPage() {
   const canWarehouse = ["warehouse", "admin"].includes(role);
   const { id } = useParams();
   const nav = useNavigate();
-  const [params] = useSearchParams();
-  const requestedPacking = useRef("");
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -106,7 +103,7 @@ export default function WarehouseEventDetailPage() {
   const [blockQty, setBlockQty] = useState("");
   const [blockUntil, setBlockUntil] = useState("");
   const [blockNote, setBlockNote] = useState("");
-  const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
+  const [manualIssueMode, setManualIssueMode] = useState(false);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
   const [savingPacking, setSavingPacking] = useState<Set<string>>(new Set());
   const pendingPacking = useRef(new Set<string>());
@@ -170,7 +167,6 @@ export default function WarehouseEventDetailPage() {
         }
         return next;
       });
-      setIssueMode((prev) => prev ?? "digital");
     } catch (e) {}
   };
 
@@ -238,16 +234,6 @@ export default function WarehouseEventDetailPage() {
   );
 
   useEffect(() => {
-    if (isMultiDay && issueMode !== null) setIssueMode(null);
-  }, [isMultiDay, issueMode]);
-
-  useEffect(() => {
-    if (event?.status !== "SENT_TO_WAREHOUSE") {
-      setIssueMode(null);
-    }
-  }, [event?.status]);
-
-  useEffect(() => {
     setIssuePalletCount(event?.palletCount ?? "");
   }, [event?.palletCount]);
 
@@ -260,14 +246,6 @@ export default function WarehouseEventDetailPage() {
       return next;
     });
   }, [warehouseItems]);
-
-  useEffect(() => {
-    if (!canWarehouse || params.get("packing") !== "1" || !id || event?.id !== id || requestedPacking.current === id) return;
-    if (event.status === "SENT_TO_WAREHOUSE" && !isMultiDay && !event.exportNeedsRevision && warehouseItems.length > 0) {
-      requestedPacking.current = id;
-      setIssueMode((previous) => previous ?? "digital");
-    }
-  }, [canWarehouse, event, id, isMultiDay, params, warehouseItems.length]);
 
   const skuByItemId = useMemo(() => {
     const codes = new Map<string, string>();
@@ -410,7 +388,9 @@ export default function WarehouseEventDetailPage() {
     return { issuedMap, lostMap };
   }, [event?.issues]);
 
-  const digitalPackingActive = event?.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" && !isMultiDay;
+  const issueDisabled = event?.status !== "SENT_TO_WAREHOUSE" || Boolean(event.exportNeedsRevision) || warehouseItems.length === 0;
+  const issueMode = issueDisabled || isMultiDay ? null : manualIssueMode ? "manual" : "digital";
+  const digitalPackingActive = issueMode === "digital";
 
   const groupedRows = useMemo(() => {
     type CatGroup = { parent: string; sub: string; items: typeof rows };
@@ -553,7 +533,6 @@ export default function WarehouseEventDetailPage() {
     );
   }
 
-  const issueDisabled = event.status !== "SENT_TO_WAREHOUSE" || event.exportNeedsRevision || warehouseItems.length === 0;
   const isReturning = event.status === "ISSUED";
   const closeDisabled = !isReturning || rows.length === 0;
   const checkedCount = rows.filter((row) => checkedReturnIds.has(row.inventory_item_id)).length;
@@ -632,7 +611,7 @@ export default function WarehouseEventDetailPage() {
           </div>}
           {isPacking && <div className="flex flex-wrap gap-2">
             {snapshot?.event?.version && <Button variant="secondary" onClick={printChecklist}><Printer size={16} /> Tisk checklistu</Button>}
-            {digitalPackingActive && <Button variant="secondary" onClick={() => setIssueMode("manual")}>Manuální režim</Button>}
+            {digitalPackingActive && <Button variant="secondary" onClick={() => setManualIssueMode(true)}>Manuální režim</Button>}
             {digitalPackingActive && <Button className="hidden md:inline-flex" disabled={issueDisabled || !digitalIssueSummary.allConfirmed || savingPacking.size > 0} onClick={() => setConfirmIssue(true)}><Check size={16} /> Potvrdit výdej ({digitalIssueSummary.confirmed}/{digitalIssueSummary.total})</Button>}
           </div>}
         </div>
@@ -848,7 +827,7 @@ export default function WarehouseEventDetailPage() {
                   <button
                     type="button"
                     disabled={issueDisabled}
-                    onClick={() => setIssueMode("manual")}
+                    onClick={() => setManualIssueMode(true)}
                     className={cn(
                       "rounded-2xl border p-4 text-left transition",
                       issueMode === "manual"
@@ -865,12 +844,9 @@ export default function WarehouseEventDetailPage() {
                   <button
                     type="button"
                     disabled={issueDisabled}
-                    onClick={() => setIssueMode("digital")}
+                    onClick={() => setManualIssueMode(false)}
                     className={cn(
-                      "rounded-2xl border p-4 text-left transition",
-                      issueMode === "digital"
-                        ? "border-emerald-300 bg-emerald-50 shadow-sm"
-                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
+                      "rounded-2xl border border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50",
                       issueDisabled && "cursor-not-allowed opacity-50"
                     )}
                   >

@@ -303,7 +303,7 @@ function WarehouseCard({ event, lane }: { event: EventListRow; lane: Lane }) {
       )}
       {action && (
         <Link
-          to={lane === "waiting" || lane === "packing" ? href + "?packing=1" : href}
+          to={href}
           className={cn(
             "flex min-h-9 items-center justify-center gap-2 rounded-lg px-2 text-center text-[13px] font-semibold",
             lane === "waiting"
