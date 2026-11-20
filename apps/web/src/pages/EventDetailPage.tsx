@@ -1255,6 +1255,10 @@ function AddItemsPanel(props: {
       open={quickAddOpen}
       onOpenChange={setQuickAddOpen}
       eventId={props.eventId}
+      eventName={props.eventName}
+      eventDate={props.eventDate}
+      dayCount={props.dayCount}
+      warehouseName={warehouses.find((warehouse) => warehouse.isHome)?.name}
       role={props.role}
       existingItems={currentItems}
       range={range}

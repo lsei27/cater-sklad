@@ -16,8 +16,9 @@ import AdditionalIssueModal from "../components/AdditionalIssueModal";
 import { Icons } from "../lib/icons";
 import DayPackingCard from "../components/DayPackingCard";
 import { dayRangeLabel } from "../lib/eventDays";
-import { ArrowLeft, CalendarClock, Check, Printer, X, Plus } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, Lock, PackagePlus, Printer, X, Plus } from "lucide-react";
 import WarehousePackingTable from "../components/WarehousePackingTable";
+import WarehouseReturnTable from "../components/WarehouseReturnTable";
 import EventLoadError from "../components/EventLoadError";
 
 type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
@@ -27,7 +28,7 @@ type Snapshot = {
   groups: Array<{ parentCategory: string; category: string; items: Array<{ inventoryItemId: string; name: string; unit: string; qty: number; dayFrom?: number; dayTo?: number | null }> }>;
 };
 
-type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; warehouseName?: string | null; warehouseIsHome?: boolean | null };
+type WarehouseItem = { inventoryItemId: string; name: string; unit: string; qty: number; parentCategory?: string; category?: string; masterPackageQty?: number; warehouseName?: string | null; warehouseIsHome?: boolean | null };
 type Warehouse = { id: string; name: string; isHome?: boolean };
 type IssueMode = "manual" | "digital";
 type DigitalIssueState = "idle" | "armed" | "confirmed";
@@ -35,6 +36,7 @@ type PackingRow = { inventoryItemId: string; state: DigitalIssueState };
 type PackingChange = { name: string; unit: string; from: number; to: number; changedBy: string; changedAt: string; dayFrom?: number; dayTo?: number | null };
 type VersionChange = { inventoryItemId: string; name: string; unit: string; dayFrom: number; dayTo: number | null; from: number; to: number; kind: "added" | "removed" | "changed" };
 type VersionChanges = { baseVersion: number; latestVersion: number; changes: VersionChange[] };
+type ReturnDraft = { issued: number; returned: number; broken: number; targetWarehouseId?: string };
 
 function OffSiteBadge(props: { warehouseName?: string | null; warehouseIsHome?: boolean | null }) {
   // Starsi exporty sklad nenesou (undefined) - tam se nehlasi nic.
@@ -111,7 +113,9 @@ export default function WarehouseEventDetailPage() {
   const [additionalIssueOpen, setAdditionalIssueOpen] = useState(false);
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
   const [issuePalletCount, setIssuePalletCount] = useState<number | "">("");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [checkedReturnIds, setCheckedReturnIds] = useState<Set<string>>(new Set());
+  const returnDraft = useRef<{ eventId: string; items: Map<string, ReturnDraft>; warehouseId?: string } | null>(null);
+  const homeWarehouseId = warehouses.find((warehouse) => warehouse.isHome)?.id;
   const manager = managerLabel(event?.createdBy);
 
   const load = async () => {
@@ -172,6 +176,7 @@ export default function WarehouseEventDetailPage() {
 
   useEffect(() => {
     if (!canWarehouse) return;
+    setCheckedReturnIds(new Set());
     load();
     loadBlocks();
     loadWarehouses();
@@ -266,19 +271,23 @@ export default function WarehouseEventDetailPage() {
 
   const skuByItemId = useMemo(() => {
     const codes = new Map<string, string>();
-    for (const row of event?.reservations ?? []) {
-      if (typeof row.item?.sku === "string") codes.set(row.inventoryItemId, row.item.sku);
+    for (const source of [event?.reservations, event?.issues]) {
+      for (const row of source ?? []) {
+        if (typeof row.item?.sku === "string") codes.set(row.inventoryItemId, row.item.sku);
+      }
     }
     return codes;
-  }, [event?.reservations]);
+  }, [event?.reservations, event?.issues]);
 
   const imageByItemId = useMemo(() => {
-    const entries = (event?.reservations ?? []).map((r: any) => {
-      const imageUrl = typeof r.item?.imageUrl === "string" ? r.item.imageUrl : null;
-      return [r.inventoryItemId, imageUrl] as const;
-    });
-    return new Map<string, string | null>(entries);
-  }, [event?.reservations]);
+    const images = new Map<string, string>();
+    for (const source of [event?.reservations, event?.issues]) {
+      for (const row of source ?? []) {
+        if (typeof row.item?.imageUrl === "string") images.set(row.inventoryItemId, row.item.imageUrl);
+      }
+    }
+    return images;
+  }, [event?.reservations, event?.issues]);
 
   const consumableByItemId = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -304,8 +313,6 @@ export default function WarehouseEventDetailPage() {
   }, [event?.reservations]);
 
   useEffect(() => {
-    if (!warehouseItems.length) return;
-
     const serverReturns = new Map<string, { returned: number, broken: number }>();
     if (event?.returns) {
       for (const r of event.returns) {
@@ -327,14 +334,22 @@ export default function WarehouseEventDetailPage() {
       }
     }
 
-    // Domaci sklad je priznak na skladu, ne shoda jmena - "liboc" matchovalo
-    // i "Liboc levy kontejner" a slo to zmenit jen deployem.
-    const defaultWarehouseId = warehouses.find((w) => w.isHome)?.id;
+    const draft = event?.status === "ISSUED" && returnDraft.current?.eventId === event.id ? returnDraft.current : null;
+    returnDraft.current = null;
+    if (draft) {
+      setCheckedReturnIds((ids) => new Set(warehouseItems.flatMap((item) =>
+        ids.has(item.inventoryItemId) && draft.items.get(item.inventoryItemId)?.issued === (serverIssued.get(item.inventoryItemId) ?? item.qty)
+          ? [item.inventoryItemId] : []
+      )));
+    } else {
+      setCheckedReturnIds(new Set());
+    }
 
     setRows(
       warehouseItems.map((i) => {
         const s = serverReturns.get(i.inventoryItemId);
         const issuedQty = serverIssued.get(i.inventoryItemId) ?? i.qty;
+        const previous = draft?.items.get(i.inventoryItemId);
         // U vratného inventáře je výchozí stav "vrátilo se všechno", u spotřebního
         // zboží naopak nula: kolik se vrátilo, se pozná až při fyzickém vracení.
         const defaultReturned = consumableByItemId.get(i.inventoryItemId) ? 0 : issuedQty;
@@ -343,19 +358,19 @@ export default function WarehouseEventDetailPage() {
           name: i.name,
           unit: i.unit,
           requested: i.qty,
-          returned: s ? s.returned : defaultReturned,
-          broken: s?.broken ?? 0,
-          parentCategory: (i as any).parentCategory || "",
-          category: (i as any).category || "",
+          returned: previous ? Math.min(previous.returned, Math.max(0, issuedQty - previous.broken)) : s?.returned ?? defaultReturned,
+          broken: previous ? Math.min(previous.broken, issuedQty) : s?.broken ?? 0,
+          parentCategory: i.parentCategory || "",
+          category: i.category || "",
           warehouseName: i.warehouseName,
           warehouseIsHome: i.warehouseIsHome,
           imageUrl: imageByItemId.get(i.inventoryItemId) ?? null,
-          target_warehouse_id: defaultWarehouseId,
-          masterPackageQty: (i as any).masterPackageQty
+          target_warehouse_id: previous ? previous.targetWarehouseId : draft ? draft.warehouseId : homeWarehouseId,
+          masterPackageQty: i.masterPackageQty
         };
       })
     );
-  }, [warehouseItems, event?.returns, event?.issues, imageByItemId, warehouses, consumableByItemId]);
+  }, [warehouseItems, event?.id, event?.status, event?.returns, event?.issues, imageByItemId, homeWarehouseId, consumableByItemId]);
 
   useEffect(() => {
     if (!id || warehouseItems.length === 0) return;
@@ -488,19 +503,21 @@ export default function WarehouseEventDetailPage() {
     return Math.max(0, getIssuedQtyForItem(row.inventory_item_id, row.requested) - row.returned - row.broken);
   };
 
-  const markItemsAsFullyReturned = (inventoryItemIds: string[]) => {
-    const ids = new Set(inventoryItemIds);
-    setRows((prev) =>
-      prev.map((row) =>
-        ids.has(row.inventory_item_id)
-          ? {
-              ...row,
-              returned: getIssuedQtyForItem(row.inventory_item_id, row.requested),
-              broken: 0
-            }
-          : row
-      )
-    );
+  const reloadAfterIssue = async () => {
+    if (event.status === "ISSUED" && rows.length > 0) {
+      const commonWarehouse = rows[0].target_warehouse_id;
+      returnDraft.current = {
+        eventId: event.id,
+        warehouseId: rows.every((row) => row.target_warehouse_id === commonWarehouse) ? commonWarehouse : homeWarehouseId,
+        items: new Map(rows.map((row) => [row.inventory_item_id, {
+          issued: getIssuedQtyForItem(row.inventory_item_id, row.requested),
+          returned: row.returned,
+          broken: row.broken,
+          targetWarehouseId: row.target_warehouse_id
+        }]))
+      };
+    }
+    await load();
   };
 
   if (!canWarehouse) {
@@ -537,8 +554,22 @@ export default function WarehouseEventDetailPage() {
   }
 
   const issueDisabled = event.status !== "SENT_TO_WAREHOUSE" || event.exportNeedsRevision || warehouseItems.length === 0;
-  const closeDisabled = event.status !== "ISSUED" || rows.length === 0;
-  const showMobileActionDock = event.status === "ISSUED" || (event.status === "SENT_TO_WAREHOUSE" && issueMode !== null);
+  const isReturning = event.status === "ISSUED";
+  const closeDisabled = !isReturning || rows.length === 0;
+  const checkedCount = rows.filter((row) => checkedReturnIds.has(row.inventory_item_id)).length;
+  const showMobileActionDock = isReturning || (event.status === "SENT_TO_WAREHOUSE" && issueMode !== null);
+
+  const updateReturnQuantity = (itemId: string, field: "returned" | "broken", value: number) => {
+    if (!Number.isFinite(value)) return;
+    const qty = Math.max(0, value);
+    setRows((current) => current.map((row) => {
+      if (row.inventory_item_id !== itemId) return row;
+      const issued = getIssuedQtyForItem(itemId, row.requested);
+      const broken = field === "broken" ? Math.min(qty, issued) : row.broken;
+      const returned = Math.min(field === "returned" ? qty : row.returned, Math.max(0, issued - broken));
+      return { ...row, returned, broken };
+    }));
+  };
 
   const startBlock = (row: { inventory_item_id: string; name: string; requested: number }) => {
     setBlockModal({ inventoryItemId: row.inventory_item_id, name: row.name, maxQty: row.requested });
@@ -569,7 +600,7 @@ export default function WarehouseEventDetailPage() {
 
   return (
     <div className={cn("space-y-4", showMobileActionDock && "pb-36 md:pb-0")}>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={cn("flex flex-wrap items-center gap-2", isReturning && "-mb-2")}>
         <button type="button" className="mr-2 inline-flex items-center gap-2 text-sm text-muted hover:text-ink" onClick={() => nav("/warehouse")}>
           <ArrowLeft size={16} /> Výdej
         </button>
@@ -583,25 +614,37 @@ export default function WarehouseEventDetailPage() {
       <div className="space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2"><h1 className="page-title wrap-break-word">{isPacking ? "Vychystání: " : ""}{event.name}</h1>
-              <Badge className={digitalPackingActive ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{digitalPackingActive ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
-            <p className="page-description flex flex-wrap items-center gap-1.5"><CalendarClock size={15} /> {[new Date(event.deliveryDatetime).toLocaleString("cs-CZ"), manager, event.location].filter(Boolean).join(" · ")}</p>
+            <div className="flex flex-wrap items-center gap-2"><h1 className="page-title wrap-break-word">{isReturning ? "Uzavření: " : isPacking ? "Vychystání: " : ""}{event.name}</h1>
+              <Badge tone={isReturning ? "ok" : "neutral"} className={isReturning ? undefined : digitalPackingActive ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{digitalPackingActive ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
+            <p className="page-description flex flex-wrap items-center gap-1.5">{!isReturning && <CalendarClock size={15} />} {[
+              isReturning
+                ? new Date(event.deliveryDatetime).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
+                : new Date(event.deliveryDatetime).toLocaleString("cs-CZ"),
+              isReturning && `Svoz ${new Date(event.pickupDatetime).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+              manager, event.location
+            ].filter(Boolean).join(" · ")}</p>
           </div>
+          {isReturning && <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setAdditionalIssueOpen(true)}><PackagePlus size={16} /> Vydat navíc</Button>
+            <Button variant="danger" className="hidden md:inline-flex" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
+              <Lock size={16} /> Uzavřít akci ({checkedCount}/{rows.length})
+            </Button>
+          </div>}
           {isPacking && <div className="flex flex-wrap gap-2">
             {snapshot?.event?.version && <Button variant="secondary" onClick={printChecklist}><Printer size={16} /> Tisk checklistu</Button>}
             {digitalPackingActive && <Button variant="secondary" onClick={() => setIssueMode("manual")}>Manuální režim</Button>}
             {digitalPackingActive && <Button className="hidden md:inline-flex" disabled={issueDisabled || !digitalIssueSummary.allConfirmed || savingPacking.size > 0} onClick={() => setConfirmIssue(true)}><Check size={16} /> Potvrdit výdej ({digitalIssueSummary.confirmed}/{digitalIssueSummary.total})</Button>}
           </div>}
         </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+        {!isReturning && <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
           <span>Svoz {new Date(event.pickupDatetime).toLocaleString("cs-CZ")}</span>
           {event.registrationNumber && <span>Evidenční číslo {event.registrationNumber}</span>}
           {event.palletCount != null && <span>Palety {event.palletCount}</span>}
           {event.totalWeight && <span>Váha {event.totalWeight}</span>}
           {snapshot?.event?.version && <span>Export v{snapshot.event.version}</span>}
           <span className={event.chefConfirmedAt ? "text-emerald-700" : "text-amber-800"}>{event.chefConfirmedAt ? "Kuchyň potvrzena" : "Čeká na kuchyň"}</span>
-        </div>
-        {event.notes && <details className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted" open={!digitalPackingActive}><summary className="cursor-pointer font-semibold text-ink">Poznámka pro sklad</summary><p className="mt-1 whitespace-pre-wrap">{event.notes}</p></details>}
+        </div>}
+        {event.notes && <details className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted" open={!digitalPackingActive && !isReturning}><summary className="cursor-pointer font-semibold text-ink">Poznámka pro sklad</summary><p className="mt-1 whitespace-pre-wrap">{event.notes}</p></details>}
           {event.status === "CLOSED" ? (
             <div className="mt-4">
               <Button
@@ -784,21 +827,18 @@ export default function WarehouseEventDetailPage() {
             </div>
           </CardContent>
         </Card>
-      ) : !digitalPackingActive ? (
+      ) : isPacking && !digitalPackingActive ? (
         <Card>
           <CardHeader>
-            <div className="text-sm font-semibold">{isPacking ? "Režim výdeje" : "Akce"}</div>
+            <div className="text-sm font-semibold">Režim výdeje</div>
             <div className="mt-1 text-sm text-slate-600">
-              {event.status === "SENT_TO_WAREHOUSE"
-                ? isMultiDay
-                  ? "Vícedenní akce se balí a vydává po dnech v kartě „Balení po dnech“."
-                  : "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."
-                : "Po vydání lze akci už jen uzavřít a zapsat vrácené / rozbité kusy."}
+              {isMultiDay
+                ? "Vícedenní akce se balí a vydává po dnech v kartě „Balení po dnech“."
+                : "Vyber způsob vydání. Manuální režim otevře PDF checklist, digitální režim vede skladníka po položkách."}
             </div>
           </CardHeader>
           <CardContent>
-            {event.status === "SENT_TO_WAREHOUSE" ? (
-              isMultiDay ? (
+            {isMultiDay ? (
                 <div className="text-sm text-slate-600">
                   Vícedenní akce se vydává po dnech v kartě „Balení po dnech“ níže.
                 </div>
@@ -896,21 +936,6 @@ export default function WarehouseEventDetailPage() {
                   </div>
                 ) : null}
               </div>
-              )
-            ) : (
-              <>
-                {event.status === "ISSUED" ? (
-                  <Button full variant="secondary" className="mb-2" onClick={() => setAdditionalIssueOpen(true)}>
-                    <Icons.Box className="h-4 w-4" /> Vydat navíc
-                  </Button>
-                ) : null}
-                <Button full variant="danger" disabled={closeDisabled} onClick={() => setConfirmClose(true)}>
-                  Uzavřít akci
-                </Button>
-                <div className="mt-2 text-xs text-slate-600">
-                  Uzavření provede odepsání rozbitého a chybějícího množství.
-                </div>
-              </>
             )}
           </CardContent>
         </Card>
@@ -926,11 +951,38 @@ export default function WarehouseEventDetailPage() {
           items={snapshotItems}
           issuedDays={issuedDays}
           warehouses={warehouses}
-          onIssued={load}
+          onIssued={reloadAfterIssue}
         />
       ) : null}
 
-      {digitalPackingActive ? (
+      {isReturning ? (
+        <WarehouseReturnTable
+          rows={rows.map((row) => ({
+            ...row,
+            issued: getIssuedQtyForItem(row.inventory_item_id, row.requested),
+            consumable: consumableByItemId.get(row.inventory_item_id) ?? false
+          }))}
+          checkedIds={checkedReturnIds}
+          onChecked={(itemId, checked) => setCheckedReturnIds((previous) => {
+            const next = new Set(previous);
+            if (checked) next.add(itemId);
+            else next.delete(itemId);
+            return next;
+          })}
+          codes={skuByItemId}
+          warehouses={warehouses}
+          preferredWarehouseId={homeWarehouseId}
+          onWarehouseChange={(warehouseId, itemId) => setRows((current) => current.map((row) =>
+            !itemId || row.inventory_item_id === itemId ? { ...row, target_warehouse_id: warehouseId } : row
+          ))}
+          onQuantityChange={updateReturnQuantity}
+          onClose={() => setConfirmClose(true)}
+          closeDisabled={closeDisabled}
+          blocks={blocks}
+          onBlock={startBlock}
+          onRemoveBlock={(block) => void removeBlock(block)}
+        />
+      ) : digitalPackingActive ? (
         <WarehousePackingTable rows={rows} states={digitalIssueStates} saving={savingPacking} disabled={issueDisabled}
           codes={skuByItemId} changes={itemChangeById} blocks={blocks}
           onUpdate={(itemId, state) => void updateDigitalIssueState(itemId, state)}
@@ -940,56 +992,11 @@ export default function WarehouseEventDetailPage() {
         <CardHeader>
           <div className="text-sm font-semibold">Položky</div>
           <div className="mt-1 text-sm text-slate-600">
-            {event.status === "ISSUED" || event.status === "CLOSED"
+            {event.status === "CLOSED"
               ? "Množství odpovídá skutečnému výdeji včetně doplňkových."
               : "Požadované množství je z posledního exportu."}
           </div>
-          
-          {event?.status === "ISSUED" && warehouseItems.length > 0 && (
-            <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-              <div className="flex min-h-10 items-center gap-2">
-                <input 
-                  type="checkbox"
-                  className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
-                  checked={selectedIds.size === warehouseItems.length && warehouseItems.length > 0}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      const allIds = warehouseItems.map((i) => i.inventoryItemId);
-                      setSelectedIds(new Set(allIds));
-                      markItemsAsFullyReturned(allIds);
-                    } else {
-                      setSelectedIds(new Set());
-                    }
-                  }}
-                />
-                <span className="text-xs font-medium text-slate-600">Vybrat vše ({selectedIds.size})</span>
-              </div>
 
-              {selectedIds.size > 0 && warehouses.length > 0 && (
-                <div className="flex flex-col gap-2 sm:border-l sm:border-slate-200 sm:pl-4">
-                  <span className="text-xs font-semibold text-slate-600">Hromadně vrátit na:</span>
-                  <select 
-                    className="block min-h-10 w-full rounded-md border border-slate-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:w-auto sm:min-w-48 sm:py-1 sm:pl-2 sm:text-xs"
-                    defaultValue=""
-                    onChange={(e) => {
-                      const wid = e.target.value || undefined;
-                      if (!wid) return;
-                      setRows(prev => prev.map(r => {
-                        if (selectedIds.has(r.inventory_item_id)) {
-                          return { ...r, target_warehouse_id: wid };
-                        }
-                        return r;
-                      }));
-                      toast.success(`Nastaven sklad pro ${selectedIds.size} položek`);
-                    }}
-                  >
-                    <option value="">(Vybrat sklad...)</option>
-                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-          )}
         </CardHeader>
         <CardContent>
           {groupedRows.every(s => s.groups.length === 0) ? (
@@ -1024,33 +1031,14 @@ export default function WarehouseEventDetailPage() {
                       return (
                         <div key={r.inventory_item_id} className={cn(
                           "rounded-2xl border p-3 transition-colors",
-                          selectedIds.has(r.inventory_item_id)
-                            ? "border-purple-200 bg-purple-50/30"
-                            : itemChange
-                              ? itemChange.added
-                                ? "border-2 border-emerald-400 bg-emerald-50"
-                                : "border-2 border-amber-400 bg-amber-50"
-                              : "border-slate-200"
+                          itemChange
+                            ? itemChange.added
+                              ? "border-2 border-emerald-400 bg-emerald-50"
+                              : "border-2 border-amber-400 bg-amber-50"
+                            : "border-slate-200"
                         )}>
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="flex min-w-0 items-start gap-3">
-                              {event.status === "ISSUED" && (
-                                <input 
-                                  type="checkbox"
-                                  className="mt-1 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
-                                  checked={selectedIds.has(r.inventory_item_id)}
-                                  onChange={(e) => {
-                                    const next = new Set(selectedIds);
-                                    if (e.target.checked) {
-                                      next.add(r.inventory_item_id);
-                                      markItemsAsFullyReturned([r.inventory_item_id]);
-                                    } else {
-                                      next.delete(r.inventory_item_id);
-                                    }
-                                    setSelectedIds(next);
-                                  }}
-                                />
-                              )}
                               <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 flex items-center justify-center">
                                 {r.imageUrl ? (
                                   <img className="h-full w-full object-cover" src={apiUrl(r.imageUrl)} alt={r.name} />
@@ -1093,16 +1081,11 @@ export default function WarehouseEventDetailPage() {
                             </div>
                           </div>
 
-                          {event.status === "CLOSED" || event.status === "ISSUED" ? (
+                          {event.status === "CLOSED" ? (
                             <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
                               {issueData.issuedMap.has(r.inventory_item_id) ? (
                                 <div className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
                                   Vydáno: {issueData.issuedMap.get(r.inventory_item_id)} {r.unit}
-                                </div>
-                              ) : null}
-                              {event.status === "ISSUED" ? (
-                                <div className="text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">
-                                  Vrací se: {r.returned} {r.unit}
                                 </div>
                               ) : null}
                               {(issueData.lostMap.get(r.inventory_item_id) || 0) > 0 ? (
@@ -1113,7 +1096,7 @@ export default function WarehouseEventDetailPage() {
                             </div>
                           ) : null}
 
-                          {event.status === "ISSUED" || (event.status === "CLOSED" && correcting) ? (
+                          {event.status === "CLOSED" && correcting ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                               <label className="text-xs">
                                 Vráceno
@@ -1166,22 +1149,6 @@ export default function WarehouseEventDetailPage() {
                                   {shortfall} {r.unit}
                                 </div>
                               </div>
-                              {event.status === "ISSUED" ? (
-                              <label className="text-xs col-span-2 sm:col-span-1">
-                                Sklad vrácení
-                                <select 
-                                  className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500"
-                                  value={r.target_warehouse_id || ""}
-                                  onChange={(e) => {
-                                    const v = e.target.value || undefined;
-                                    setRows((prev) => prev.map((x) => (x.inventory_item_id === r.inventory_item_id ? { ...x, target_warehouse_id: v } : x)));
-                                  }}
-                                >
-                                  <option value="">Beze skladu</option>
-                                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                                </select>
-                              </label>
-                              ) : null}
                             </div>
                           ) : null}
 
@@ -1271,27 +1238,6 @@ export default function WarehouseEventDetailPage() {
             >
               <Icons.Check className="h-4 w-4" />
               {issueMode === "digital" && !digitalIssueSummary.allConfirmed ? "Ještě ne" : "Potvrdit"}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {event.status === "ISSUED" ? (
-        <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 border-t border-red-100 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
-          <div className="mx-auto flex max-w-xl items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-900">Vrácení z akce</div>
-              <div className="mt-1 truncate text-[11px] text-slate-500">
-                {rows.length > 0 ? `${rows.length} položek připravených k uzavření.` : "Načítám vydané položky…"}
-              </div>
-            </div>
-            <Button
-              variant="danger"
-              className="h-12 shrink-0 px-4"
-              disabled={closeDisabled}
-              onClick={() => setConfirmClose(true)}
-            >
-              <Icons.Check className="h-4 w-4" /> Uzavřít akci
             </Button>
           </div>
         </div>
@@ -1389,7 +1335,10 @@ export default function WarehouseEventDetailPage() {
         onOpenChange={setConfirmClose}
         tone="danger"
         title="Uzavřít akci?"
-        description="Zadej, kolik se skutečně vrátilo a kolik se rozbilo. Zbytek do vydaného množství se u inventáře zaúčtuje jako manko, u spotřebního zboží jako spotřeba na akci."
+        description={[
+          checkedCount < rows.length ? `Zkontrolováno je ${checkedCount} z ${rows.length} položek. Uzavření uloží množství ze všech řádků.` : null,
+          "Nevrácené množství se u vratného inventáře zaúčtuje jako manko, u spotřebního zboží jako spotřeba na akci."
+        ].filter(Boolean).join(" ")}
         confirmText="Uzavřít"
         onConfirm={async () => {
           if (!id) return;
@@ -1408,8 +1357,9 @@ export default function WarehouseEventDetailPage() {
             });
             toast.success("Akce uzavřena");
             await load();
-          } catch (e: any) {
-            toast.error(e?.error?.message ?? "Nepodařilo se uzavřít akci.");
+          } catch (error: unknown) {
+            toast.error((error as { error?: { message?: string } })?.error?.message ?? "Nepodařilo se uzavřít akci.");
+            return false;
           }
         }}
       />
@@ -1526,9 +1476,7 @@ export default function WarehouseEventDetailPage() {
         onOpenChange={setAdditionalIssueOpen}
         eventId={id ?? ""}
         warehouses={warehouses}
-        onDone={() => {
-          load();
-        }}
+        onDone={reloadAfterIssue}
       />
     </div >
   );

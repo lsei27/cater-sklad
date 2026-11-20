@@ -11,13 +11,17 @@ export default function Modal(props: {
   description?: ReactNode;
   contentClassName?: string;
   bodyClassName?: string;
+  headerClassName?: string;
+  headerAside?: ReactNode;
+  onOpenAutoFocus?: (event: Event) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   fullScreen?: boolean;
   closeText?: string;
   children: ReactNode;
   footer?: ReactNode;
   secondaryText?: string;
   onSecondary?: () => void;
-  primaryText?: string;
+  primaryText?: ReactNode;
   onPrimary?: () => Promise<void> | void;
   primaryDisabled?: boolean;
 }) {
@@ -27,6 +31,8 @@ export default function Modal(props: {
         <Dialog.Overlay className={props.fullScreen ? "fixed inset-0 z-40 bg-transparent" : "fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px]"} />
         <Dialog.Content
           {...(!props.description ? { "aria-describedby": undefined } : {})}
+          onOpenAutoFocus={props.onOpenAutoFocus}
+          onCloseAutoFocus={props.onCloseAutoFocus}
           className={cn(
             "fixed z-50 flex flex-col overflow-hidden border border-line bg-white",
             props.fullScreen
@@ -35,16 +41,19 @@ export default function Modal(props: {
             props.contentClassName
           )}
         >
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
+          <div className={cn("flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3", props.headerClassName)}>
             <div className="min-w-0 wrap-break-word">
               <Dialog.Title className="text-base font-semibold">{props.title}</Dialog.Title>
               {props.description ? <Dialog.Description className="mt-1 text-sm text-slate-600">{props.description}</Dialog.Description> : null}
             </div>
-            <Dialog.Close asChild>
-              <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Zavřít">
-                <X className="h-4 w-4" />
-              </button>
-            </Dialog.Close>
+            <div className="flex shrink-0 items-center gap-2">
+              {props.headerAside}
+              <Dialog.Close asChild>
+                <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Zavřít">
+                  <X className="h-4 w-4" />
+                </button>
+              </Dialog.Close>
+            </div>
           </div>
 
           <div className={cn("min-h-0 overflow-auto", props.fullScreen ? "flex-1" : "max-h-[70vh] px-4 py-4", props.bodyClassName)}>
