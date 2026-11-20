@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EventStatus } from "../../generated/prisma/client.js";
+import { EventStatus, type Prisma } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
 import { InsufficientStockError, reserveItemsTx } from "../services/reserve.js";
 import { duplicateEventTx } from "../services/duplicateEvent.js";
 import { getAvailabilityForEventItemTx, getAvailabilityForEventItemsTx } from "../services/availability.js";
-import { buildExportPdf, filterSnapshotByType, filterSnapshotToDay, type ExportSnapshot, type PdfChanges } from "../pdf/exportPdf.js";
+import { buildExportPdf, filterSnapshotByType, filterSnapshotToDay, itemDayFrom, type ExportSnapshot, type PdfChanges } from "../pdf/exportPdf.js";
 import { diffSnapshots } from "../lib/snapshotDiff.js";
 import { ackChanges, getUnseenChanges, hasUnseenChanges, loadSnapshot } from "../services/warehouseChanges.js";
 import { buildLiveSnapshotTx, createExportTx } from "../services/export.js";
@@ -17,6 +17,26 @@ import { correctReturnCloseTx, returnCloseTx } from "../services/returnClose.js"
 import { eventDatesError, eventDayCount, eventIsPast } from "../lib/eventDays.js";
 import { getIssuedDaysTx, issueDayTx } from "../services/issueDay.js";
 import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
+
+function getPackingProgress(
+  snapshot: ExportSnapshot | undefined,
+  packing: { inventoryItemId: string; dayFrom: number; dayTo: number | null; state: string; packedQuantity: number | null }[],
+  issuedDays: Set<number>,
+  packingStartedAt: Date | null
+) {
+  const rowKey = (row: { inventoryItemId: string; dayFrom?: number; dayTo?: number | null }) =>
+    `${row.inventoryItemId}/${row.dayFrom ?? 1}/${row.dayTo ?? ""}`;
+  const rows = snapshot?.groups.flatMap((group) => group.items ?? [])
+    .filter((row) => !issuedDays.has(row.dayFrom ?? 1)) ?? [];
+  const byRow = new Map(packing.map((row) => [rowKey(row), row]));
+  const confirmed = rows.filter((row) => byRow.get(rowKey(row))?.state === "confirmed");
+  return {
+    total: rows.length,
+    confirmed: confirmed.length,
+    missing: confirmed.filter((row) => (byRow.get(rowKey(row))?.packedQuantity ?? row.qty) < row.qty).length,
+    started: Boolean(packingStartedAt) || issuedDays.size > 0 || rows.some((row) => byRow.has(rowKey(row)))
+  };
+}
 
 function safeFilename(value: string) {
   return value
@@ -95,9 +115,12 @@ export async function eventRoutes(app: FastifyInstance) {
       month: z.string().regex(/^\d+$/).transform(Number).optional(),
       year: z.string().regex(/^\d+$/).transform(Number).optional(),
       created_by_id: z.string().uuid().optional(),
+      view: z.literal("warehouse").optional(),
     }).parse(request.query);
 
-    const where: any = {};
+    const where: Prisma.EventWhereInput = {};
+    const includePacking = query.view === "warehouse" && ["admin", "warehouse"].includes(user.role);
+    const multidayIssue = { status: EventStatus.ISSUED, eventEndDate: { not: null } };
 
     if (user.role === "warehouse") {
       where.status = {
@@ -136,7 +159,7 @@ export async function eventRoutes(app: FastifyInstance) {
       };
     }
 
-    const events = await (app.prisma.event as any).findMany({
+    const events = await app.prisma.event.findMany({
       where,
       orderBy: { deliveryDatetime: "asc" },
       select: {
@@ -150,20 +173,48 @@ export async function eventRoutes(app: FastifyInstance) {
         status: true,
         exportNeedsRevision: true,
         chefConfirmedAt: true,
+        packingStartedAt: true,
         warehouseAckVersion: true,
         exports: { orderBy: { version: "desc" }, take: 1, select: { version: true } },
+        packing: includePacking ? {
+          where: { event: { OR: [{ status: EventStatus.SENT_TO_WAREHOUSE }, multidayIssue] } },
+          select: { inventoryItemId: true, dayFrom: true, dayTo: true, state: true, packedQuantity: true }
+        } : false,
+        issues: includePacking ? {
+          where: { event: multidayIssue, type: "issued", dayFrom: { not: null } },
+          distinct: ["dayFrom"],
+          select: { dayFrom: true }
+        } : false,
+        _count: { select: { reservations: { where: { reservedQuantity: { gt: 0 } } } } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     });
+    const pending = includePacking ? events.flatMap((event) => {
+      const shouldCheck = event.status === EventStatus.SENT_TO_WAREHOUSE ||
+        (event.status === EventStatus.ISSUED && eventDayCount(event.eventDate, event.eventEndDate) > 1);
+      return shouldCheck && event.exports[0] ? [{ eventId: event.id, version: event.exports[0].version }] : [];
+    }) : [];
+    const snapshots = pending.length ? await app.prisma.eventExport.findMany({
+      where: { OR: pending },
+      select: { eventId: true, snapshotJson: true }
+    }) : [];
+    const byEventId = new Map(snapshots.map((row) => [row.eventId, row.snapshotJson as ExportSnapshot]));
     return {
-      events: (events as any[]).map(({ exports, ...e }) => ({
-        ...e,
-        hasUnseenChanges: hasUnseenChanges({
-          status: e.status,
-          warehouseAckVersion: e.warehouseAckVersion,
-          latestExportVersion: exports?.[0]?.version ?? null
-        })
-      }))
+      events: events.map(({ exports, _count, packing, issues, packingStartedAt, ...event }) => {
+        const snapshot = byEventId.get(event.id);
+        const issuedDays = new Set((issues ?? []).flatMap((issue) => issue.dayFrom === null ? [] : [issue.dayFrom]));
+        const progress = snapshot ? getPackingProgress(snapshot, packing, issuedDays, packingStartedAt) : null;
+        return {
+          ...event,
+          itemCount: _count.reservations,
+          ...(progress && progress.total > 0 ? { packingProgress: progress } : {}),
+          hasUnseenChanges: hasUnseenChanges({
+            status: event.status,
+            warehouseAckVersion: event.warehouseAckVersion,
+            latestExportVersion: exports[0]?.version ?? null
+          })
+        };
+      })
     };
   });
 
@@ -418,9 +469,9 @@ export async function eventRoutes(app: FastifyInstance) {
       warehouseIsHome?: boolean | null;
     }> = [];
 
-    // U vydané akce je pravdou o obsahu skutečný výdej, ne export: doplňkový
-    // výdej přidává položky, které v exportu nejsou.
-    if (event.status === "ISSUED") {
+    // Vydaná i uzavřená akce mají vycházet ze skutečného výdeje, včetně
+    // doplňkových položek a odchylek z výdeje podle papíru.
+    if (event.status === "ISSUED" || event.status === "CLOSED") {
       warehouseItems = await getIssuedWarehouseItems(app.prisma, event.id);
     }
 
@@ -1386,6 +1437,28 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post("/events/:id/packing/start", {
+    preHandler: [app.authenticate],
+    config: { rateLimit: { hook: "preHandler", max: 60, timeWindow: "1 minute", keyGenerator: (request) => request.user?.id ?? request.ip } }
+  }, async (request, reply) => {
+    requireRole(request.user!.role, ["admin", "warehouse"]);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await app.prisma.event.updateMany({
+      where: { id, status: EventStatus.SENT_TO_WAREHOUSE, exportNeedsRevision: false, packingStartedAt: null, exports: { some: {} } },
+      data: { packingStartedAt: new Date() }
+    });
+    const event = await app.prisma.event.findUnique({
+      where: { id }, select: { status: true, packingStartedAt: true, exportNeedsRevision: true }
+    });
+    if (result.count > 0) sseBus.emit({ type: "event_packing_changed", eventId: id });
+    if (!event) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+    if (event.exportNeedsRevision) return httpError(reply, 409, "NEEDS_REVISION", "Akce byla po předání změněna. Nejdřív aktualizuj předání.");
+    if (event.status !== EventStatus.SENT_TO_WAREHOUSE || !event.packingStartedAt) {
+      return httpError(reply, 409, "BAD_STATUS", "Vychystávání lze zahájit u akce předané skladu.");
+    }
+    return reply.send({ startedAt: event.packingStartedAt });
+  });
+
   app.get("/events/:id/packing", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin", "warehouse"]);
@@ -1393,12 +1466,15 @@ export async function eventRoutes(app: FastifyInstance) {
 
     const packing = await app.prisma.eventPacking.findMany({
       where: { eventId: params.id },
-      select: { inventoryItemId: true, dayFrom: true, dayTo: true, state: true }
+      select: { inventoryItemId: true, dayFrom: true, dayTo: true, state: true, packedQuantity: true }
     });
     return reply.send({ packing });
   });
 
-  app.put("/events/:id/packing", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.put("/events/:id/packing", {
+    preHandler: [app.authenticate],
+    config: { rateLimit: { hook: "preHandler", max: 240, timeWindow: "1 minute", keyGenerator: (request) => request.user?.id ?? request.ip } }
+  }, async (request, reply) => {
     const user = request.user!;
     requireRole(user.role, ["admin", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
@@ -1407,31 +1483,50 @@ export async function eventRoutes(app: FastifyInstance) {
         inventory_item_id: z.string().uuid(),
         day_from: z.number().int().min(1).optional(),
         day_to: z.number().int().min(1).nullable().optional(),
-        state: z.enum(["idle", "armed", "confirmed"])
+        state: z.enum(["idle", "armed", "confirmed"]),
+        packed_quantity: z.number().int().min(0).max(2_147_483_647).optional()
       })
       .parse(request.body);
     const dayFrom = body.day_from ?? 1;
     const dayTo = body.day_to ?? null;
 
-    const event = await app.prisma.event.findUnique({ where: { id: params.id }, select: { status: true } });
-    if (!event) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
-    if (event.status === "ISSUED") {
-      // Vícedenní akce se po vydání prvního dne balí dál na další dny.
-      const issuedDays = await getIssuedDaysTx(app.prisma, params.id);
-      if (issuedDays.includes(dayFrom)) {
-        return httpError(reply, 409, "BAD_STATUS", "Tento den už je vydaný.");
-      }
-    } else if (event.status !== "SENT_TO_WAREHOUSE") {
-      return httpError(reply, 409, "BAD_STATUS", "Balit lze jen akci ve stavu Předáno skladu nebo Vydáno.");
-    }
-
     const where = { eventId: params.id, inventoryItemId: body.inventory_item_id, dayFrom, dayTo };
-    await app.prisma.$transaction(async (tx) => {
+    const result = await app.prisma.$transaction(async (tx) => {
+      // Stejný zámek jako u výdeje. Pozdější uložení nesmí znovu založit stav vydaného dne.
+      const [event] = await tx.$queryRaw<{ status: string }[]>`
+        SELECT status::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
+      `;
+      if (!event) return "notFound";
+      if (event.status === "ISSUED") {
+        if ((await getIssuedDaysTx(tx, params.id)).includes(dayFrom)) return "issued";
+      } else if (event.status !== "SENT_TO_WAREHOUSE") {
+        return "badStatus";
+      }
+
+      if (body.state !== "idle" && body.packed_quantity !== undefined) {
+        const latest = await tx.eventExport.findFirst({
+          where: { eventId: params.id }, orderBy: { version: "desc" }, select: { snapshotJson: true }
+        });
+        const snapshot = latest?.snapshotJson as ExportSnapshot | undefined;
+        const planned = snapshot?.groups.flatMap((group) => group.items).find((item) =>
+          item.inventoryItemId === body.inventory_item_id && itemDayFrom(item) === dayFrom && (item.dayTo ?? null) === dayTo
+        );
+        if (!planned || body.packed_quantity > planned.qty) return "invalidQuantity";
+      }
+
       await tx.eventPacking.deleteMany({ where });
       if (body.state !== "idle") {
-        await tx.eventPacking.create({ data: { ...where, state: body.state, updatedById: user.id } });
+        await tx.eventPacking.create({ data: { ...where, state: body.state, packedQuantity: body.packed_quantity, updatedById: user.id } });
+        await tx.event.updateMany({ where: { id: params.id, packingStartedAt: null }, data: { packingStartedAt: new Date() } });
       }
+      return "ok";
     });
+
+    if (result === "notFound") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+    if (result === "issued") return httpError(reply, 409, "BAD_STATUS", "Tento den už je vydaný.");
+    if (result === "badStatus") return httpError(reply, 409, "BAD_STATUS", "Balit lze jen akci ve stavu Předáno skladu nebo Vydáno.");
+    if (result === "invalidQuantity") return httpError(reply, 400, "INVALID_PACKED_QUANTITY", "Zadej množství v rozsahu od 0 do požadovaného množství z checklistu.");
+    sseBus.emit({ type: "event_packing_changed", eventId: params.id });
     return reply.send({ ok: true });
   });
 
