@@ -11,6 +11,8 @@ export default function Modal(props: {
   description?: ReactNode;
   contentClassName?: string;
   bodyClassName?: string;
+  fullScreen?: boolean;
+  closeText?: string;
   children: ReactNode;
   footer?: ReactNode;
   secondaryText?: string;
@@ -22,16 +24,19 @@ export default function Modal(props: {
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px]" />
+        <Dialog.Overlay className={props.fullScreen ? "fixed inset-0 z-40 bg-transparent" : "fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px]"} />
         <Dialog.Content
+          {...(!props.description ? { "aria-describedby": undefined } : {})}
           className={cn(
-            "fixed inset-x-0 bottom-0 z-50 max-h-[calc(100dvh-1rem)] overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl",
-            "sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[92vw] sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl",
+            "fixed z-50 flex flex-col overflow-hidden border border-line bg-white",
+            props.fullScreen
+              ? "inset-0 md:top-[60px]"
+              : "inset-x-0 bottom-0 max-h-[calc(100dvh-1rem)] rounded-t-2xl shadow-2xl sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[92vw] sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl",
             props.contentClassName
           )}
         >
-          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <div>
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
+            <div className="min-w-0 wrap-break-word">
               <Dialog.Title className="text-base font-semibold">{props.title}</Dialog.Title>
               {props.description ? <Dialog.Description className="mt-1 text-sm text-slate-600">{props.description}</Dialog.Description> : null}
             </div>
@@ -42,11 +47,11 @@ export default function Modal(props: {
             </Dialog.Close>
           </div>
 
-          <div className={cn("max-h-[calc(100dvh-10rem)] overflow-auto px-4 py-4 sm:max-h-[70vh]", props.bodyClassName)}>
+          <div className={cn("min-h-0 overflow-auto", props.fullScreen ? "flex-1" : "max-h-[70vh] px-4 py-4", props.bodyClassName)}>
             {props.children}
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:pb-3">
+          <div className="flex shrink-0 flex-col gap-3 border-t border-line px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:pb-3">
             {props.footer ?? null}
             <div className="flex flex-col-reverse gap-2 sm:ml-auto sm:flex-row">
               {props.onSecondary ? (
@@ -55,7 +60,7 @@ export default function Modal(props: {
                 </Button>
               ) : (
                 <Dialog.Close asChild>
-                  <Button variant="secondary" className="w-full sm:w-auto">Zavřít</Button>
+                  <Button variant={props.fullScreen ? "primary" : "secondary"} className="w-full sm:w-auto">{props.closeText ?? "Zavřít"}</Button>
                 </Dialog.Close>
               )}
               {props.onPrimary ? (

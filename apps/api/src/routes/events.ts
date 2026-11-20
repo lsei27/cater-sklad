@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EventStatus } from "../../generated/prisma/client.js";
+import { EventStatus, type Prisma } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 import { sseBus } from "../lib/sse.js";
@@ -17,6 +17,23 @@ import { correctReturnCloseTx, returnCloseTx } from "../services/returnClose.js"
 import { eventDatesError, eventDayCount, eventIsPast } from "../lib/eventDays.js";
 import { getIssuedDaysTx, issueDayTx } from "../services/issueDay.js";
 import { fitReservationsToDayCountTx } from "../services/eventDayChange.js";
+
+function getPackingProgress(
+  snapshot: ExportSnapshot | undefined,
+  packing: { inventoryItemId: string; dayFrom: number; dayTo: number | null; state: string }[],
+  issuedDays: Set<number>
+) {
+  const rowKey = (row: { inventoryItemId: string; dayFrom?: number; dayTo?: number | null }) =>
+    `${row.inventoryItemId}/${row.dayFrom ?? 1}/${row.dayTo ?? ""}`;
+  const rows = snapshot?.groups.flatMap((group) => group.items ?? [])
+    .filter((row) => !issuedDays.has(row.dayFrom ?? 1)) ?? [];
+  const states = new Map(packing.map((row) => [rowKey(row), row.state]));
+  return {
+    total: rows.length,
+    confirmed: rows.filter((row) => states.get(rowKey(row)) === "confirmed").length,
+    started: issuedDays.size > 0 || rows.some((row) => states.has(rowKey(row)))
+  };
+}
 
 function safeFilename(value: string) {
   return value
@@ -95,9 +112,12 @@ export async function eventRoutes(app: FastifyInstance) {
       month: z.string().regex(/^\d+$/).transform(Number).optional(),
       year: z.string().regex(/^\d+$/).transform(Number).optional(),
       created_by_id: z.string().uuid().optional(),
+      view: z.literal("warehouse").optional(),
     }).parse(request.query);
 
-    const where: any = {};
+    const where: Prisma.EventWhereInput = {};
+    const includePacking = query.view === "warehouse" && ["admin", "warehouse"].includes(user.role);
+    const multidayIssue = { status: EventStatus.ISSUED, eventEndDate: { not: null } };
 
     if (user.role === "warehouse") {
       where.status = {
@@ -136,7 +156,7 @@ export async function eventRoutes(app: FastifyInstance) {
       };
     }
 
-    const events = await (app.prisma.event as any).findMany({
+    const events = await app.prisma.event.findMany({
       where,
       orderBy: { deliveryDatetime: "asc" },
       select: {
@@ -152,18 +172,45 @@ export async function eventRoutes(app: FastifyInstance) {
         chefConfirmedAt: true,
         warehouseAckVersion: true,
         exports: { orderBy: { version: "desc" }, take: 1, select: { version: true } },
+        packing: includePacking ? {
+          where: { event: { OR: [{ status: EventStatus.SENT_TO_WAREHOUSE }, multidayIssue] } },
+          select: { inventoryItemId: true, dayFrom: true, dayTo: true, state: true }
+        } : false,
+        issues: includePacking ? {
+          where: { event: multidayIssue, type: "issued", dayFrom: { not: null } },
+          distinct: ["dayFrom"],
+          select: { dayFrom: true }
+        } : false,
+        _count: { select: { reservations: { where: { reservedQuantity: { gt: 0 } } } } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     });
+    const pending = includePacking ? events.flatMap((event) => {
+      const shouldCheck = event.status === EventStatus.SENT_TO_WAREHOUSE ||
+        (event.status === EventStatus.ISSUED && eventDayCount(event.eventDate, event.eventEndDate) > 1);
+      return shouldCheck && event.exports[0] ? [{ eventId: event.id, version: event.exports[0].version }] : [];
+    }) : [];
+    const snapshots = pending.length ? await app.prisma.eventExport.findMany({
+      where: { OR: pending },
+      select: { eventId: true, snapshotJson: true }
+    }) : [];
+    const byEventId = new Map(snapshots.map((row) => [row.eventId, row.snapshotJson as ExportSnapshot]));
     return {
-      events: (events as any[]).map(({ exports, ...e }) => ({
-        ...e,
-        hasUnseenChanges: hasUnseenChanges({
-          status: e.status,
-          warehouseAckVersion: e.warehouseAckVersion,
-          latestExportVersion: exports?.[0]?.version ?? null
-        })
-      }))
+      events: events.map(({ exports, _count, packing, issues, ...event }) => {
+        const snapshot = byEventId.get(event.id);
+        const issuedDays = new Set((issues ?? []).flatMap((issue) => issue.dayFrom === null ? [] : [issue.dayFrom]));
+        const progress = snapshot ? getPackingProgress(snapshot, packing, issuedDays) : null;
+        return {
+          ...event,
+          itemCount: _count.reservations,
+          ...(progress && progress.total > 0 ? { packingProgress: progress } : {}),
+          hasUnseenChanges: hasUnseenChanges({
+            status: event.status,
+            warehouseAckVersion: event.warehouseAckVersion,
+            latestExportVersion: exports[0]?.version ?? null
+          })
+        };
+      })
     };
   });
 

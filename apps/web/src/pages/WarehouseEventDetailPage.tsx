@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBaseUrl, apiUrl, getCurrentUser } from "../lib/api";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/datetime";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -16,7 +16,9 @@ import AdditionalIssueModal from "../components/AdditionalIssueModal";
 import { Icons } from "../lib/icons";
 import DayPackingCard from "../components/DayPackingCard";
 import { dayRangeLabel } from "../lib/eventDays";
-import { X, Plus } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, Printer, X, Plus } from "lucide-react";
+import WarehousePackingTable from "../components/WarehousePackingTable";
+import EventLoadError from "../components/EventLoadError";
 
 type Block = { id: string; inventoryItemId: string; blockedQuantity: number; blockedUntil: string; note?: string };
 
@@ -64,10 +66,14 @@ function formatWeightKg(value: number) {
 
 export default function WarehouseEventDetailPage() {
   const role = getCurrentUser()?.role ?? "";
+  const canWarehouse = ["warehouse", "admin"].includes(role);
   const { id } = useParams();
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const requestedPacking = useRef("");
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
   // Admin může u uzavřené akce zpětně opravit vrácené a rozbité kusy.
@@ -100,7 +106,8 @@ export default function WarehouseEventDetailPage() {
   const [blockNote, setBlockNote] = useState("");
   const [issueMode, setIssueMode] = useState<IssueMode | null>(null);
   const [digitalIssueStates, setDigitalIssueStates] = useState<Record<string, DigitalIssueState>>({});
-  const [showConfirmedList, setShowConfirmedList] = useState(false);
+  const [savingPacking, setSavingPacking] = useState<Set<string>>(new Set());
+  const pendingPacking = useRef(new Set<string>());
   const [additionalIssueOpen, setAdditionalIssueOpen] = useState(false);
   const [issueWarehouseId, setIssueWarehouseId] = useState("");
   const [issuePalletCount, setIssuePalletCount] = useState<number | "">("");
@@ -110,11 +117,12 @@ export default function WarehouseEventDetailPage() {
   const load = async () => {
     if (!id) return;
     setLoading(true);
+    setLoadError("");
     try {
       const res = await api<{ event: any }>(`/events/${id}`);
       setEvent(res.event);
-    } catch (e: any) {
-      toast.error(e?.error?.message ?? "Nepodařilo se načíst akci.");
+    } catch (err) {
+      setLoadError((err as { error?: { message?: string } })?.error?.message ?? "Nepodařilo se načíst akci.");
     } finally {
       setLoading(false);
     }
@@ -163,12 +171,13 @@ export default function WarehouseEventDetailPage() {
   };
 
   useEffect(() => {
+    if (!canWarehouse) return;
     load();
     loadBlocks();
     loadWarehouses();
     loadPacking();
     loadPackingChanges();
-  }, [id]);
+  }, [id, canWarehouse]);
 
   const snapshot: Snapshot | null = useMemo(() => {
     const ex = (event?.exports?.[0] ?? null);
@@ -246,6 +255,22 @@ export default function WarehouseEventDetailPage() {
       return next;
     });
   }, [warehouseItems]);
+
+  useEffect(() => {
+    if (!canWarehouse || params.get("packing") !== "1" || !id || event?.id !== id || requestedPacking.current === id) return;
+    if (event.status === "SENT_TO_WAREHOUSE" && !isMultiDay && !event.exportNeedsRevision && warehouseItems.length > 0) {
+      requestedPacking.current = id;
+      setIssueMode((previous) => previous ?? "digital");
+    }
+  }, [canWarehouse, event, id, isMultiDay, params, warehouseItems.length]);
+
+  const skuByItemId = useMemo(() => {
+    const codes = new Map<string, string>();
+    for (const row of event?.reservations ?? []) {
+      if (typeof row.item?.sku === "string") codes.set(row.inventoryItemId, row.item.sku);
+    }
+    return codes;
+  }, [event?.reservations]);
 
   const imageByItemId = useMemo(() => {
     const entries = (event?.reservations ?? []).map((r: any) => {
@@ -370,25 +395,7 @@ export default function WarehouseEventDetailPage() {
     return { issuedMap, lostMap };
   }, [event?.issues]);
 
-  // Během digitálního balení se potvrzené položky stěhují dolů do vydaného seznamu,
-  // aby nahoře zůstalo jen to, co ještě není sbalené.
-  const digitalPackingActive = event?.status === "SENT_TO_WAREHOUSE" && issueMode === "digital";
-
-  const confirmedRows = useMemo(
-    () =>
-      digitalPackingActive
-        ? rows.filter((r) => (digitalIssueStates[r.inventory_item_id] ?? "idle") === "confirmed")
-        : [],
-    [digitalPackingActive, rows, digitalIssueStates]
-  );
-
-  const pendingRows = useMemo(
-    () =>
-      digitalPackingActive
-        ? rows.filter((r) => (digitalIssueStates[r.inventory_item_id] ?? "idle") !== "confirmed")
-        : rows,
-    [digitalPackingActive, rows, digitalIssueStates]
-  );
+  const digitalPackingActive = event?.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" && !isMultiDay;
 
   const groupedRows = useMemo(() => {
     type CatGroup = { parent: string; sub: string; items: typeof rows };
@@ -397,7 +404,7 @@ export default function WarehouseEventDetailPage() {
       { title: "Kuchyň", groups: [] }
     ];
     const groupMap = new Map<string, CatGroup>();
-    for (const r of pendingRows) {
+    for (const r of rows) {
       const parent = r.parentCategory || "Ostatní";
       const sub = r.category || "Nezařazeno";
       const key = `${parent}||${sub}`;
@@ -418,7 +425,7 @@ export default function WarehouseEventDetailPage() {
       }
     }
     return sections;
-  }, [pendingRows]);
+  }, [rows]);
 
   const digitalIssueSummary = useMemo(() => {
     let confirmed = 0;
@@ -454,16 +461,20 @@ export default function WarehouseEventDetailPage() {
 
   const updateDigitalIssueState = async (inventoryItemId: string, nextState: DigitalIssueState) => {
     const previousState = digitalIssueStates[inventoryItemId] ?? "idle";
-    if (previousState === nextState) return;
-    setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
+    if (previousState === nextState || pendingPacking.current.has(inventoryItemId)) return;
+    pendingPacking.current.add(inventoryItemId);
+    setSavingPacking(new Set(pendingPacking.current));
     try {
       await api(`/events/${id}/packing`, {
         method: "PUT",
         body: JSON.stringify({ inventory_item_id: inventoryItemId, state: nextState })
       });
-    } catch (e: any) {
-      setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: previousState }));
-      toast.error(e?.error?.message ?? "Nepodařilo se uložit rozbalenou položku.");
+      setDigitalIssueStates((prev) => ({ ...prev, [inventoryItemId]: nextState }));
+    } catch (err) {
+      toast.error((err as { error?: { message?: string } })?.error?.message ?? "Nepodařilo se uložit rozbalenou položku.");
+    } finally {
+      pendingPacking.current.delete(inventoryItemId);
+      setSavingPacking(new Set(pendingPacking.current));
     }
   };
 
@@ -492,7 +503,6 @@ export default function WarehouseEventDetailPage() {
     );
   };
 
-  const canWarehouse = ["warehouse", "admin"].includes(role);
   if (!canWarehouse) {
     return (
       <Card>
@@ -501,6 +511,10 @@ export default function WarehouseEventDetailPage() {
         </CardContent>
       </Card>
     );
+  }
+
+  if (!loading && (loadError || !event)) {
+    return <EventLoadError message={loadError || "Akci se nepodařilo načíst."} back="/warehouse" retry={() => void load()} />;
   }
 
   if (loading || !event) {
@@ -526,12 +540,39 @@ export default function WarehouseEventDetailPage() {
   const closeDisabled = event.status !== "ISSUED" || rows.length === 0;
   const showMobileActionDock = event.status === "ISSUED" || (event.status === "SENT_TO_WAREHOUSE" && issueMode !== null);
 
+  const startBlock = (row: { inventory_item_id: string; name: string; requested: number }) => {
+    setBlockModal({ inventoryItemId: row.inventory_item_id, name: row.name, maxQty: row.requested });
+    setBlockQty(String(row.requested));
+    const until = new Date(event.pickupDatetime);
+    until.setDate(until.getDate() + 1);
+    setBlockUntil(toDatetimeLocalValue(until));
+    setBlockNote("");
+  };
+
+  const removeBlock = async (block: Block) => {
+    if (!window.confirm("Opravdu zrušit tuto manuální blokaci?")) return;
+    try {
+      await api(`/events/${id}/blocks/${block.id}`, { method: "DELETE" });
+      toast.success("Blokace zrušena");
+      await loadBlocks();
+    } catch (err) {
+      toast.error((err as { error?: { message?: string } })?.error?.message ?? "Chyba při rušení blokace.");
+    }
+  };
+
+  const printChecklist = () => {
+    if (!snapshot?.event?.version) return;
+    const token = localStorage.getItem("token");
+    window.open(`${apiBaseUrl()}/events/${id}/exports/${snapshot.event.version}/pdf?token=${encodeURIComponent(token ?? "")}${compareParam}`, "_blank");
+  };
+  const isPacking = event.status === "SENT_TO_WAREHOUSE";
+
   return (
     <div className={cn("space-y-4", showMobileActionDock && "pb-36 md:pb-0")}>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => nav("/warehouse")}>
-          Zpět na seznam
-        </Button>
+        <button type="button" className="mr-2 inline-flex items-center gap-2 text-sm text-muted hover:text-ink" onClick={() => nav("/warehouse")}>
+          <ArrowLeft size={16} /> Výdej
+        </button>
         {!["ISSUED", "CLOSED", "CANCELLED"].includes(event.status) ? (
           <Button variant="secondary" size="sm" onClick={() => nav(`/events/${id}`)}>
             <Icons.Edit className="h-4 w-4" /> Upravit akci a položky
@@ -539,6 +580,68 @@ export default function WarehouseEventDetailPage() {
         ) : null}
       </div>
 
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2"><h1 className="page-title wrap-break-word">{isPacking ? "Vychystání: " : ""}{event.name}</h1>
+              <Badge className={digitalPackingActive ? "bg-indigo-50 text-indigo-700" : statusBadgeClass(event.status)}>{digitalPackingActive ? "Vychystává se" : statusLabel(event.status)}</Badge></div>
+            <p className="page-description flex flex-wrap items-center gap-1.5"><CalendarClock size={15} /> {[new Date(event.deliveryDatetime).toLocaleString("cs-CZ"), manager, event.location].filter(Boolean).join(" · ")}</p>
+          </div>
+          {isPacking && <div className="flex flex-wrap gap-2">
+            {snapshot?.event?.version && <Button variant="secondary" onClick={printChecklist}><Printer size={16} /> Tisk checklistu</Button>}
+            {digitalPackingActive && <Button variant="secondary" onClick={() => setIssueMode("manual")}>Manuální režim</Button>}
+            {digitalPackingActive && <Button className="hidden md:inline-flex" disabled={issueDisabled || !digitalIssueSummary.allConfirmed || savingPacking.size > 0} onClick={() => setConfirmIssue(true)}><Check size={16} /> Potvrdit výdej ({digitalIssueSummary.confirmed}/{digitalIssueSummary.total})</Button>}
+          </div>}
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+          <span>Svoz {new Date(event.pickupDatetime).toLocaleString("cs-CZ")}</span>
+          {event.registrationNumber && <span>Evidenční číslo {event.registrationNumber}</span>}
+          {event.palletCount != null && <span>Palety {event.palletCount}</span>}
+          {event.totalWeight && <span>Váha {event.totalWeight}</span>}
+          {snapshot?.event?.version && <span>Export v{snapshot.event.version}</span>}
+          <span className={event.chefConfirmedAt ? "text-emerald-700" : "text-amber-800"}>{event.chefConfirmedAt ? "Kuchyň potvrzena" : "Čeká na kuchyň"}</span>
+        </div>
+        {event.notes && <details className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted" open={!digitalPackingActive}><summary className="cursor-pointer font-semibold text-ink">Poznámka pro sklad</summary><p className="mt-1 whitespace-pre-wrap">{event.notes}</p></details>}
+          {event.status === "CLOSED" ? (
+            <div className="mt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-100"
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${apiBaseUrl()}/events/${id}/report-pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
+                }}
+              >
+                Stáhnout závěrečný report (PDF)
+              </Button>
+              {role === "admin" ? (
+                correcting ? (
+                  <>
+                    <Button size="sm" variant="danger" className="ml-2" onClick={() => setConfirmCorrect(true)}>
+                      Uložit opravu
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ml-2"
+                      onClick={async () => {
+                        setCorrecting(false);
+                        await load();
+                      }}
+                    >
+                      Zrušit
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="secondary" className="ml-2" onClick={() => setCorrecting(true)}>
+                    Opravit vrácené kusy
+                  </Button>
+                )
+              ) : null}
+            </div>
+          ) : null}
+      </div>
       {event.status === "SENT_TO_WAREHOUSE" && warehouseItems.length === 0 ? (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent>
@@ -655,111 +758,6 @@ export default function WarehouseEventDetailPage() {
         </Card>
       ) : null}
 
-      <Card>
-        <CardContent>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="truncate text-lg font-semibold">{event.name}</div>
-              {manager ? (
-                <div className="text-sm font-medium text-slate-900 mt-1">
-                  Manažer: {manager}
-                </div>
-              ) : null}
-              <div className="text-sm text-slate-600">{event.location}</div>
-              {event.registrationNumber ? (
-                <div className="mt-1 text-xs text-slate-500" title="Číslo akce z nabídkové aplikace">
-                  Evidenční číslo: <span className="font-medium text-slate-700">{event.registrationNumber}</span>
-                </div>
-              ) : null}
-              <div className="mt-2 text-xs text-slate-500">
-                {new Date(event.deliveryDatetime).toLocaleString()} → {new Date(event.pickupDatetime).toLocaleString()}
-              </div>
-              {event.notes ? (
-                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-2 text-xs text-slate-700 whitespace-pre-wrap">
-                  <span className="font-semibold text-slate-600">Poznámka:</span> {event.notes}
-                </div>
-              ) : null}
-
-              {(event.palletCount || event.totalWeight) && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {event.palletCount ? (
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 border border-blue-100 text-blue-700 text-[11px] font-bold">
-                      <Icons.Box className="h-3 w-3" /> {event.palletCount} palet
-                    </div>
-                  ) : null}
-                  {event.totalWeight ? (
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-orange-50 border border-orange-100 text-orange-700 text-[11px] font-bold">
-                      <Icons.Scale className="h-3 w-3" /> {event.totalWeight}
-                    </div>
-                  ) : null}
-                  {blocks.length > 0 ? (
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-700 text-[11px] font-bold">
-                      <Icons.Lock className="h-3 w-3" /> {blocks.length} blokací
-                    </div>
-                  ) : null}
-                </div>
-              )}
-              {snapshot?.event?.version ? (
-                <div className="mt-2 text-xs text-slate-500">Export verze: v{snapshot.event.version}</div>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-start gap-2 sm:shrink-0 sm:flex-col sm:items-end sm:text-right">
-              <Badge className={statusBadgeClass(event.status)}>
-                {statusLabel(event.status)}
-              </Badge>
-              {event.chefConfirmedAt ? (
-                <div className="flex items-center gap-1 text-[10px] font-medium text-green-700 sm:mt-1 sm:justify-end">
-                  <span>✓ Kuchyň potvrzena</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1 text-[10px] font-medium text-amber-700 sm:mt-1 sm:justify-end">
-                  <span>⏲ Čeká na kuchyň</span>
-                </div>
-              )}
-            </div>
-          </div>
-          {event.status === "CLOSED" ? (
-            <div className="mt-4">
-              <Button
-                size="sm"
-                variant="secondary"
-                className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-100"
-                onClick={() => {
-                  const token = localStorage.getItem("token");
-                  window.open(`${apiBaseUrl()}/events/${id}/report-pdf?token=${encodeURIComponent(token ?? "")}`, "_blank");
-                }}
-              >
-                Stáhnout závěrečný report (PDF)
-              </Button>
-              {role === "admin" ? (
-                correcting ? (
-                  <>
-                    <Button size="sm" variant="danger" className="ml-2" onClick={() => setConfirmCorrect(true)}>
-                      Uložit opravu
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="ml-2"
-                      onClick={async () => {
-                        setCorrecting(false);
-                        await load();
-                      }}
-                    >
-                      Zrušit
-                    </Button>
-                  </>
-                ) : (
-                  <Button size="sm" variant="secondary" className="ml-2" onClick={() => setCorrecting(true)}>
-                    Opravit vrácené kusy
-                  </Button>
-                )
-              ) : null}
-            </div>
-          ) : null}
-
-        </CardContent>
-      </Card>
       {event.status === "CLOSED" ? (
         <Card className="border-red-100 bg-red-50/30">
           <CardHeader className="pb-2">
@@ -786,10 +784,10 @@ export default function WarehouseEventDetailPage() {
             </div>
           </CardContent>
         </Card>
-      ) : (
+      ) : !digitalPackingActive ? (
         <Card>
           <CardHeader>
-            <div className="text-sm font-semibold">Akce</div>
+            <div className="text-sm font-semibold">{isPacking ? "Režim výdeje" : "Akce"}</div>
             <div className="mt-1 text-sm text-slate-600">
               {event.status === "SENT_TO_WAREHOUSE"
                 ? isMultiDay
@@ -892,29 +890,6 @@ export default function WarehouseEventDetailPage() {
                   </div>
                 ) : null}
 
-                {issueMode === "digital" ? (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">Digitální checklist</div>
-                        <div className="mt-1 text-sm text-slate-600">
-                          U každé položky nejprve klikni na „Vydat“, pak na „Potvrdit“. Potvrzené položky se přesunou do seznamu
-                          vydaného zboží dole. Postup se průběžně ukládá, takže můžeš aplikaci zavřít a dobalit později
-                          i na jiném telefonu. Finální tlačítko se zpřístupní až po potvrzení všech položek.
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-xs font-semibold">
-                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
-                          Potvrzeno: {digitalIssueSummary.confirmed}/{digitalIssueSummary.total}
-                        </span>
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
-                          K potvrzení: {digitalIssueSummary.remaining}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
                 {!issueMode ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                     Vyber režim vydání. Manuální ponechá práci s PDF checklistem, digitální zobrazí odškrtávání přímo u položek níže.
@@ -939,7 +914,7 @@ export default function WarehouseEventDetailPage() {
             )}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {isMultiDay && (event.status === "SENT_TO_WAREHOUSE" || (event.status === "ISSUED" && hasPendingDays)) ? (
         <DayPackingCard
@@ -955,6 +930,12 @@ export default function WarehouseEventDetailPage() {
         />
       ) : null}
 
+      {digitalPackingActive ? (
+        <WarehousePackingTable rows={rows} states={digitalIssueStates} saving={savingPacking} disabled={issueDisabled}
+          codes={skuByItemId} changes={itemChangeById} blocks={blocks}
+          onUpdate={(itemId, state) => void updateDigitalIssueState(itemId, state)}
+          onBlock={startBlock} onRemoveBlock={(block) => void removeBlock(block)} />
+      ) : (
       <Card>
         <CardHeader>
           <div className="text-sm font-semibold">Položky</div>
@@ -1013,9 +994,7 @@ export default function WarehouseEventDetailPage() {
         <CardContent>
           {groupedRows.every(s => s.groups.length === 0) ? (
             <div className="text-sm text-slate-600">
-              {digitalPackingActive && confirmedRows.length > 0
-                ? "Všechny položky jsou vydané. Zbývá potvrdit celý výdej dole."
-                : "Pro tuto akci nejsou žádné položky."}
+              Pro tuto akci nejsou žádné položky.
             </div>
           ) : (
             <div className="space-y-8">
@@ -1134,46 +1113,6 @@ export default function WarehouseEventDetailPage() {
                             </div>
                           ) : null}
 
-                          {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
-                            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs font-semibold text-emerald-900">
-                                  Digitální výdej
-                                </div>
-                                <Badge tone={(digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed" ? "warn" : "neutral"}>
-                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "armed"
-                                    ? "Čeká na potvrzení"
-                                    : "Nepotvrzeno"}
-                                </Badge>
-                              </div>
-                              <div className="mt-2 text-xs text-emerald-900/80">
-                                1. klikni na „Vydat“, 2. klikni na „Potvrdit“. Položka se pak přesune do seznamu vydaného zboží dole.
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                <Button
-                                  size="sm"
-                                  variant={(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "primary" : "secondary"}
-                                  onClick={() =>
-                                    updateDigitalIssueState(
-                                      r.inventory_item_id,
-                                      (digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "armed" : "idle"
-                                    )
-                                  }
-                                >
-                                  {(digitalIssueStates[r.inventory_item_id] ?? "idle") === "idle" ? "Vydat" : "Zrušit"}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  disabled={(digitalIssueStates[r.inventory_item_id] ?? "idle") !== "armed"}
-                                  onClick={() => updateDigitalIssueState(r.inventory_item_id, "confirmed")}
-                                >
-                                  Potvrdit
-                                </Button>
-                              </div>
-                            </div>
-                          ) : null}
-
                           {event.status === "ISSUED" || (event.status === "CLOSED" && correcting) ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                               <label className="text-xs">
@@ -1256,17 +1195,7 @@ export default function WarehouseEventDetailPage() {
                                   </div>
                                   <button
                                     className="self-end rounded p-1 hover:text-red-600 transition-colors sm:self-auto"
-                                    onClick={async () => {
-                                      if (confirm("Opravdu zrušit tuto manuální blokaci?")) {
-                                        try {
-                                          await api(`/events/${id}/blocks/${b.id}`, { method: "DELETE" });
-                                          toast.success("Blokace zrušena");
-                                          loadBlocks();
-                                        } catch (e: any) {
-                                          toast.error(e?.error?.message ?? "Chyba při rušení blokace.");
-                                        }
-                                      }
-                                    }}
+                                    onClick={() => void removeBlock(b)}
                                   >
                                     <X className="h-3 w-3" />
                                   </button>
@@ -1281,14 +1210,7 @@ export default function WarehouseEventDetailPage() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-purple-700 hover:text-purple-800 hover:bg-purple-50 -ml-2"
-                                onClick={() => {
-                                  setBlockModal({ inventoryItemId: r.inventory_item_id, name: r.name, maxQty: r.requested });
-                                  setBlockQty(String(r.requested));
-                                  const dt = new Date(event.pickupDatetime);
-                                  dt.setDate(dt.getDate() + 1); // Default +1 day
-                                  setBlockUntil(toDatetimeLocalValue(dt));
-                                  setBlockNote("");
-                                }}
+                                onClick={() => startBlock(r)}
                               >
                                 <Plus className="mr-1 h-3 w-3" /> Manuální blokace
                               </Button>
@@ -1306,81 +1228,12 @@ export default function WarehouseEventDetailPage() {
               ))}
             </div>
           )}
-          {digitalPackingActive && confirmedRows.length > 0 ? (
-            <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-                onClick={() => setShowConfirmedList((prev) => !prev)}
-              >
-                <div className="text-sm font-semibold text-slate-900">
-                  Vydáno ({confirmedRows.length})
-                </div>
-                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                  {showConfirmedList ? "Skrýt" : "Zobrazit"}
-                  <Icons.ChevronRight className={cn("h-4 w-4 transition-transform", showConfirmedList && "rotate-90")} />
-                </div>
-              </button>
-              {showConfirmedList ? (
-                <div className="space-y-2 border-t border-slate-200 px-4 py-3">
-                  {confirmedRows.map((r) => (
-                    <div
-                      key={r.inventory_item_id}
-                      className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-900">
-                          {r.name}
-                          <OffSiteBadge warehouseName={r.warehouseName} warehouseIsHome={r.warehouseIsHome} />
-                        </div>
-                        <div className="text-xs text-slate-600">
-                          {r.requested} {r.unit}
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => updateDigitalIssueState(r.inventory_item_id, "idle")}
-                      >
-                        Vrátit do seznamu
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {event.status === "SENT_TO_WAREHOUSE" && issueMode === "digital" ? (
-            <div className="mt-8 hidden rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 md:block">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">Finální potvrzení výdeje</div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    Až projdeš celý seznam výše, potvrď tady celé digitální vydání akce.
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs font-semibold">
-                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
-                    Potvrzeno: {digitalIssueSummary.confirmed}/{digitalIssueSummary.total}
-                  </span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
-                    K potvrzení: {digitalIssueSummary.remaining}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-4">
-                <Button full disabled={issueDisabled || !digitalIssueSummary.allConfirmed} onClick={() => setConfirmIssue(true)}>
-                  Potvrdit digitální vydání
-                </Button>
-              </div>
-            </div>
-          ) : null}
         </CardContent>
       </Card>
+      )}
 
       {event.status === "SENT_TO_WAREHOUSE" && issueMode ? (
-        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
+        <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
           <div className="mx-auto flex max-w-xl items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
@@ -1413,7 +1266,7 @@ export default function WarehouseEventDetailPage() {
             </div>
             <Button
               className="h-12 shrink-0 px-4"
-              disabled={issueDisabled || (issueMode === "digital" && !digitalIssueSummary.allConfirmed)}
+              disabled={issueDisabled || (issueMode === "digital" && (!digitalIssueSummary.allConfirmed || savingPacking.size > 0))}
               onClick={() => setConfirmIssue(true)}
             >
               <Icons.Check className="h-4 w-4" />
@@ -1424,7 +1277,7 @@ export default function WarehouseEventDetailPage() {
       ) : null}
 
       {event.status === "ISSUED" ? (
-        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-red-100 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
+        <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 border-t border-red-100 bg-white/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:hidden">
           <div className="mx-auto flex max-w-xl items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-900">Vrácení z akce</div>

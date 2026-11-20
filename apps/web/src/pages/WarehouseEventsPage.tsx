@@ -1,308 +1,322 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { api, getCurrentUser } from "../lib/api";
+import { useEffect, useState } from "react";
+import { ArrowRight, CalendarClock, PackageCheck, Play } from "lucide-react";
+import { Link } from "react-router-dom";
+import { api, getCurrentUser, type ApiError } from "../lib/api";
+import { cn } from "../lib/ui";
+import { managerLabel, statusBadgeClass, statusLabel } from "../lib/viewModel";
+import { startSSE } from "../lib/sse";
 import { Card, CardContent } from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import Button from "../components/ui/Button";
 import Skeleton from "../components/ui/Skeleton";
-import {
-  EVENT_SORT_OPTIONS,
-  EventSortMode,
-  groupEventsForList,
-  managerLabel,
-  statusBadgeClass,
-  statusLabel
-} from "../lib/viewModel";
-import EventFilters, { EventFiltersData } from "../components/EventFilters";
-import Select from "../components/ui/Select";
-import { Icons } from "../lib/icons";
-import { CreateEventButton } from "./EventsPage";
+import SegmentedControl from "../components/ui/SegmentedControl";
+import { CreateEventLink, type EventListRow } from "./EventsPage";
 
-type EventRow = {
-  id: string;
-  name: string;
-  location: string;
-  deliveryDatetime: string;
-  pickupDatetime: string;
-  status: string;
-  exportNeedsRevision: boolean;
-  hasUnseenChanges?: boolean;
-  chefConfirmedAt: string | null;
-  createdBy?: { id?: string; name?: string | null; email?: string };
-};
+const PERIODS = [
+  { value: "today", label: "Dnes" },
+  { value: "tomorrow", label: "Zítra" },
+  { value: "week", label: "Tento týden" },
+  { value: "all", label: "Vše" },
+] as const;
+type Period = (typeof PERIODS)[number]["value"];
+
+const LANES = [
+  { id: "waiting", label: "Čeká na vychystání", tone: "bg-white text-muted" },
+  { id: "packing", label: "Vychystává se", tone: "bg-indigo-50 text-indigo-700" },
+  { id: "issued", label: "Vydáno, na akci", tone: "bg-emerald-100 text-emerald-700" },
+  { id: "returning", label: "Vrací se", tone: "bg-amber-100 text-amber-800" },
+] as const;
+type Lane = (typeof LANES)[number]["id"];
+
+const schedule = new Intl.DateTimeFormat("cs-CZ", {
+  weekday: "short",
+  day: "numeric",
+  month: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function laneFor(event: EventListRow, now: Date): Lane | null {
+  if (event.status === "SENT_TO_WAREHOUSE") return event.packingProgress?.started ? "packing" : "waiting";
+  if (event.status === "ISSUED") {
+    if (event.packingProgress?.total) return "packing";
+    return new Date(event.pickupDatetime) <= now ? "returning" : "issued";
+  }
+  return null;
+}
+
+function inPeriod(event: EventListRow, lane: Lane | null, period: Period, now: Date) {
+  if (period === "all") return true;
+  const offset = period === "week" ? -((now.getDay() + 6) % 7) : Number(period === "tomorrow");
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + (period === "week" ? 7 : 1));
+  const delivery = new Date(event.deliveryDatetime);
+  const pickup = new Date(event.pickupDatetime);
+  if (lane === "returning" && period !== "tomorrow") return pickup < end;
+  if (lane === "issued") return delivery < end && pickup >= start;
+  if ((lane === "waiting" || lane === "packing") && period !== "tomorrow" && delivery < now) return true;
+  return delivery >= start && delivery < end;
+}
 
 export default function WarehouseEventsPage() {
-  const allStatuses = ["DRAFT", "READY_FOR_WAREHOUSE", "SENT_TO_WAREHOUSE", "ISSUED", "CANCELLED", "CLOSED"] as const;
-  const role = getCurrentUser()?.role ?? "";
-  const nav = useNavigate();
-  const [events, setEvents] = useState<EventRow[]>([]);
+  const canIssue = ["admin", "warehouse"].includes(getCurrentUser()?.role ?? "");
+  const [events, setEvents] = useState<EventListRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<EventFiltersData>({
-    year: new Date().getFullYear(),
-  });
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
-  const [sortMode, setSortMode] = useState<EventSortMode>("status");
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const buildParams = (status?: string) => {
-        const params = new URLSearchParams();
-        if (status) params.append("status", status);
-        if (filters.month) params.append("month", String(filters.month));
-        if (filters.year) params.append("year", String(filters.year));
-        if (filters.onlyMine) {
-          const user = getCurrentUser();
-          if (user?.id) params.append("created_by_id", user.id);
-        }
-        return params.toString();
-      };
-
-      if (filters.status) {
-        const res = await api<{ events: EventRow[] }>(`/events?${buildParams(filters.status)}`);
-        setEvents(res.events);
-      } else {
-        const results = await Promise.all(
-          allStatuses.map(async (status) => {
-            const res = await api<{ events: EventRow[] }>(`/events?${buildParams(status)}`);
-            return res.events;
-          })
-        );
-        const deduped = new Map<string, EventRow>();
-        for (const list of results) {
-          for (const event of list) {
-            if (!deduped.has(event.id)) deduped.set(event.id, event);
-          }
-        }
-        setEvents(Array.from(deduped.values()));
-      }
-    } catch (e: any) {
-      setError(e?.error?.message ?? "Nepodařilo se načíst akce.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [error, setError] = useState("");
+  const [period, setPeriod] = useState<Period>("week");
+  const [archive, setArchive] = useState(false);
 
   useEffect(() => {
-    load();
-  }, [filters]);
+    if (!canIssue) return;
+    let active = true;
+    let requestId = 0;
+    const load = async () => {
+      const id = ++requestId;
+      try {
+        const res = await api<{ events: EventListRow[] }>("/events?view=warehouse");
+        if (!active || id !== requestId) return;
+        setEvents(res.events);
+        setError("");
+      } catch (err) {
+        if (active && id === requestId) setError((err as ApiError)?.error?.message ?? "Nepodařilo se načíst výdej.");
+      } finally {
+        if (active && id === requestId) setLoading(false);
+      }
+    };
 
-  const groupedSections = useMemo(() => groupEventsForList(events, sortMode), [events, sortMode]);
+    void load();
+    const off = startSSE((event) => {
+      if (["event_status_changed", "export_created", "reservation_changed"].includes(event.type)) void load();
+    });
+    const interval = setInterval(load, 15_000);
+    return () => {
+      active = false;
+      off();
+      clearInterval(interval);
+    };
+  }, [canIssue]);
 
-  if (!["warehouse", "admin"].includes(role)) {
+  if (!canIssue)
     return (
       <Card>
-        <CardContent>
-          <div className="text-sm text-slate-700">Sekce Sklad je dostupná pouze pro sklad a administrátora.</div>
+        <CardContent className="text-sm text-muted">
+          Sekce Výdej je dostupná pouze pro sklad a administrátora.
         </CardContent>
       </Card>
     );
-  }
+
+  const now = new Date();
+  const entries = events
+    .map((event) => ({ event, lane: laneFor(event, now) }))
+    .filter(({ event, lane }) => inPeriod(event, lane, period, now));
+  const waiting = entries.filter(({ lane }) => lane === "waiting");
+  const packing = entries.filter(({ lane }) => lane === "packing");
+  const issued = entries.filter(({ lane }) => lane === "issued" || lane === "returning");
+  const problems = entries.filter(
+    ({ event, lane }) =>
+      lane &&
+      (event.exportNeedsRevision ||
+        event.hasUnseenChanges ||
+        (event.status === "SENT_TO_WAREHOUSE" && !event.chefConfirmedAt))
+  );
+  const other = entries.filter(({ lane }) => !lane).reverse();
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Sklad</h1>
-          <div className="text-sm text-slate-600">Akce připravené k výdeji nebo uzavření.</div>
+          <h1 className="page-title">Výdej</h1>
+          <p className="page-description">Akce k vychystání, výdeji a vrácení. Seřazeno podle času závozu.</p>
         </div>
-        <div className="flex flex-col gap-2 sm:items-end">
-          <CreateEventButton onCreated={(eventId) => nav(`/events/${eventId}`)} />
-          <EventFilters activeRole={role} filters={filters} onChange={setFilters} />
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-          <Button
-            size="sm"
-            variant={viewMode === "grid" ? "primary" : "secondary"}
-            onClick={() => setViewMode("grid")}
-            className="flex items-center justify-center gap-1"
-          >
-            <Icons.Grid className="h-4 w-4" /> Dlaždice
-          </Button>
-          <Button
-            size="sm"
-            variant={viewMode === "list" ? "primary" : "secondary"}
-            onClick={() => setViewMode("list")}
-            className="flex items-center justify-center gap-1"
-          >
-            <Icons.List className="h-4 w-4" /> Seznam
-          </Button>
-          <Select
-            className="col-span-2 sm:w-56"
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as EventSortMode)}
-            aria-label="Řazení akcí"
-          >
-            {EVENT_SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="text-xs text-gray-500 font-medium sm:text-right">
-          {events.length} {events.length === 1 ? 'akce' : events.length < 5 && events.length > 0 ? 'akce' : 'akcí'}
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl label="Období výdeje" options={PERIODS} value={period} onChange={setPeriod} />
+          <CreateEventLink fromWarehouse />
         </div>
       </div>
-
-      {error ? (
-        <Card>
-          <CardContent>
-            <div className="text-sm text-red-700">{error}</div>
-          </CardContent>
+      {error && (
+        <Card className="border-red-100 bg-red-50 p-4 text-sm text-red-700" role="alert">
+          {error}
         </Card>
-      ) : null}
-
-      {loading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 6 }).map((_, idx) => (
-            <Card key={idx}>
-              <CardContent>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="mt-2 h-3 w-1/2" />
-                  </div>
-                  <Skeleton className="h-7 w-24" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : events.length === 0 ? (
-        <Card>
-          <CardContent>
-            <div className="text-sm text-slate-600">Žádné akce k vyřízení.</div>
-          </CardContent>
-        </Card>
-      ) : viewMode === "grid" ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {groupedSections.map((section) => (
-            <Fragment key={section.status}>
-              <div className="col-span-full mt-2">
-                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  <span>{section.label}</span>
-                  <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
-                </div>
-                <div className="mt-2 border-t border-slate-100" />
-              </div>
-              {section.events.map((e) => {
-                const manager = managerLabel(e.createdBy);
-                return (
-                  <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-                    <Card className="h-full hover:shadow-md transition-shadow border-slate-200 group-hover:border-indigo-300">
-                      <CardContent className="p-5 flex flex-col h-full">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex flex-col gap-1">
-                            <Badge className={statusBadgeClass(e.status)}>
-                              {statusLabel(e.status)}
-                            </Badge>
-                            {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                              <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                                <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                              </span>
-                            ) : null}
-                            {e.hasUnseenChanges ? (
-                              <span className="text-[10px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full">
-                                Změna v akci
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        <h3 className="font-bold text-slate-900 text-lg mb-1 group-hover:text-indigo-700 transition-colors">{e.name}</h3>
-                        {manager ? (
-                          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-2">
-                            Manažer: {manager}
-                          </div>
-                        ) : null}
-
-                        <div className="text-sm text-slate-500 space-y-2 mt-2">
-                          <div className="flex items-center gap-2">
-                            <div className="text-slate-400"><Icons.MapPin /></div>
-                            <span className="truncate text-slate-700">{e.location}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="text-slate-400"><Icons.Calendar /></div>
-                            <span className="text-xs">
-                              {new Date(e.deliveryDatetime).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+      )}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <Metric
+          title="K vychystání"
+          count={waiting.length}
+          description={
+            waiting[0] ? `Nejbližší ${schedule.format(new Date(waiting[0].event.deliveryDatetime))}` : undefined
+          }
+          loading={loading}
+        />
+        <Metric
+          title="Rozpracováno"
+          count={packing.length}
+          description={
+            packing.length
+              ? `${packing.reduce((sum, { event }) => sum + (event.packingProgress?.confirmed ?? 0), 0)} vychystaných položek`
+              : undefined
+          }
+          color="text-indigo-700"
+          loading={loading}
+        />
+        <Metric title="Vydáno" count={issued.length} description="Čeká na návrat nebo uzavření" loading={loading} />
+        <Metric
+          title="K prověření"
+          count={problems.length}
+          description="Změny nebo čekání na kuchyň"
+          color="text-red-700"
+          loading={loading}
+        />
+      </div>
+      <div className="grid items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {LANES.map(({ id, label, tone }) => {
+          const cards = entries.filter(({ lane }) => lane === id);
+          return (
+            <section key={id} className="min-w-0 space-y-3 rounded-xl bg-[#eceff2] p-3" aria-label={label}>
+              <h2 className="flex items-center justify-between gap-2 px-1 text-sm font-semibold">
+                {label}
+                <Badge className={tone}>{cards.length}</Badge>
+              </h2>
+              {loading ? (
+                <Skeleton className="h-36 bg-white" />
+              ) : cards.length ? (
+                cards.map(({ event }) => <WarehouseCard key={event.id} event={event} lane={id} />)
+              ) : (
+                <p className="rounded-lg border border-dashed border-line p-3 text-xs text-muted">Žádné akce</p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+      <Card className="overflow-hidden">
+        <button
+          type="button"
+          aria-expanded={archive}
+          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold hover:bg-table"
+          onClick={() => setArchive(!archive)}
+        >
+          Ostatní akce <Badge>{other.length}</Badge>
+        </button>
+        {archive && (
+          <ul className="divide-y divide-line border-t border-line">
+            {other.length ? (
+              other.map(({ event }) => (
+                <li key={event.id}>
+                  <Link
+                    className="flex items-center justify-between gap-2 px-4 py-3 text-sm hover:bg-indigo-50"
+                    to={`/warehouse/${event.id}`}
+                  >
+                    <span className="min-w-0 wrap-break-word">
+                      {event.name}{" "}
+                      <span className="text-xs text-muted">{schedule.format(new Date(event.deliveryDatetime))}</span>
+                    </span>
+                    <Badge className={statusBadgeClass(event.status)}>{statusLabel(event.status)}</Badge>
                   </Link>
-                );
-              })}
-            </Fragment>
-          ))}
-        </div>
+                </li>
+              ))
+            ) : (
+              <li className="px-4 py-3 text-sm text-muted">Žádné další akce v období.</li>
+            )}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function Metric({
+  title,
+  count,
+  description,
+  color,
+  loading,
+}: {
+  title: string;
+  count: number;
+  description?: string;
+  color?: string;
+  loading: boolean;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="text-[13px] font-medium text-muted">{title}</div>
+      {loading ? (
+        <Skeleton className="mt-1 h-7 w-16" />
       ) : (
-        <div className="space-y-2">
-          {groupedSections.map((section) => (
-            <div key={section.status}>
-              <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>{section.label}</span>
-                <span>{section.events.length} {section.events.length === 1 ? "akce" : "akcí"}</span>
-              </div>
-              <div className="space-y-2">
-                {section.events.map((e) => {
-                  const manager = managerLabel(e.createdBy);
-                  return (
-                    <Link key={e.id} to={`/warehouse/${e.id}`} className="block group">
-                      <Card className="hover:shadow-sm transition-shadow border-slate-200 group-hover:border-indigo-300">
-                        <CardContent className="p-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
-                                {e.name}
-                              </h3>
-                              <Badge className={`scale-90 ${statusBadgeClass(e.status)}`}>
-                                {statusLabel(e.status)}
-                              </Badge>
-                              {e.status === "SENT_TO_WAREHOUSE" && !e.chefConfirmedAt ? (
-                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1">
-                                  <Icons.Clock className="h-3 w-3" /> Čeká na kuchyň
-                                </span>
-                              ) : null}
-                              {e.hasUnseenChanges ? (
-                                <span className="text-[10px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full">
-                                  Změna v akci
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-                              <div className="flex items-center gap-1">
-                                <Icons.MapPin className="h-3 w-3" /> {e.location}
-                              </div>
-                              <div className="flex items-center gap-1 font-medium">
-                                <Icons.Calendar className="h-3 w-3" /> {new Date(e.deliveryDatetime).toLocaleString()}
-                              </div>
-                            </div>
-                            {manager ? (
-                              <div className="mt-1 text-xs text-slate-500">
-                                Manažer: <span className="font-medium text-slate-700">{manager}</span>
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="mt-3 flex justify-end">
-                            <Icons.ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-indigo-500" />
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+        <div className={cn("mt-1 text-[23px] leading-8 font-bold", color)}>
+          {count} {count === 1 ? "akce" : count >= 2 && count < 5 ? "akce" : "akcí"}
         </div>
       )}
-    </div>
+      {description && <div className="mt-1 text-xs text-muted">{description}</div>}
+    </Card>
+  );
+}
+
+function WarehouseCard({ event, lane }: { event: EventListRow; lane: Lane }) {
+  const progress = event.packingProgress;
+  const needsKitchen = event.status === "SENT_TO_WAREHOUSE" && !event.chefConfirmedAt;
+  const hasChange = event.exportNeedsRevision || event.hasUnseenChanges;
+  const href = `/warehouse/${event.id}`;
+  const action =
+    lane === "waiting"
+      ? "Začít vychystávat"
+      : lane === "packing"
+        ? "Pokračovat"
+        : lane === "returning"
+          ? "Přijmout zpět"
+          : null;
+  const Icon = lane === "waiting" ? Play : lane === "returning" ? PackageCheck : ArrowRight;
+  return (
+    <Card className={cn("space-y-2.5 p-3.5", needsKitchen && "border-red-300")}>
+      <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs font-semibold text-muted">
+        <time dateTime={event.deliveryDatetime} className="inline-flex items-center gap-1.5 first-letter:uppercase">
+          <CalendarClock size={14} />
+          {schedule.format(new Date(event.deliveryDatetime))}
+        </time>
+        {needsKitchen && <Badge tone="danger">Čeká na kuchyň</Badge>}
+        {hasChange && <Badge tone="warn">Změna v akci</Badge>}
+      </div>
+      <div>
+        <Link to={href} className="block text-sm font-semibold wrap-break-word hover:text-indigo-700">
+          {event.name}
+        </Link>
+        <p className="mt-0.5 text-xs text-muted">
+          {[managerLabel(event.createdBy), event.location].filter(Boolean).join(" · ")}
+        </p>
+      </div>
+      {progress && progress.total > 0 && (
+        <div>
+          <div className="mb-1 flex items-center justify-between text-xs text-muted">
+            <span>Vychystáno</span>
+            <strong className="text-ink">
+              {progress.confirmed} / {progress.total}
+            </strong>
+          </div>
+          <progress
+            className="block h-1.5 w-full overflow-hidden rounded-full bg-canvas accent-indigo-600 [&::-webkit-progress-bar]:bg-canvas [&::-webkit-progress-value]:bg-indigo-600"
+            value={progress.confirmed}
+            max={progress.total}
+            aria-label="Vychystáno"
+          />
+        </div>
+      )}
+      {lane === "returning" && (
+        <div className="text-xs text-muted">Svoz {schedule.format(new Date(event.pickupDatetime))}</div>
+      )}
+      {action && (
+        <Link
+          to={lane === "waiting" || lane === "packing" ? href + "?packing=1" : href}
+          className={cn(
+            "flex min-h-9 items-center justify-center gap-2 rounded-lg px-2 text-center text-[13px] font-semibold",
+            lane === "waiting"
+              ? "bg-ink text-white hover:bg-slate-700"
+              : lane === "packing"
+                ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+          )}
+        >
+          <Icon size={15} />
+          {action}
+        </Link>
+      )}
+    </Card>
   );
 }

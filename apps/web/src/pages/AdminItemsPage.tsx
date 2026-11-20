@@ -253,7 +253,7 @@ export default function AdminItemsPage() {
       </div>
 
       {canManageItems ? (
-      <Card>
+      <Card id="new-item" className="scroll-mt-20">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold">

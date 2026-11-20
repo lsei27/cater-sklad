@@ -1,228 +1,96 @@
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useMemo } from "react";
+import { ArrowLeftRight, Calendar, LogOut, Package, Settings, Truck } from "lucide-react";
+import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { getCurrentUser, getToken, hasStockAccess, setCurrentUser, setToken } from "../lib/api";
 import { cn } from "../lib/ui";
-import { Icons } from "../lib/icons";
 import { roleLabel } from "../lib/viewModel";
 import toast, { Toaster } from "react-hot-toast";
 
 export default function AppShell() {
-  const nav = useNavigate();
-  const loc = useLocation();
-  const token = getToken();
+  const navigate = useNavigate();
   const user = getCurrentUser();
 
-  useEffect(() => {
-    if (!token && loc.pathname !== "/login") nav("/login");
-  }, [token, loc.pathname, nav]);
+  if (!getToken()) return <Navigate to="/login" replace />;
 
-  // Prevent flash of unauthenticated content
-  if (!token && loc.pathname !== "/login") return null;
-
-  const role = user?.role ?? "";
-  // Sklad ma sekci Akce (planovani) i Vydej (baleni a uzavirani) jako dve
-  // samostatne polozky, aby sel kazdy otevrit ve vlastnim okne. Driv "Akce"
-  // skladnikovi vedly na /warehouse a na /events se nedostal vubec.
-  const eventsHref = "/events";
-  const stockHref = "/inventory";
-  const canIssue = role === "warehouse" || role === "admin";
-  const canTransfer = hasStockAccess(user);
-  const isSettingsAllowed = true;
+  const links = [
+    { to: "/events", label: "Akce", icon: Calendar, visible: true },
+    { to: "/warehouse", label: "Výdej", icon: Truck, visible: user?.role === "warehouse" || user?.role === "admin" },
+    { to: "/inventory", label: "Sklad", icon: Package, visible: true, end: true },
+    { to: "/inventory/transfers", label: "Přesuny", icon: ArrowLeftRight, visible: hasStockAccess(user) },
+    { to: "/settings", label: "Nastavení", icon: Settings, visible: true },
+  ].filter((link) => link.visible);
 
   const handleLogout = () => {
     setToken(null);
     setCurrentUser(null);
     toast.success("Odhlášeno");
-    nav("/login");
+    navigate("/login");
   };
 
+  const navigation = (mobile: boolean) =>
+    links.map(({ to, label, icon: Icon, end }) => (
+      <NavLink
+        key={to}
+        to={to}
+        end={end}
+        className={({ isActive }) =>
+          cn(
+            "flex items-center justify-center rounded-lg font-medium transition-colors",
+            mobile ? "min-h-12 flex-1 flex-col gap-1 text-[10px]" : "gap-2 px-3 py-2 text-sm",
+            isActive ? "bg-indigo-50 text-indigo-700" : "text-muted hover:bg-canvas hover:text-ink"
+          )
+        }
+      >
+        <Icon size={16} aria-hidden="true" />
+        {label}
+      </NavLink>
+    ));
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <Toaster position="top-right" />
-
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <img
-                src="https://cdn.prod.website-files.com/683548bebd66499a4ba7c0e5/6847d84467a509304f4b94a7_Favicon.png"
-                alt="IN CATERING sklad"
-                className="h-6 w-6"
-              />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none cursor-pointer" onClick={() => nav("/")}>
-                IN CATERING sklad
-              </h1>
-              <div className="flex items-center gap-2 mt-0.5">
-                <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700`}>
-                  <div className={`w-1.5 h-1.5 rounded-full bg-green-500`}></div>
-                  Online
-                </div>
-              </div>
-            </div>
-
-            {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center gap-1 ml-6">
-              <Link
-                to={eventsHref}
-                className={cn(
-                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                  loc.pathname.startsWith("/events")
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                )}
-              >
-                <Icons.Calendar />
-                Akce
-              </Link>
-              {canIssue && (
-                <Link
-                  to={"/warehouse"}
-                  className={cn(
-                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                    loc.pathname.startsWith("/warehouse")
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                  )}
-                >
-                  <Icons.Truck />
-                  Výdej
-                </Link>
-              )}
-              <Link
-                to={stockHref}
-                className={cn(
-                  "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                  loc.pathname.startsWith("/inventory") && !loc.pathname.startsWith("/inventory/transfers")
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                )}
-              >
-                <Icons.Box />
-                Sklad
-              </Link>
-              {canTransfer && (
-                <Link
-                  to={"/inventory/transfers"}
-                  className={cn(
-                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                    loc.pathname.startsWith("/inventory/transfers")
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                  )}
-                >
-                  <Icons.History />
-                  Přesuny
-                </Link>
-              )}
-              {isSettingsAllowed && (
-                <Link
-                  to={"/settings"}
-                  className={cn(
-                    "px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                    loc.pathname.startsWith("/settings")
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                  )}
-                >
-                  {/* We can use Icons.Edit as a placeholder for Settings or add a Settings icon later if needed. Using Edit for now as it's generic enough or just text. 
-                             Actually, let's use Icons.User for now or just text. */}
-                  <span>Nastavení</span>
-                </Link>
-              )}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-4">
+    <div className="flex min-h-screen flex-col bg-canvas">
+      <Toaster
+        position="bottom-left"
+        containerStyle={{ bottom: "calc(4.25rem + env(safe-area-inset-bottom))" }}
+        toastOptions={{ success: { duration: 2400 } }}
+      />
+      <header className="sticky top-0 z-20 border-b border-line bg-white">
+        <div className="mx-auto flex h-[59px] max-w-[1800px] items-center gap-3 px-4 lg:gap-8 lg:px-6">
+          <Link to="/" className="flex shrink-0 items-center gap-2.5 text-sm font-bold text-ink sm:text-base">
+            <span className="grid size-7 place-items-center rounded-lg bg-indigo-600 text-white">
+              <Package size={16} aria-hidden="true" />
+            </span>
+            IN CATERING sklad
+          </Link>
+          <nav aria-label="Hlavní navigace" className="hidden items-center gap-1 md:flex">
+            {navigation(false)}
+          </nav>
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             {user && (
-              <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-100">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
-                  {user.email.substring(0, 2).toUpperCase()}
-                </div>
-                <div className="hidden md:block">
-                  <div className="text-sm font-medium text-gray-900 leading-none">{user.email}</div>
-                  <div className="text-[10px] text-gray-500 font-bold uppercase mt-1">
-                    {roleLabel(user.role)}
-                  </div>
-                </div>
-              </div>
+              <span
+                title={user.email}
+                className="hidden truncate rounded-full bg-canvas px-2.5 py-1 text-xs text-muted lg:block"
+              >
+                {roleLabel(user.role)}
+              </span>
             )}
             <button
               onClick={handleLogout}
-              className="p-2 text-gray-500 hover:text-red-600 transition-colors"
+              className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-red-50 hover:text-red-700"
+              aria-label="Odhlásit se"
               title="Odhlásit se"
             >
-              <Icons.Logout />
+              <LogOut size={16} aria-hidden="true" />
             </button>
           </div>
         </div>
       </header>
-
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 pb-24 md:py-8 md:pb-8">
+      <main className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col px-4 pt-6 pb-24 sm:px-6 md:pb-8 lg:px-8">
         <Outlet />
       </main>
-
-      {/* Mobile Navigation Bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-gray-200 bg-white md:hidden pb-safe">
-        <div className="flex justify-around items-center h-16">
-          <Link
-            to={eventsHref}
-            className={cn(
-              "flex flex-col items-center justify-center w-full h-full space-y-1",
-              loc.pathname.startsWith("/events") ? "text-indigo-600" : "text-gray-500"
-            )}
-          >
-            <Icons.Calendar />
-            <span className="text-[10px] font-medium">Akce</span>
-          </Link>
-          {canIssue && (
-            <Link
-              to={"/warehouse"}
-              className={cn(
-                "flex flex-col items-center justify-center w-full h-full space-y-1",
-                loc.pathname.startsWith("/warehouse") ? "text-indigo-600" : "text-gray-500"
-              )}
-            >
-              <Icons.Truck />
-              <span className="text-[10px] font-medium">Výdej</span>
-            </Link>
-          )}
-          <Link
-            to={stockHref}
-            className={cn(
-              "flex flex-col items-center justify-center w-full h-full space-y-1",
-              loc.pathname.startsWith("/inventory") ? "text-indigo-600" : "text-gray-500"
-            )}
-          >
-            <Icons.Box />
-            <span className="text-[10px] font-medium">Sklad</span>
-          </Link>
-          {canTransfer && (
-            <Link
-              to={"/inventory/transfers"}
-              className={cn(
-                "flex flex-col items-center justify-center w-full h-full space-y-1",
-                loc.pathname.startsWith("/inventory/transfers") ? "text-indigo-600" : "text-gray-500"
-              )}
-            >
-              <Icons.History />
-              <span className="text-[10px] font-medium">Přesuny</span>
-            </Link>
-          )}
-          {isSettingsAllowed && (
-            <Link
-              to={"/settings"}
-              className={cn(
-                "flex flex-col items-center justify-center w-full h-full space-y-1",
-                loc.pathname.startsWith("/settings") ? "text-indigo-600" : "text-gray-500"
-              )}
-            >
-              <span className="text-lg">⚙</span>
-              <span className="text-[10px] font-medium">Nastavení</span>
-            </Link>
-          )}
-        </div>
+      <nav
+        aria-label="Hlavní navigace"
+        className="fixed inset-x-0 bottom-0 z-20 flex gap-1 border-t border-line bg-white px-2 pt-1 pb-[calc(.25rem+env(safe-area-inset-bottom))] md:hidden"
+      >
+        {navigation(true)}
       </nav>
     </div>
   );
