@@ -5,6 +5,7 @@ import { api, getCurrentUser } from "../lib/api";
 import { humanError } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { dayRangeLabel, eventDayDateLabel, type DayRange } from "../lib/eventDays";
+import { FavoriteFilter, useInventoryFavorites } from "./InventoryFavorites";
 import Input from "./ui/Input";
 import Modal from "./ui/Modal";
 import Skeleton from "./ui/Skeleton";
@@ -117,6 +118,7 @@ export default function QuickAddItemsModal(props: {
   role: string;
   existingItems: QuickAddExistingItem[];
   range: DayRange;
+  initialFavoritesOnly: boolean;
   onDone: () => Promise<void> | void;
 }) {
   const [items, setItems] = useState<QuickInventoryItem[]>([]);
@@ -125,6 +127,8 @@ export default function QuickAddItemsModal(props: {
   const [search, setSearch] = useState("");
   const [parentId, setParentId] = useState("");
   const [filledOnly, setFilledOnly] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const favorites = useInventoryFavorites();
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -140,6 +144,10 @@ export default function QuickAddItemsModal(props: {
     () => new Map(props.existingItems.map((item) => [item.inventoryItemId, item])),
     [props.existingItems]
   );
+
+  useEffect(() => {
+    if (props.open) setFavoritesOnly(props.initialFavoritesOnly);
+  }, [props.open, props.initialFavoritesOnly]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -211,6 +219,7 @@ export default function QuickAddItemsModal(props: {
   const visibleItems = useMemo(() => {
     const tokens = normalizeSearchText(search.trim()).split(/\s+/).filter(Boolean);
     return items.filter((item) => {
+      if (favoritesOnly && !favorites?.ids?.has(item.itemId)) return false;
       if (parentId && item.category.parent.id !== parentId) return false;
       if (filledOnly && !quantities[item.itemId]?.trim() && activeItemId !== item.itemId) return false;
       if (tokens.length === 0) return true;
@@ -218,7 +227,7 @@ export default function QuickAddItemsModal(props: {
       const haystack = normalizeSearchText(`${item.name} ${categoryLabel} ${item.sku ?? ""}`);
       return tokens.every((token) => haystack.includes(token));
     });
-  }, [items, search, parentId, filledOnly, quantities, activeItemId]);
+  }, [items, search, parentId, filledOnly, favoritesOnly, favorites?.ids, quantities, activeItemId]);
 
   const groups = useMemo(() => {
     const groupsByKey = new Map<string, ItemGroup>();
@@ -352,6 +361,7 @@ export default function QuickAddItemsModal(props: {
         setSearch("");
         setParentId("");
         setFilledOnly(false);
+        setFavoritesOnly(false);
         window.requestAnimationFrame(() => inputRefs.current.get(itemId)?.focus());
       }
       toast.error(humanError(error));
@@ -411,6 +421,7 @@ export default function QuickAddItemsModal(props: {
                 setSearch("");
                 setParentId("");
                 setFilledOnly(true);
+                setFavoritesOnly(false);
               }}
             >
               Zobrazit vyplněné <ChevronRight size={14} />
@@ -439,6 +450,7 @@ export default function QuickAddItemsModal(props: {
             placeholder="Hledat název nebo kategorii…"
           />
         </label>
+        <FavoriteFilter selected={favoritesOnly} onChange={setFavoritesOnly} />
         <div role="group" aria-label="Kategorie položek" className="order-last flex min-w-0 basis-full gap-1.5 overflow-x-auto py-0.5 xl:order-none xl:flex-1">
           {[{ ref: { id: "", name: "Vše" }, count: items.length }, ...parentCategories].map(({ ref, count }) => (
             <button
@@ -483,7 +495,7 @@ export default function QuickAddItemsModal(props: {
           </div>
         ) : groups.length === 0 ? (
           <div className="rounded-xl border border-line bg-white p-6 text-center text-sm text-muted">
-            Žádné položky pro vybrané filtry.
+            {favoritesOnly && favorites?.ids?.size === 0 ? "Zatím nemáte žádné oblíbené položky." : "Žádné položky pro vybrané filtry."}
           </div>
         ) : (
           <div className="columns-1 gap-4 md:columns-2 lg:columns-3 xl:columns-4">

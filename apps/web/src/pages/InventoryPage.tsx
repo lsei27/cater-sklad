@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Barcode, CalendarDays, ImageOff, LayoutGrid, List, Search, TriangleAlert } from "lucide-react";
 import CategorySidebar, { type CatalogCategory } from "../components/CategorySidebar";
+import { FavoriteButton, FavoritesLoadError, useInventoryFavorites } from "../components/InventoryFavorites";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import { api, apiUrl, getCurrentUser, hasStockAccess } from "../lib/api";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/datetime";
@@ -29,9 +30,10 @@ type EventRow = {
   exportNeedsRevision: boolean;
 };
 
-export default function InventoryPage() {
+export default function InventoryPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const nav = useNavigate();
   const user = getCurrentUser();
+  const favorites = useInventoryFavorites();
   const role = user?.role ?? "";
   const canEdit = role === "admin" || role === "warehouse";
   const canPrint = role === "admin" || role === "warehouse";
@@ -159,9 +161,10 @@ export default function InventoryPage() {
     );
   }, [parents, parentId]);
 
-  const warehouseItems = useMemo(() => (
-    warehouseId ? items.filter((item) => (warehouseStocks[item.itemId]?.[warehouseId] ?? 0) !== 0) : items
-  ), [items, warehouseId, warehouseStocks]);
+  const warehouseItems = useMemo(() => items.filter((item) =>
+    (!favoritesOnly || favorites?.ids?.has(item.itemId)) &&
+    (!warehouseId || (warehouseStocks[item.itemId]?.[warehouseId] ?? 0) !== 0)
+  ), [items, favoritesOnly, favorites?.ids, warehouseId, warehouseStocks]);
 
   const stockFilters = [
     { id: "negative", label: "v záporném stavu", icon: TriangleAlert, match: (item: { itemId: string; stock?: { total: number } }) => {
@@ -210,22 +213,32 @@ export default function InventoryPage() {
 
   const selectedParent = parents.find((category) => category.id === parentId);
   const selectedCategory = subcats.find((category) => category.id === categoryId);
+  const categoryDescription = [selectedParent?.name, selectedCategory?.name].filter(Boolean).join(" › ") || "Přehled dostupnosti a zásob";
   const chooseParent = (value: string) => {
     setParentId(value);
     setCategoryId("");
   };
 
   return (
-    <div className={cn("-mx-4 -mt-6 grid flex-1 items-start sm:-mx-6 lg:-mx-8 lg:grid-cols-[190px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)]", detailItem && "xl:grid-cols-[240px_minmax(0,1fr)_minmax(305px,28%)]")}>
-      <aside className="hidden min-h-full border-r border-line bg-white p-4 lg:block">
-        <CategorySidebar categories={parents} parentId={parentId} categoryId={categoryId} onParent={chooseParent} onCategory={setCategoryId} />
-      </aside>
+    <div className={cn(
+      "-mx-4 -mt-6 grid flex-1 items-start sm:-mx-6 lg:-mx-8",
+      !favoritesOnly && "lg:grid-cols-[190px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)]",
+      detailItem && (favoritesOnly ? "xl:grid-cols-[minmax(0,1fr)_minmax(305px,28%)]" : "xl:grid-cols-[240px_minmax(0,1fr)_minmax(305px,28%)]")
+    )}>
+      {!favoritesOnly && (
+        <aside className="hidden min-h-full border-r border-line bg-white p-4 lg:block">
+          <CategorySidebar categories={parents} parentId={parentId} categoryId={categoryId} onParent={chooseParent} onCategory={setCategoryId} />
+        </aside>
+      )}
       <section className="min-w-0 space-y-4 px-4 py-6 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="page-title">Sklad</h1>
-            <p className="page-description">{[selectedParent?.name, selectedCategory?.name].filter(Boolean).join(" › ") || "Přehled dostupnosti a zásob"} · {visibleItems.length} položek</p>
+            <h1 className="page-title">{favoritesOnly ? "Oblíbené položky" : "Sklad"}</h1>
+            {(!favoritesOnly || favorites?.ids) && (
+              <p className="page-description">{!favoritesOnly && `${categoryDescription} · `}{visibleItems.length} položek</p>
+            )}
           </div>
+          {favoritesOnly && <Link to="/inventory" className="text-sm font-medium text-indigo-700 hover:underline">Přejít do skladu</Link>}
           {canEdit && <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => nav("/settings/items?import=true")}><Icons.Upload /> Import</Button>
             <Button onClick={() => nav("/settings/items#new-item")}><Icons.Plus className="size-4" /> Nová položka</Button>
@@ -263,7 +276,7 @@ export default function InventoryPage() {
             { value: "list", label: <><List size={16} /><span className="sr-only">Seznam</span></> },
           ]} />
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
+        {!favoritesOnly && <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
           <Select aria-label="Hlavní kategorie" value={parentId} onChange={(event) => chooseParent(event.target.value)}>
             <option value="">Všechny kategorie</option>
             {parents.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
@@ -272,7 +285,9 @@ export default function InventoryPage() {
             <option value="">Všechny podkategorie</option>
             {subcats.map((category) => <option key={category.id} value={category.id}>{parentId ? category.name : `${category.parentName} / ${category.name}`}</option>)}
           </Select>
-        </div>
+        </div>}
+
+        <FavoritesLoadError />
 
       {error ? (
         <Card className="bg-red-50 border-red-100">
@@ -280,7 +295,7 @@ export default function InventoryPage() {
         </Card>
       ) : null}
 
-      {loading ? (
+      {favoritesOnly && favorites?.loadFailed ? null : loading || (favoritesOnly && !favorites?.ids) ? (
         <div className={cn(view === "tile" ? "grid grid-cols-2 gap-4 md:grid-cols-4" : "space-y-2")}>
           {Array.from({ length: 8 }).map((_, idx) =>
             view === "tile" ? (
@@ -306,14 +321,16 @@ export default function InventoryPage() {
         </div>
       ) : visibleItems.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">
-          Žádné položky neodpovídají filtrům.
+          {favoritesOnly && !search.trim() && !warehouseId && !error
+            ? "Zatím tu nemáte žádné oblíbené položky. Ve skladu je označíte hvězdičkou."
+            : "Žádné položky neodpovídají filtrům."}
         </div>
       ) : view === "tile" ? (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
           {visibleItems.map((i) => {
             const tone = stockTone(i.stock.available);
             return (
-              <Card key={i.itemId} className="overflow-hidden group hover:shadow-md transition-shadow border-gray-200 hover:border-indigo-300">
+              <Card key={i.itemId} className="relative overflow-hidden group hover:shadow-md transition-shadow border-gray-200 hover:border-indigo-300">
                 <button
                   onClick={() => setDetailItem(i)}
                   className="block w-full aspect-[4/3] overflow-hidden bg-white relative border-b border-gray-100 text-left"
@@ -332,6 +349,7 @@ export default function InventoryPage() {
                     </Badge>
                   </div>
                 </button>
+                <FavoriteButton itemId={i.itemId} itemName={i.name} className="absolute top-2 left-2 border border-line bg-white hover:bg-canvas" />
                 <CardContent className="p-3">
                   <button
                     onClick={() => setDetailItem(i)}
@@ -407,15 +425,18 @@ export default function InventoryPage() {
               {visibleItems.map((item) => (
                 <tr key={item.itemId} className={cn("hover:bg-table", detailItem?.itemId === item.itemId && "bg-indigo-50 hover:bg-indigo-50")}>
                   <td className="min-w-36 px-3 py-2">
-                    <button type="button" onClick={() => setDetailItem(item)} className="flex w-full items-center gap-2.5 text-left hover:text-indigo-700">
-                      <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-[#eceff2] text-slate-400">
-                        {item.imageUrl ? <img loading="lazy" className="size-full object-cover" src={apiUrl(item.imageUrl)} alt="" /> : <Icons.Image className="size-4" />}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[13px] font-medium">{item.name}</span>
-                        <span className="block font-mono text-xs text-muted">{item.sku || item.unit}</span>
-                      </span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setDetailItem(item)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left hover:text-indigo-700">
+                        <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-[#eceff2] text-slate-400">
+                          {item.imageUrl ? <img loading="lazy" className="size-full object-cover" src={apiUrl(item.imageUrl)} alt="" /> : <Icons.Image className="size-4" />}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-medium">{item.name}</span>
+                          <span className="block font-mono text-xs text-muted">{item.sku || item.unit}</span>
+                        </span>
+                      </button>
+                      <FavoriteButton itemId={item.itemId} itemName={item.name} />
+                    </div>
                   </td>
                   {warehouses.map((warehouse) => {
                     const quantity = warehouseStocks[item.itemId]?.[warehouse.id] ?? 0;

@@ -60,6 +60,7 @@ model User {
   auditEntries        AuditLog[]
   createdReservations EventReservation[]
   packingUpdates      EventPacking[]
+  inventoryFavorites  InventoryFavorite[]
 
   @@map("users")
 }
@@ -133,10 +134,23 @@ model InventoryItem {
   crossSellTargets CrossSellLink[]    @relation("cross_sell_target")
   warehouseBlocks  WarehouseBlock[]
   packing          EventPacking[]
+  favorites        InventoryFavorite[]
 
   @@index([categoryId])
   @@index([warehouseId])
   @@map("inventory_items")
+}
+
+model InventoryFavorite {
+  userId          String @map("user_id") @db.Uuid
+  inventoryItemId String @map("inventory_item_id") @db.Uuid
+
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@id([userId, inventoryItemId])
+  @@index([inventoryItemId])
+  @@map("inventory_favorites")
 }
 
 model InventoryLedger {

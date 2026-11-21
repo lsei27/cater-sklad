@@ -1,20 +1,37 @@
-import { ArrowLeftRight, Calendar, LogOut, Package, Settings, Truck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeftRight, Calendar, LogOut, Package, Settings, Star, Truck } from "lucide-react";
 import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { getCurrentUser, getToken, hasStockAccess, setCurrentUser, setToken } from "../lib/api";
 import { cn } from "../lib/ui";
 import { roleLabel } from "../lib/viewModel";
 import toast, { Toaster } from "react-hot-toast";
+import { InventoryFavoritesProvider } from "./InventoryFavorites";
+
+function readSession() {
+  return { token: getToken(), user: getCurrentUser() };
+}
 
 export default function AppShell() {
   const navigate = useNavigate();
-  const user = getCurrentUser();
+  const [{ token, user }, setSession] = useState(readSession);
 
-  if (!getToken()) return <Navigate to="/login" replace />;
+  useEffect(() => {
+    const syncSession = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === "token" || event.key === "user" || event.key === null)) {
+        setSession(readSession());
+      }
+    };
+    window.addEventListener("storage", syncSession);
+    return () => window.removeEventListener("storage", syncSession);
+  }, []);
+
+  if (!token) return <Navigate to="/login" replace />;
 
   const links = [
     { to: "/events", label: "Akce", icon: Calendar, visible: true },
     { to: "/warehouse", label: "Výdej", icon: Truck, visible: user?.role === "warehouse" || user?.role === "admin" },
     { to: "/inventory", label: "Sklad", icon: Package, visible: true, end: true },
+    { to: "/favorites", label: "Oblíbené", icon: Star, visible: user?.role === "event_manager" },
     { to: "/inventory/transfers", label: "Přesuny", icon: ArrowLeftRight, visible: hasStockAccess(user) },
     { to: "/settings", label: "Nastavení", icon: Settings, visible: true },
   ].filter((link) => link.visible);
@@ -84,7 +101,9 @@ export default function AppShell() {
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col px-4 pt-6 pb-24 sm:px-6 md:pb-8 lg:px-8">
-        <Outlet />
+        {user?.role === "event_manager" ? (
+          <InventoryFavoritesProvider key={user.id} token={token}><Outlet /></InventoryFavoritesProvider>
+        ) : <Outlet />}
       </main>
       <nav
         aria-label="Hlavní navigace"

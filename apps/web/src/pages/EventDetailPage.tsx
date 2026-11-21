@@ -13,6 +13,7 @@ import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Modal from "../components/ui/Modal";
 import EventLoadError from "../components/EventLoadError";
 import CategorySidebar, { type CatalogCategory } from "../components/CategorySidebar";
+import { FavoriteButton, FavoriteFilter, useInventoryFavorites } from "../components/InventoryFavorites";
 import QuantityStepper from "../components/ui/QuantityStepper";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import QuickAddItemsModal from "../components/QuickAddItemsModal";
@@ -806,6 +807,8 @@ function AddItemsPanel(props: {
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const favorites = useInventoryFavorites();
   const [catalogSort, setCatalogSort] = useState<"category" | "name" | "available">("category");
   const [catalogLimit, setCatalogLimit] = useState(50);
   const [catalogError, setCatalogError] = useState("");
@@ -837,7 +840,7 @@ function AddItemsPanel(props: {
 
   useEffect(() => {
     setCatalogLimit(50);
-  }, [props.open, search, parentId, categoryId, rangeKey, onlyAvailable, catalogSort]);
+  }, [props.open, search, parentId, categoryId, rangeKey, onlyAvailable, favoritesOnly, catalogSort]);
 
   const subcats = useMemo(() => {
     if (parentId) {
@@ -868,6 +871,7 @@ function AddItemsPanel(props: {
     if (!props.open) {
       setCategoriesReady(false);
       setQuickAddOpen(false);
+      setFavoritesOnly(false);
       return;
     }
     initRef.current = false;
@@ -1077,6 +1081,7 @@ function AddItemsPanel(props: {
     activeGroups.set(category, group);
   }
   const catalogItems = items
+    .filter((item) => !favoritesOnly || favorites?.ids?.has(item.itemId ?? item.id))
     .filter((item) => !onlyAvailable || (availability.get(item.itemId ?? item.id)?.available ?? 0) > 0)
     .sort((a, b) => {
       if (catalogSort === "available") return (availability.get(b.itemId ?? b.id)?.available ?? 0) - (availability.get(a.itemId ?? a.id)?.available ?? 0);
@@ -1106,6 +1111,7 @@ function AddItemsPanel(props: {
                 <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
                 <Input className="pl-9" aria-label="Hledat v katalogu" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Hledat název, kód nebo štítek…" />
               </label>
+              <FavoriteFilter selected={favoritesOnly} onChange={setFavoritesOnly} />
               <label className="flex h-10 items-center gap-1.5 rounded-[9px] border border-line bg-white px-2.5 text-sm"><input type="checkbox" checked={onlyAvailable} onChange={(event) => setOnlyAvailable(event.target.checked)} /> Jen dostupné</label>
               <Select className="w-auto max-w-44" aria-label="Řazení katalogu" value={catalogSort} onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}>
                 <option value="category">Podle kategorie</option><option value="name">Podle názvu</option><option value="available">Podle dostupnosti</option>
@@ -1157,7 +1163,7 @@ function AddItemsPanel(props: {
           ) : null}
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div><h3 className="text-lg font-bold">{[selectedParent?.name, selectedSub?.name].filter(Boolean).join(" › ") || "Katalog"}</h3><p className="text-xs text-muted">{catalogItems.length} položek · Dostupnost pro vybraný termín</p></div>
+              <div><h3 className="text-lg font-bold">{favoritesOnly ? "Oblíbené položky" : [selectedParent?.name, selectedSub?.name].filter(Boolean).join(" › ") || "Katalog"}</h3><p className="text-xs text-muted">{catalogItems.length} položek · Dostupnost pro vybraný termín</p></div>
               {!isChef && <Button size="sm" variant="secondary" onClick={() => setQuickAddOpen(true)}>Rychlé zadání</Button>}
             </div>
             <div className={cn(view === "grid" ? "grid grid-cols-2 gap-3 xl:grid-cols-3 min-[1380px]:grid-cols-4" : "space-y-2")}>
@@ -1167,7 +1173,11 @@ function AddItemsPanel(props: {
                   <Button type="button" size="sm" variant="secondary" onClick={() => void load()}>Zkusit znovu</Button>
                 </div>
               ) : catalogItems.length === 0 ? (
-                <p className="col-span-full rounded-xl border border-line bg-white p-4 text-sm text-muted">Žádné položky pro zvolené filtry.</p>
+                <p className="col-span-full rounded-xl border border-line bg-white p-4 text-sm text-muted">
+                  {favoritesOnly && favorites?.ids?.size === 0
+                    ? "Zatím nemáte žádné oblíbené položky. Zrušte filtr a označte položku hvězdičkou."
+                    : "Žádné položky pro zvolené filtry."}
+                </p>
               ) : catalogItems.slice(0, catalogLimit).map((item) => {
                 const itemId = item.itemId ?? item.id;
                 const stock = availability.get(itemId);
@@ -1183,7 +1193,10 @@ function AddItemsPanel(props: {
                     {view === "grid" && <Badge className="absolute top-2 left-2 max-w-[calc(100%-1rem)]" tone={stockTone(available)}>{available > 0 ? `Skladem ${available} ${unit}` : "Nedostupné"}</Badge>}
                   </div>
                   <div className="min-w-0 flex-1 space-y-2 p-2.5 sm:p-3">
-                    <div><h4 className="text-sm font-semibold wrap-break-word">{item.name}</h4><p className="text-xs text-muted">{formatCategoryParentLabel(item.category?.parent?.name, item.category?.sub?.name)}{stock ? ` · celkem ${stock.physicalTotal}` : ""}</p></div>
+                    <div className="flex items-start gap-1">
+                      <div className="min-w-0 flex-1"><h4 className="text-sm font-semibold wrap-break-word">{item.name}</h4><p className="text-xs text-muted">{formatCategoryParentLabel(item.category?.parent?.name, item.category?.sub?.name)}{stock ? ` · celkem ${stock.physicalTotal}` : ""}</p></div>
+                      <FavoriteButton itemId={itemId} itemName={item.name} />
+                    </div>
                     {view === "list" && <Badge tone={stockTone(available)}>{available > 0 ? `Skladem ${available} ${unit}` : "Nedostupné"}</Badge>}
                     {reserved > 0 ? (
                       <QuantityStepper label={item.name} value={<span className="text-indigo-700">{reserved} {unit}</span>} className="border-indigo-100 bg-indigo-50"
@@ -1262,6 +1275,7 @@ function AddItemsPanel(props: {
       role={props.role}
       existingItems={currentItems}
       range={range}
+      initialFavoritesOnly={favoritesOnly}
       onDone={props.onDone}
     />
 

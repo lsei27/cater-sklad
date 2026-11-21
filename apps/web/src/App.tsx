@@ -31,6 +31,11 @@ function EventDetailRoute({ warehouse = false }: { warehouse?: boolean }) {
   return warehouse ? <WarehouseEventDetailPage key={id} /> : <EventDetailPage key={id} />;
 }
 
+function FavoritesRoute() {
+  if (getCurrentUser()?.role !== "event_manager") return <Navigate to="/inventory" replace />;
+  return <InventoryPage favoritesOnly />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -41,6 +46,7 @@ export default function App() {
         <Route path="/events/new" element={<NewEventPage />} />
         <Route path="/events/:id" element={<EventDetailRoute />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/favorites" element={<FavoritesRoute />} />
         <Route
           path="/inventory/transfers"
           element={
