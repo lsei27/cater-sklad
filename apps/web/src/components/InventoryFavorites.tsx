@@ -77,24 +77,36 @@ export function useInventoryFavorites() {
   return useContext(FavoritesContext);
 }
 
-export function FavoriteButton({ itemId, itemName, className }: { itemId: string; itemName: string; className?: string }) {
+export function FavoriteButton({ itemId, itemName, showLabel = false, className }: {
+  itemId: string;
+  itemName: string;
+  showLabel?: boolean;
+  className?: string;
+}) {
   const favorites = useInventoryFavorites();
   if (!favorites) return null;
   const selected = favorites.ids?.has(itemId) ?? false;
+  const action = selected ? "Odebrat z oblíbených" : "Přidat do oblíbených";
 
   return (
     <Button
       type="button"
-      variant="ghost"
+      variant={showLabel ? "secondary" : "ghost"}
       size="sm"
-      className={cn("size-9 shrink-0 p-0", selected ? "bg-amber-50 text-amber-700 hover:bg-amber-100" : "text-muted", className)}
-      aria-label={`Oblíbená položka · ${itemName}`}
-      aria-pressed={selected}
-      title={selected ? "Odebrat z oblíbených" : "Přidat do oblíbených"}
+      className={cn(
+        showLabel ? "h-auto min-h-9 justify-start gap-1.5 px-2 py-1 text-left text-xs leading-tight" : "size-9 shrink-0 p-0",
+        !showLabel && "text-muted",
+        selected && "bg-amber-50 text-amber-700 hover:bg-amber-100",
+        className
+      )}
+      aria-label={`${showLabel ? action : "Oblíbená položka"} · ${itemName}`}
+      aria-pressed={showLabel ? undefined : selected}
+      title={showLabel ? undefined : action}
       disabled={!favorites.ids || favorites.pendingIds.has(itemId)}
       onClick={() => void favorites.toggle(itemId)}
     >
-      <Star size={17} aria-hidden="true" className={selected ? "fill-current" : undefined} />
+      <Star size={showLabel ? 15 : 17} aria-hidden="true" className={cn("shrink-0", selected && "fill-current")} />
+      {showLabel && <span>{action}</span>}
     </Button>
   );
 }

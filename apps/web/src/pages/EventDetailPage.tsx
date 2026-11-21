@@ -1175,7 +1175,7 @@ function AddItemsPanel(props: {
               ) : catalogItems.length === 0 ? (
                 <p className="col-span-full rounded-xl border border-line bg-white p-4 text-sm text-muted">
                   {favoritesOnly && favorites?.ids?.size === 0
-                    ? "Zatím nemáte žádné oblíbené položky. Zrušte filtr a označte položku hvězdičkou."
+                    ? "Zatím nemáte žádné oblíbené položky. Vypněte filtr a u vybrané položky zvolte Přidat do oblíbených."
                     : "Žádné položky pro zvolené filtry."}
                 </p>
               ) : catalogItems.slice(0, catalogLimit).map((item) => {
@@ -1193,10 +1193,7 @@ function AddItemsPanel(props: {
                     {view === "grid" && <Badge className="absolute top-2 left-2 max-w-[calc(100%-1rem)]" tone={stockTone(available)}>{available > 0 ? `Skladem ${available} ${unit}` : "Nedostupné"}</Badge>}
                   </div>
                   <div className="min-w-0 flex-1 space-y-2 p-2.5 sm:p-3">
-                    <div className="flex items-start gap-1">
-                      <div className="min-w-0 flex-1"><h4 className="text-sm font-semibold wrap-break-word">{item.name}</h4><p className="text-xs text-muted">{formatCategoryParentLabel(item.category?.parent?.name, item.category?.sub?.name)}{stock ? ` · celkem ${stock.physicalTotal}` : ""}</p></div>
-                      <FavoriteButton itemId={itemId} itemName={item.name} />
-                    </div>
+                    <div><h4 className="text-sm font-semibold wrap-break-word">{item.name}</h4><p className="text-xs text-muted">{formatCategoryParentLabel(item.category?.parent?.name, item.category?.sub?.name)}{stock ? ` · celkem ${stock.physicalTotal}` : ""}</p></div>
                     {view === "list" && <Badge tone={stockTone(available)}>{available > 0 ? `Skladem ${available} ${unit}` : "Nedostupné"}</Badge>}
                     {reserved > 0 ? (
                       <QuantityStepper label={item.name} value={<span className="text-indigo-700">{reserved} {unit}</span>} className="border-indigo-100 bg-indigo-50"
@@ -1212,6 +1209,7 @@ function AddItemsPanel(props: {
                       void applyReservation({ inventoryItemId: itemId, qty: Math.min(initial, available), item, createdById: userId });
                       }}><Icons.Plus className="size-3.5 shrink-0" /> Přidat do akce</Button>
                     </div>}
+                    <FavoriteButton itemId={itemId} itemName={item.name} showLabel className={view === "grid" ? "w-full" : undefined} />
                     {view === "list" && <WarehouseBreakdown stocks={warehouseStocks[itemId]} warehouses={warehouses} />}
                   </div>
                 </Card>;

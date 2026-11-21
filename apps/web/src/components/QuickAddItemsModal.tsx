@@ -5,7 +5,7 @@ import { api, getCurrentUser } from "../lib/api";
 import { humanError } from "../lib/viewModel";
 import { cn } from "../lib/ui";
 import { dayRangeLabel, eventDayDateLabel, type DayRange } from "../lib/eventDays";
-import { FavoriteFilter, useInventoryFavorites } from "./InventoryFavorites";
+import { FavoriteButton, FavoriteFilter, useInventoryFavorites } from "./InventoryFavorites";
 import Input from "./ui/Input";
 import Modal from "./ui/Modal";
 import Skeleton from "./ui/Skeleton";
@@ -542,12 +542,17 @@ export default function QuickAddItemsModal(props: {
                             filled && "font-semibold",
                             unavailable && "text-muted"
                           )}>
-                            {item.name}
-                            {packageAdjusted ? (
-                              <span className="mt-0.5 block text-[11px] font-medium text-indigo-700">Celé balení {effective} {unit}</span>
-                            ) : !editable ? (
-                              <span className="mt-0.5 block text-[11px] text-muted">Spravuje jiný uživatel</span>
-                            ) : null}
+                            <div className="flex items-center gap-1">
+                              <div className="min-w-0 flex-1">
+                                {item.name}
+                                {packageAdjusted ? (
+                                  <span className="mt-0.5 block text-[11px] font-medium text-indigo-700">Celé balení {effective} {unit}</span>
+                                ) : !editable ? (
+                                  <span className="mt-0.5 block text-[11px] text-muted">Spravuje jiný uživatel</span>
+                                ) : null}
+                              </div>
+                              <FavoriteButton itemId={item.itemId} itemName={item.name} className="-mr-1 size-8" />
+                            </div>
                           </th>
                           <td className={cn(
                             "px-1 py-1.5 text-right align-middle text-[13px] font-semibold tabular-nums",
