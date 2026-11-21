@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { Prisma } from "../../generated/prisma/client.js";
+import { Prisma, type Role } from "../../generated/prisma/client.js";
 import { httpError } from "../lib/httpErrors.js";
 import { requireRole } from "../lib/rbac.js";
 
 const ItemParams = z.object({ id: z.uuid() });
 const favoritesPath = "/inventory/favorites";
+const favoriteRoles: Role[] = ["admin", "event_manager", "warehouse"];
 
 export async function favoriteRoutes(app: FastifyInstance) {
   const writeOptions = {
@@ -20,7 +21,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
   };
 
   app.get(favoritesPath, { preHandler: [app.authenticate] }, async (request, reply) => {
-    requireRole(request.user.role, ["event_manager"]);
+    requireRole(request.user.role, favoriteRoles);
     const favorites = await app.prisma.inventoryFavorite.findMany({
       where: { userId: request.user.id },
       select: { inventoryItemId: true }
@@ -29,7 +30,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
   });
 
   app.put(`${favoritesPath}/:id`, writeOptions, async (request, reply) => {
-    requireRole(request.user.role, ["event_manager"]);
+    requireRole(request.user.role, favoriteRoles);
     const { id: inventoryItemId } = ItemParams.parse(request.params);
     const item = await app.prisma.inventoryItem.findUnique({
       where: { id: inventoryItemId, active: true },
@@ -52,7 +53,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
   });
 
   app.delete(`${favoritesPath}/:id`, writeOptions, async (request) => {
-    requireRole(request.user.role, ["event_manager"]);
+    requireRole(request.user.role, favoriteRoles);
     const { id: inventoryItemId } = ItemParams.parse(request.params);
     await app.prisma.inventoryFavorite.deleteMany({
       where: { userId: request.user.id, inventoryItemId }

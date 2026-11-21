@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeftRight, Calendar, LogOut, Package, Settings, Star, Truck } from "lucide-react";
 import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { getCurrentUser, getToken, hasStockAccess, setCurrentUser, setToken } from "../lib/api";
+import { canUseInventoryFavorites, getCurrentUser, getToken, hasStockAccess, setCurrentUser, setToken } from "../lib/api";
 import { cn } from "../lib/ui";
 import { roleLabel } from "../lib/viewModel";
 import toast, { Toaster } from "react-hot-toast";
@@ -27,14 +27,16 @@ export default function AppShell() {
 
   if (!token) return <Navigate to="/login" replace />;
 
+  const canUseFavorites = canUseInventoryFavorites(user);
   const links = [
     { to: "/events", label: "Akce", icon: Calendar, visible: true },
     { to: "/warehouse", label: "Výdej", icon: Truck, visible: user?.role === "warehouse" || user?.role === "admin" },
     { to: "/inventory", label: "Sklad", icon: Package, visible: true, end: true },
-    { to: "/favorites", label: "Oblíbené", icon: Star, visible: user?.role === "event_manager" },
+    { to: "/favorites", label: "Oblíbené", icon: Star, visible: canUseFavorites },
     { to: "/inventory/transfers", label: "Přesuny", icon: ArrowLeftRight, visible: hasStockAccess(user) },
     { to: "/settings", label: "Nastavení", icon: Settings, visible: true },
   ].filter((link) => link.visible);
+  const showBottomNavOnTablet = links.length > 5;
 
   const handleLogout = () => {
     setToken(null);
@@ -77,7 +79,7 @@ export default function AppShell() {
             </span>
             IN CATERING sklad
           </Link>
-          <nav aria-label="Hlavní navigace" className="hidden items-center gap-1 md:flex">
+          <nav aria-label="Hlavní navigace" className={cn("hidden items-center gap-1", showBottomNavOnTablet ? "lg:flex" : "md:flex")}>
             {navigation(false)}
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-2">
@@ -100,14 +102,14 @@ export default function AppShell() {
           </div>
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col px-4 pt-6 pb-24 sm:px-6 md:pb-8 lg:px-8">
-        {user?.role === "event_manager" ? (
+      <main className={cn("mx-auto flex w-full max-w-[1800px] flex-1 flex-col px-4 pt-6 pb-24 sm:px-6 lg:px-8", showBottomNavOnTablet ? "lg:pb-8" : "md:pb-8")}>
+        {user && canUseFavorites ? (
           <InventoryFavoritesProvider key={user.id} token={token}><Outlet /></InventoryFavoritesProvider>
         ) : <Outlet />}
       </main>
       <nav
         aria-label="Hlavní navigace"
-        className="fixed inset-x-0 bottom-0 z-20 flex gap-1 border-t border-line bg-white px-2 pt-1 pb-[calc(.25rem+env(safe-area-inset-bottom))] md:hidden"
+        className={cn("fixed inset-x-0 bottom-0 z-20 flex gap-1 border-t border-line bg-white px-2 pt-1 pb-[calc(.25rem+env(safe-area-inset-bottom))]", showBottomNavOnTablet ? "lg:hidden" : "md:hidden")}
       >
         {navigation(true)}
       </nav>

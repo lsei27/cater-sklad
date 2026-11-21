@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
-import { getCurrentUser, hasStockAccess } from "./lib/api";
+import { canUseInventoryFavorites, getCurrentUser, hasStockAccess } from "./lib/api";
 import LoginPage from "./pages/LoginPage";
 import EventsPage from "./pages/EventsPage";
 import NewEventPage from "./pages/NewEventPage";
@@ -32,7 +32,7 @@ function EventDetailRoute({ warehouse = false }: { warehouse?: boolean }) {
 }
 
 function FavoritesRoute() {
-  if (getCurrentUser()?.role !== "event_manager") return <Navigate to="/inventory" replace />;
+  if (!canUseInventoryFavorites(getCurrentUser())) return <Navigate to="/inventory" replace />;
   return <InventoryPage favoritesOnly />;
 }
 

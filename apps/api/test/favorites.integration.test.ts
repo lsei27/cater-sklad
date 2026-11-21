@@ -10,7 +10,7 @@ describe("inventory favorites (integration)", () => {
   const url = process.env.DATABASE_URL;
   const run = !!url && process.env.RUN_DB_TESTS === "1";
 
-  it.runIf(run)("keeps favorites private to each event manager and makes repeated writes safe", async () => {
+  it.runIf(run)("keeps favorites private to each account and makes repeated writes safe", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     const app = Fastify();
     app.decorate("prisma", prisma);
@@ -20,10 +20,12 @@ describe("inventory favorites (integration)", () => {
 
     try {
       const stamp = fixtureStamp();
-      const [first, second, chef] = await Promise.all([
+      const [first, second, chef, admin, warehouse] = await Promise.all([
         prisma.user.create({ data: { email: `favorites-first-${stamp}@local`, passwordHash: "x", role: "event_manager" } }),
         prisma.user.create({ data: { email: `favorites-second-${stamp}@local`, passwordHash: "x", role: "event_manager" } }),
-        prisma.user.create({ data: { email: `favorites-chef-${stamp}@local`, passwordHash: "x", role: "chef" } })
+        prisma.user.create({ data: { email: `favorites-chef-${stamp}@local`, passwordHash: "x", role: "chef" } }),
+        prisma.user.create({ data: { email: `favorites-admin-${stamp}@local`, passwordHash: "x", role: "admin" } }),
+        prisma.user.create({ data: { email: `favorites-warehouse-${stamp}@local`, passwordHash: "x", role: "warehouse" } })
       ]);
       const category = await prisma.category.create({ data: { name: `Oblíbené ${stamp}` } });
       const item = await prisma.inventoryItem.create({ data: { categoryId: category.id, name: "Džbán" } });
@@ -44,6 +46,14 @@ describe("inventory favorites (integration)", () => {
       const firstFavorites = await app.inject({ method: "GET", url: favoritesUrl, headers: auth(first.id) });
       expect(firstFavorites.json()).toEqual({ itemIds: [item.id] });
       expect(firstFavorites.headers["cache-control"]).toContain("no-store");
+
+      for (const account of [admin, warehouse]) {
+        const headers = auth(account.id);
+        expect((await app.inject({ method: "GET", url: favoritesUrl, headers })).json()).toEqual({ itemIds: [] });
+        expect((await app.inject({ method: "PUT", url: itemUrl, headers })).statusCode).toBe(200);
+        expect((await app.inject({ method: "GET", url: favoritesUrl, headers })).json()).toEqual({ itemIds: [item.id] });
+        expect((await app.inject({ method: "DELETE", url: itemUrl, headers })).statusCode).toBe(200);
+      }
 
       expect((await app.inject({ method: "PUT", url: itemUrl, headers: auth(second.id) })).statusCode).toBe(200);
       expect((await app.inject({ method: "DELETE", url: itemUrl, headers: auth(first.id) })).statusCode).toBe(200);

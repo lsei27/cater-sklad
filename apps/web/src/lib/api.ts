@@ -33,6 +33,10 @@ export function setToken(token: string | null) {
 
 export type CurrentUser = { id: string; email: string; role: string; canStocktake?: boolean };
 
+export function canUseInventoryFavorites(user: CurrentUser | null) {
+  return ["admin", "event_manager", "warehouse"].includes(user?.role ?? "");
+}
+
 /// Inventura a přesuny: sklad, admin, nebo uživatel se zapnutým oprávněním.
 export function hasStockAccess(user: CurrentUser | null) {
   return user?.role === "admin" || user?.role === "warehouse" || user?.canStocktake === true;
