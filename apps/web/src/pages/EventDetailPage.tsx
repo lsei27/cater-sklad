@@ -1100,12 +1100,12 @@ function AddItemsPanel(props: {
       <Modal open={props.open} onOpenChange={props.onOpenChange} title="Přidáváte do akce"
         description={ [props.eventName, props.eventDate ? eventDayDateLabel(props.eventDate, 1) : null, props.eventLocation].filter(Boolean).join(" · ") }
         fullScreen closeText="Hotovo, zpět na akci">
-        <div className="grid min-h-full lg:grid-cols-[170px_minmax(0,1fr)_280px] xl:grid-cols-[240px_minmax(0,1fr)_minmax(300px,26%)]">
-          <aside className="hidden border-r border-line bg-white p-4 lg:block">
+        <div className="grid min-h-full lg:h-full lg:grid-cols-[170px_minmax(0,1fr)_280px] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_minmax(300px,26%)]">
+          <aside className="hidden border-r border-line bg-white p-4 lg:block lg:overflow-y-auto">
             {isChef ? <p className="px-2 text-sm font-semibold text-muted">Kuchyň</p> :
               <CategorySidebar categories={parents} parentId={parentId} categoryId={categoryId} onParent={selectParent} onCategory={setCategoryId} />}
           </aside>
-          <section className="min-w-0 space-y-3 bg-canvas p-4 xl:p-6" aria-label="Katalog položek">
+          <section className="min-w-0 space-y-3 bg-canvas p-4 lg:overflow-y-auto xl:p-6" aria-label="Katalog položek">
             <div className="flex flex-wrap items-center gap-2">
               <label className="relative min-w-42 flex-1">
                 <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
@@ -1221,8 +1221,8 @@ function AddItemsPanel(props: {
               </Button>
             )}
           </section>
-          <aside className="min-w-0 border-line bg-white lg:border-l" aria-label="Položky v akci">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3.5"><h3 className="font-bold">Položky v akci</h3><span className="text-xs text-muted">{activeItems.length} položek</span></div>
+          <aside className="min-w-0 border-line bg-white lg:overflow-y-auto lg:border-l" aria-label="Položky v akci">
+            <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-white px-4 py-3.5"><h3 className="font-bold">Položky v akci</h3><span className="text-xs text-muted">{activeItems.length} položek</span></div>
             {unavailable.length > 0 && <div className="bg-red-100 px-4 py-3 text-sm font-medium text-red-700">{unavailable.length} položek má nedostatečnou dostupnost v termínu</div>}
             <div className="space-y-3 p-4">
               {activeItems.length === 0 ? <p className="text-sm text-muted">Zatím žádné položky.</p> : [...activeGroups].map(([category, rows]) => (
