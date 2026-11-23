@@ -69,7 +69,7 @@ export default function EventFilters({
 
   return (
     <>
-      {["admin", "event_manager", "warehouse"].includes(activeRole) && (
+      {["admin", "event_manager", "chef", "warehouse"].includes(activeRole) && (
         <button
           type="button"
           aria-pressed={filters.onlyMine}

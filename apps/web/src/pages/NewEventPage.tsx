@@ -31,7 +31,7 @@ function formatDateTime(value: string) {
 
 export default function NewEventPage() {
   const user = getCurrentUser();
-  const canCreate = ["admin", "event_manager", "warehouse"].includes(user?.role ?? "");
+  const canCreate = ["admin", "event_manager", "chef", "warehouse"].includes(user?.role ?? "");
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const from = params.get("from") === "warehouse" ? "/warehouse" : "/events";

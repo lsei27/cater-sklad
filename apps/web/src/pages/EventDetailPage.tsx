@@ -179,14 +179,16 @@ export default function EventDetailPage() {
     return eDate.getTime() < today.getTime();
   }, [event?.eventDate, event?.eventEndDate]);
 
-  const canEM = ["admin", "event_manager", "warehouse"].includes(role);
+  const canEM = ["admin", "event_manager", "chef", "warehouse"].includes(role);
   const canChef = ["admin", "chef"].includes(role);
   const canUseWarehouseWorkflow = role === "warehouse" || role === "admin";
   const canEditEvent = !isPast && event?.status !== "ISSUED" && event?.status !== "CLOSED" && event?.status !== "CANCELLED";
   const isOwner = Boolean(currentUserId && event?.createdBy?.id === currentUserId);
   // Sklad musi umet prihodit polozku do akce, kterou zalozil event manager:
   // ten v sezone casto vola z terenu, ze do akce jeste neco potrebuje.
-  const canManageEvent = role === "admin" || role === "warehouse" || (role === "event_manager" && isOwner);
+  const canManageEvent = role === "admin" || role === "warehouse" || (["event_manager", "chef"].includes(role) && isOwner);
+  // Kuchař dopisuje poznámku i do cizích akcí, ostatní údaje tam měnit nesmí.
+  const canEditNotes = canManageEvent || role === "chef";
   const canConfirmKitchen = canChef || canManageEvent;
 
   // EM can add in DRAFT/READY/SENT_TO_WAREHOUSE. Chef and Admin can add also in SENT_TO_WAREHOUSE.
@@ -361,7 +363,7 @@ export default function EventDetailPage() {
         </div>
         <div className="flex flex-wrap items-start gap-2">
           {canEM && <Button variant="secondary" onClick={() => setDuplicateOpen(true)}><Copy size={15} /> Kopírovat</Button>}
-          {canEM && canExportEvent && <Button variant={canUseWarehouseWorkflow && warehouseAction && !event.exportNeedsRevision ? "secondary" : "primary"} onClick={openExportPreview} disabled={exportLoading}><FileDown size={15} /> {exportLoading ? "Načítám…" : event.exportNeedsRevision ? "Aktualizovat předání" : "Předat skladu (PDF)"}</Button>}
+          {canEM && canExportEvent && (role !== "chef" || isOwner) && <Button variant={canUseWarehouseWorkflow && warehouseAction && !event.exportNeedsRevision ? "secondary" : "primary"} onClick={openExportPreview} disabled={exportLoading}><FileDown size={15} /> {exportLoading ? "Načítám…" : event.exportNeedsRevision ? "Aktualizovat předání" : "Předat skladu (PDF)"}</Button>}
           {canUseWarehouseWorkflow && warehouseAction && !event.exportNeedsRevision && <Button onClick={() => nav(`/warehouse/${id}`)}><Icons.Truck className="size-4" /> {warehouseAction.label}</Button>}
           {(canManageEvent || canConfirmKitchen || event.status === "CLOSED") && (
             <details className="relative">
@@ -491,7 +493,7 @@ export default function EventDetailPage() {
                 { value: "manager", label: `Event manager ${itemCount - kitchenCount}` },
                 { value: "kitchen", label: `Kuchyň ${kitchenCount}` },
               ]} />
-              {(canManageEvent || canChef) && <Button size="sm" variant="dark" onClick={() => setAddOpen(true)} disabled={!canAddItems}><PackagePlus size={15} /> {role === "chef" ? "Přidat Kuchyň" : "Přidat z katalogu"}</Button>}
+              {(canManageEvent || canChef) && <Button size="sm" variant="dark" onClick={() => setAddOpen(true)} disabled={!canAddItems}><PackagePlus size={15} /> Přidat z katalogu</Button>}
             </div>
           </CardHeader>
           {itemCount === 0 || (reservationFilter === "issues" && missingRows.length === 0) || (reservationFilter === "manager" && kitchenCount === itemCount) || (reservationFilter === "kitchen" && kitchenCount === 0) ? (
@@ -515,7 +517,7 @@ export default function EventDetailPage() {
                         const short = stock ? Math.max(0, row.reservedQuantity - Math.max(0, stock.available)) : 0;
                         const step = row.item?.masterPackageQty || 1;
                         const canChange = canEditEvent && (role === "admin" || role === "warehouse" ||
-                          (role === "event_manager" && row.createdById === currentUserId) ||
+                          (["event_manager", "chef"].includes(role) && row.createdById === currentUserId) ||
                           (role === "chef" && group.parent.toLowerCase() === "kuchyň"));
                         const saving = savingRows.has(key);
                         const label = row.item?.name ?? "Položka";
@@ -557,7 +559,7 @@ export default function EventDetailPage() {
             {missingRows.length > 0 && <button onClick={() => setReservationFilter(reservationFilter === "issues" ? "all" : "issues")} type="button" className="w-full rounded-lg bg-red-100 p-3 text-left text-sm font-semibold text-red-700 hover:underline">Zobrazit nedostupné položky ({missingRows.length})</button>}
           </Card>}
           <Card className="space-y-2 p-4">
-            <div className="flex items-center justify-between gap-2"><h2 className="font-bold">Poznámka pro sklad</h2>{canManageEvent && <button type="button" aria-label="Upravit údaje akce" className="rounded-md p-1.5 text-muted hover:bg-canvas" onClick={() => setEditBasicsOpen(true)}><Icons.Edit /></button>}</div>
+            <div className="flex items-center justify-between gap-2"><h2 className="font-bold">Poznámka pro sklad</h2>{canEditNotes && <button type="button" aria-label={canManageEvent ? "Upravit údaje akce" : "Upravit poznámku"} className="rounded-md p-1.5 text-muted hover:bg-canvas" onClick={() => setEditBasicsOpen(true)}><Icons.Edit /></button>}</div>
             <p className="text-sm whitespace-pre-wrap text-muted">{event.notes || "Bez poznámky."}</p>
             {event.registrationNumber && <div className="text-xs text-muted">Evidenční číslo {event.registrationNumber}</div>}
             {(event.palletCount != null || event.totalWeight) && <p className="text-xs text-muted">{[event.palletCount != null ? `Palety ${event.palletCount}` : null, event.totalWeight ? `Váha ${event.totalWeight}` : null].filter(Boolean).join(" · ")}</p>}
@@ -759,6 +761,7 @@ export default function EventDetailPage() {
           open={editBasicsOpen}
           onOpenChange={(v) => setEditBasicsOpen(v)}
           event={event}
+          notesOnly={!canManageEvent}
           onDone={() => load({ silent: true })}
         />
       )}
@@ -804,7 +807,6 @@ function AddItemsPanel(props: {
   // vedet, kde polozka lezi - vydej mimo domaci sklad znamena dalsi cestu.
   const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
   const [warehouseStocks, setWarehouseStocks] = useState<Record<string, Record<string, number>>>({});
-  const [categoriesReady, setCategoriesReady] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -817,7 +819,6 @@ function AddItemsPanel(props: {
   const prefillRef = useRef(false);
   const loadSeq = useRef(0);
 
-  const isChef = props.role === "chef";
   const userId = getCurrentUser()?.id;
 
   // U vícedenní akce EM volí, pro které dny zadává počty. Panel pak ukazuje
@@ -869,7 +870,6 @@ function AddItemsPanel(props: {
 
   useEffect(() => {
     if (!props.open) {
-      setCategoriesReady(false);
       setQuickAddOpen(false);
       setFavoritesOnly(false);
       return;
@@ -877,18 +877,10 @@ function AddItemsPanel(props: {
     initRef.current = false;
     prefillRef.current = false;
     setLoading(true);
-    setCategoriesReady(false);
     api<{ parents: CatalogCategory[] }>("/categories/tree")
-      .then((r) => {
-        setParents(r.parents);
-        if (isChef) {
-          const tech = r.parents.find((p: any) => String(p.name).toLowerCase() === "kuchyň");
-          if (tech) setParentId(tech.id);
-        }
-      })
-      .catch(() => { })
-      .finally(() => setCategoriesReady(true));
-  }, [props.open, isChef]);
+      .then((r) => setParents(r.parents))
+      .catch(() => { });
+  }, [props.open]);
 
   const load = async () => {
     setLoading(true);
@@ -950,14 +942,13 @@ function AddItemsPanel(props: {
 
   useEffect(() => {
     if (!props.open) return;
-    if (isChef && !categoriesReady) return;
     setLoading(true);
     const t = setTimeout(load, 300);
     return () => {
       clearTimeout(t);
       loadSeq.current++;
     };
-  }, [props.open, search, parentId, categoryId, categoriesReady, isChef, rangeKey]);
+  }, [props.open, search, parentId, categoryId, rangeKey]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -1070,7 +1061,7 @@ function AddItemsPanel(props: {
   const canModifyReservation = (row: (typeof currentItems)[number]) => {
     const parent = String(row.item?.category?.parent?.name ?? "").toLowerCase();
     return props.role === "admin" ||
-      (["event_manager", "warehouse"].includes(props.role) && (!row.createdById || row.createdById === userId)) ||
+      (["event_manager", "chef", "warehouse"].includes(props.role) && (!row.createdById || row.createdById === userId)) ||
       (props.role === "chef" && parent === "kuchyň");
   };
   const activeGroups = new Map<string, typeof activeItems>();
@@ -1102,8 +1093,7 @@ function AddItemsPanel(props: {
         fullScreen closeText="Hotovo, zpět na akci">
         <div className="grid min-h-full lg:h-full lg:grid-cols-[170px_minmax(0,1fr)_280px] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_minmax(300px,26%)]">
           <aside className="hidden border-r border-line bg-white p-4 lg:block lg:overflow-y-auto">
-            {isChef ? <p className="px-2 text-sm font-semibold text-muted">Kuchyň</p> :
-              <CategorySidebar categories={parents} parentId={parentId} categoryId={categoryId} onParent={selectParent} onCategory={setCategoryId} />}
+            <CategorySidebar categories={parents} parentId={parentId} categoryId={categoryId} onParent={selectParent} onCategory={setCategoryId} />
           </aside>
           <section className="min-w-0 space-y-3 bg-canvas p-4 lg:overflow-y-auto xl:p-6" aria-label="Katalog položek">
             <div className="flex flex-wrap items-center gap-2">
@@ -1121,10 +1111,10 @@ function AddItemsPanel(props: {
                 { value: "list", label: <><List size={15} /><span className="sr-only">Seznam</span></> },
               ]} />
             </div>
-            {!isChef && <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
+            <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
               <Select aria-label="Hlavní kategorie" value={parentId} onChange={(event) => selectParent(event.target.value)}><option value="">Všechny kategorie</option>{parents.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</Select>
               <Select aria-label="Podkategorie" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Všechny podkategorie</option>{subcats.map((category) => <option key={category.id} value={category.id}>{parentId ? category.name : `${category.parentName} / ${category.name}`}</option>)}</Select>
-            </div>}
+            </div>
           {props.dayCount > 1 ? (
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm">
               <span className="font-semibold text-amber-950">Zadávám pro dny:</span>
@@ -1164,7 +1154,7 @@ function AddItemsPanel(props: {
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div><h3 className="text-lg font-bold">{favoritesOnly ? "Oblíbené položky" : [selectedParent?.name, selectedSub?.name].filter(Boolean).join(" › ") || "Katalog"}</h3><p className="text-xs text-muted">{catalogItems.length} položek · Dostupnost pro vybraný termín</p></div>
-              {!isChef && <Button size="sm" variant="secondary" onClick={() => setQuickAddOpen(true)}>Rychlé zadání</Button>}
+              <Button size="sm" variant="secondary" onClick={() => setQuickAddOpen(true)}>Rychlé zadání</Button>
             </div>
             <div className={cn(view === "grid" ? "grid grid-cols-2 gap-3 xl:grid-cols-3 min-[1380px]:grid-cols-4" : "space-y-2")}>
               {loading ? Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-36" />) : catalogError ? (
@@ -1368,7 +1358,7 @@ function WarehouseBreakdown(props: {
   );
 }
 
-function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) => void; event: any; onDone: () => void }) {
+function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) => void; event: any; notesOnly?: boolean; onDone: () => void }) {
   const [name, setName] = useState(props.event.name);
   const [location, setLocation] = useState(props.event.location);
   const [address, setAddress] = useState(props.event.address || "");
@@ -1379,6 +1369,35 @@ function EditBasicsModal(props: { open: boolean; onOpenChange: (open: boolean) =
   const [delivery, setDelivery] = useState(toDatetimeLocalValue(props.event.deliveryDatetime));
   const [pickup, setPickup] = useState(toDatetimeLocalValue(props.event.pickupDatetime));
   const [saving, setSaving] = useState(false);
+
+  const saveNotes = async () => {
+    setSaving(true);
+    try {
+      await api(`/events/${props.event.id}`, { method: "PATCH", body: JSON.stringify({ notes: notes.trim() || null }) });
+      toast.success("Uloženo");
+      props.onDone();
+      props.onOpenChange(false);
+    } catch (e: any) {
+      toast.error(humanError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (props.notesOnly) {
+    return (
+      <Modal open={props.open} onOpenChange={props.onOpenChange} title="Poznámka pro sklad" contentClassName="max-w-2xl">
+        <label className="text-sm">
+          Poznámka
+          <Textarea className="mt-1" value={notes} onChange={(e: any) => setNotes(e.target.value)} />
+        </label>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => props.onOpenChange(false)}>Zrušit</Button>
+          <Button onClick={saveNotes} disabled={saving}>{saving ? "Ukládám..." : "Uložit poznámku"}</Button>
+        </div>
+      </Modal>
+    );
+  }
 
   const save = async () => {
     const deliveryIso = fromDatetimeLocalValue(delivery);

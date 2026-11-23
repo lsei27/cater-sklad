@@ -101,7 +101,7 @@ function canModifyExistingItem(
 ) {
   if (!existing) return true;
   if (role === "admin") return true;
-  if (["event_manager", "warehouse"].includes(role)) {
+  if (["event_manager", "chef", "warehouse"].includes(role)) {
     return !existing.createdById || existing.createdById === currentUserId;
   }
   return false;
