@@ -27,7 +27,7 @@ type AdminUser = { id: string; email: string; name: string | null; role: UserRol
 const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   event_manager: "Zakládá akce, přidává položky a předává je skladu.",
   warehouse: "Vychystává, vydává a přijímá položky zpět. Může provádět přesuny.",
-  chef: "Přidává a potvrzuje položky kuchyně.",
+  chef: "Zakládá akce, přidává položky z celého katalogu, potvrzuje kuchyň a píše poznámky ke všem akcím.",
   admin: "Spravuje aplikaci, uživatele a oprávnění.",
 };
 

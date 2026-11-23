@@ -248,18 +248,7 @@ async function main() {
   // Tenhle blok proto patri jen do cerstveho demo prostredi. Nikdy ho
   // nepoustej proti databazi, ktera uz ma vlastni strom kategorii.
   //
-  // Chef -> Kuchyň
-  const kitchenCat = parentRows.get("Kuchyň");
-  if (kitchenCat) {
-    const access = await prisma.roleCategoryAccess.findFirst({
-      where: { role: Role.chef, categoryId: kitchenCat }
-    });
-    if (!access) {
-      await prisma.roleCategoryAccess.create({
-        data: { role: Role.chef, categoryId: kitchenCat }
-      });
-    }
-  }
+  // Chef: bez radku, kuchar vidi a rezervuje cely katalog.
 
   // Event Manager -> All (or explicit list, let's give them everything for now to match legacy behavior)
   for (const [name, id] of parentRows.entries()) {

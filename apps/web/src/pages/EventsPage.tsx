@@ -188,7 +188,7 @@ export default function EventsPage() {
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <EventSearch value={filters.search} onChange={(search) => setFilters((current) => ({ ...current, search }))} />
-          {["admin", "event_manager"].includes(role) && <CreateEventLink />}
+          {["admin", "event_manager", "chef"].includes(role) && <CreateEventLink />}
         </div>
       </div>
 

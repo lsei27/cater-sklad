@@ -220,7 +220,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const body = EventCreateSchema.parse(request.body);
     const datesError = eventDatesError({
       eventDate: body.event_date ? new Date(body.event_date) : null,
@@ -257,7 +257,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/duplicate", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = EventCreateSchema.parse(request.body);
     const datesError = eventDatesError({
@@ -321,12 +321,17 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.patch("/events/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = EventUpdateSchema.parse(request.body);
 
     const existing = await app.prisma.event.findUnique({ where: { id: params.id } });
     if (!existing) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+
+    // Kuchař smí v cizí akci jen dopsat poznámku, termíny a údaje patří zakladateli.
+    if (user.role === "chef" && existing.createdById !== user.id && Object.keys(body).some((key) => key !== "notes")) {
+      return httpError(reply, 403, "FORBIDDEN", "V cizí akci můžete upravit jen poznámku.");
+    }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -400,7 +405,7 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/cancel", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     try {
@@ -409,7 +414,7 @@ export async function eventRoutes(app: FastifyInstance) {
           SELECT id, status::text, created_by::text FROM events WHERE id = ${params.id}::uuid FOR UPDATE
         `;
         if (!row) throw new Error("NOT_FOUND");
-        if (["event_manager", "warehouse"].includes(user.role) && row.created_by !== user.id) throw new Error("FORBIDDEN");
+        if (["event_manager", "chef", "warehouse"].includes(user.role) && row.created_by !== user.id) throw new Error("FORBIDDEN");
         if (row.status === "CLOSED") throw new Error("READ_ONLY");
         if (row.status === "ISSUED") throw new Error("ALREADY_ISSUED");
         if (row.status === "CANCELLED") return row;
@@ -429,6 +434,7 @@ export async function eventRoutes(app: FastifyInstance) {
     } catch (e: any) {
       const msg = String(e?.message ?? "");
       if (msg === "NOT_FOUND") return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (msg === "FORBIDDEN") return httpError(reply, 403, "FORBIDDEN", "Nemáte oprávnění zrušit cizí akci.");
       if (msg === "READ_ONLY") return httpError(reply, 409, "READ_ONLY", "Akci nelze zrušit (už je uzavřená).");
       if (msg === "ALREADY_ISSUED") return httpError(reply, 409, "ALREADY_ISSUED", "Akci nelze zrušit (už byla vydána).");
       request.log.error({ err: e }, "cancel failed");
@@ -1050,7 +1056,7 @@ export async function eventRoutes(app: FastifyInstance) {
   // Export preview - returns what would be in the export WITHOUT creating a new version
   app.get("/events/:id/export-preview", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const ev = await app.prisma.event.findUnique({
@@ -1116,8 +1122,15 @@ export async function eventRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/export", { preHandler: [app.authenticate] }, async (request, reply) => {
     const user = request.user!;
-    requireRole(user.role, ["admin", "event_manager", "warehouse"]);
+    requireRole(user.role, ["admin", "event_manager", "chef", "warehouse"]);
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    // Kuchař předává skladu jen akce, které sám založil.
+    if (user.role === "chef") {
+      const owner = await app.prisma.event.findUnique({ where: { id: params.id }, select: { createdById: true } });
+      if (!owner) return httpError(reply, 404, "NOT_FOUND", "Akce nenalezena.");
+      if (owner.createdById !== user.id) return httpError(reply, 403, "FORBIDDEN", "Cizí akci nemůžete předat skladu.");
+    }
 
     try {
       const created = await app.prisma.$transaction(async (tx) => {
