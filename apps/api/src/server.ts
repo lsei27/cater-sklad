@@ -11,6 +11,7 @@ import authPlugin from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { eventRoutes } from "./routes/events.js";
 import { inventoryRoutes } from "./routes/inventory.js";
+import { favoriteRoutes } from "./routes/favorites.js";
 import { adminRoutes } from "./routes/admin.js";
 import { streamRoutes } from "./routes/stream.js";
 import { ZodError } from "zod";
@@ -85,6 +86,7 @@ await app.register(staticPlugin, { root: storageDir, prefix: "/storage/" });
 await app.register(authRoutes);
 await app.register(eventRoutes);
 await app.register(inventoryRoutes);
+await app.register(favoriteRoutes);
 await app.register(adminRoutes);
 await app.register(streamRoutes);
 

@@ -1,13 +1,66 @@
+import { randomBytes } from "node:crypto";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { Role, EventStatus } from "../generated/prisma/client.js";
 import { createTestPrisma } from "./testPrisma.js";
 import { fixtureStamp } from "./fixtureStamp.js";
 import { getIssuedWarehouseItems } from "../src/services/issuedItems.js";
+import authPlugin from "../src/plugins/auth.js";
+import { eventRoutes } from "../src/routes/events.js";
 
 describe("seznam vydanych polozek (integration)", () => {
   const url = process.env.DATABASE_URL;
   const run = !!url && process.env.RUN_DB_TESTS === "1";
   const maybe = run ? it : it.skip;
+
+  maybe("detail uzavřené akce vrací jen skutečně vydané položky a množství", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const app = Fastify();
+    app.decorate("prisma", prisma);
+    app.register(authPlugin, { jwtSecret: randomBytes(32).toString("hex") });
+    app.register(eventRoutes);
+
+    try {
+      const stamp = fixtureStamp();
+      const user = await prisma.user.create({
+        data: { email: `closed-issue-${stamp}@local`, passwordHash: "x", role: Role.warehouse }
+      });
+      const category = await prisma.category.create({ data: { name: `Vybavení-${stamp}` } });
+      const issued = await prisma.inventoryItem.create({ data: { name: "Vydané sklo", categoryId: category.id } });
+      const missing = await prisma.inventoryItem.create({ data: { name: "Nevydané sklo", categoryId: category.id } });
+      const event = await prisma.event.create({
+        data: {
+          name: `Částečný výdej-${stamp}`, location: "Praha", status: EventStatus.CLOSED, createdById: user.id,
+          deliveryDatetime: new Date("2026-09-01T08:00:00Z"), pickupDatetime: new Date("2026-09-01T18:00:00Z")
+        }
+      });
+      await prisma.eventExport.create({
+        data: {
+          eventId: event.id, version: 1, exportedAt: new Date(), exportedById: user.id,
+          snapshotJson: { groups: [{ category: category.name, items: [issued, missing].map((item) => ({
+            inventoryItemId: item.id, name: item.name, unit: item.unit, qty: 4
+          })) }] }
+        }
+      });
+      await prisma.eventIssue.create({
+        data: {
+          eventId: event.id, inventoryItemId: issued.id, issuedQuantity: 2, issuedById: user.id,
+          idempotencyKey: `partial:${event.id}:${issued.id}`
+        }
+      });
+
+      await app.ready();
+      const token = app.jwt.sign({ sub: user.id });
+      const response = await app.inject({ url: `/events/${event.id}`, headers: { authorization: `Bearer ${token}` } });
+      expect(response.statusCode).toBe(200);
+      const { event: detail } = response.json<{ event: { warehouseItems: { inventoryItemId: string; qty: number }[] } }>();
+      expect(detail.warehouseItems.map(({ inventoryItemId, qty }) => ({ inventoryItemId, qty })))
+        .toEqual([{ inventoryItemId: issued.id, qty: 2 }]);
+    } finally {
+      await app.close();
+      await disconnect();
+    }
+  });
 
   maybe("secte vice radku vydeje na jednu polozku a doplni kategorie", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);

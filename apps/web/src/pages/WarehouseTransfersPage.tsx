@@ -1,7 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { api, apiUrl } from "../lib/api";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { api, apiUrl, type ApiError } from "../lib/api";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import Input from "../components/ui/Input";
+import Textarea from "../components/ui/Textarea";
+import Badge from "../components/ui/Badge";
+import QuantityStepper from "../components/ui/QuantityStepper";
+import SegmentedControl from "../components/ui/SegmentedControl";
+import { ArrowLeftRight, Check, Search, Truck, Warehouse, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { cn } from "../lib/ui";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import ItemDetailModal from "../components/ItemDetailModal";
@@ -32,12 +39,31 @@ type Item = {
   };
 };
 
+type Transfer = {
+  id: string;
+  item: { name: string; unit: string } | null;
+  fromWarehouse: { name: string };
+  toWarehouse: { name: string };
+  quantity: number;
+  note: string | null;
+  transferredAt: string;
+};
+const TABS = [
+  { value: "new", label: "Nový převod" },
+  { value: "history", label: "Historie převodů" },
+  { value: "suggestions", label: "Návrhy k vyrovnání" },
+] as const;
+
 export default function WarehouseTransfersPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [stocks, setStocks] = useState<Record<string, Record<string, number>>>({});
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [params] = useSearchParams();
+  const [search, setSearch] = useState(() => params.get("search") ?? "");
+  const [tab, setTab] = useState<(typeof TABS)[number]["value"]>("new");
+  const [history, setHistory] = useState<Transfer[] | null>(null);
+  const [historyError, setHistoryError] = useState("");
   const [filterWarehouseId, setFilterWarehouseId] = useState("");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
 
@@ -47,6 +73,7 @@ export default function WarehouseTransfersPage() {
   const [note, setNote] = useState("");
   const [bulkQty, setBulkQty] = useState("1");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.itemId, item])), [items]);
 
@@ -56,7 +83,7 @@ export default function WarehouseTransfersPage() {
       const [whRes, itemRes, stockRes] = await Promise.all([
         api<{ warehouses: Warehouse[] }>("/warehouses"),
         api<{ items: Item[] }>("/inventory/items?active=true"),
-        api<{ stocks: Record<string, Record<string, number>> }>("/inventory/warehouse-stocks")
+        api<{ stocks: Record<string, Record<string, number>> }>("/inventory/warehouse-stocks"),
       ]);
       setWarehouses(whRes.warehouses);
       setItems(itemRes.items);
@@ -71,6 +98,21 @@ export default function WarehouseTransfersPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (tab !== "history") return;
+    const controller = new AbortController();
+    setHistoryError("");
+    api<{ transfers: Transfer[] }>("/inventory/transfers", { signal: controller.signal })
+      .then(({ transfers }) => {
+        if (!controller.signal.aborted) setHistory(transfers);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted)
+          setHistoryError((err as ApiError)?.error?.message ?? "Historii se nepodařilo načíst.");
+      });
+    return () => controller.abort();
+  }, [tab]);
 
   const stockForWarehouse = useCallback(
     (itemId: string, warehouseId: string) => stocks[itemId]?.[warehouseId] ?? 0,
@@ -92,8 +134,7 @@ export default function WarehouseTransfersPage() {
     [filterWarehouseId, items, search, stockForWarehouse]
   );
 
-  const totalStock = (itemId: string) =>
-    warehouses.reduce((sum, w) => sum + (stocks[itemId]?.[w.id] ?? 0), 0);
+  const totalStock = (itemId: string) => warehouses.reduce((sum, w) => sum + (stocks[itemId]?.[w.id] ?? 0), 0);
 
   const sourceStock = useCallback(
     (itemId: string) => (fromWh ? stockForWarehouse(itemId, fromWh) : totalStock(itemId)),
@@ -144,7 +185,7 @@ export default function WarehouseTransfersPage() {
     }
     setTransferItems((prev) => [
       ...prev,
-      ...candidates.map((item) => ({ itemId: item.itemId, name: item.name, qty: 1 }))
+      ...candidates.map((item) => ({ itemId: item.itemId, name: item.name, qty: 1 })),
     ]);
     toast.success(`Přidáno ${candidates.length} položek`);
   };
@@ -166,7 +207,7 @@ export default function WarehouseTransfersPage() {
         if (available <= 0) return item;
         return {
           ...item,
-          qty: mode === "max" ? available : Math.min(parsedBulkQty, available)
+          qty: mode === "max" ? available : Math.min(parsedBulkQty, available),
         };
       })
     );
@@ -183,6 +224,7 @@ export default function WarehouseTransfersPage() {
   );
 
   const handleTransfer = async () => {
+    if (submittingRef.current) return;
     if (!fromWh || !toWh) {
       toast.error("Vyberte zdrojový a cílový sklad");
       return;
@@ -206,6 +248,7 @@ export default function WarehouseTransfersPage() {
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       await api("/inventory/transfers/bulk", {
@@ -216,307 +259,430 @@ export default function WarehouseTransfersPage() {
           note,
           items: transferItems.map((item) => ({
             inventory_item_id: item.itemId,
-            quantity: item.qty
-          }))
-        })
+            quantity: item.qty,
+          })),
+        }),
       });
       toast.success("Převod byl úspěšně proveden");
       setTransferItems([]);
       setNote("");
-      load();
+      setHistory(null);
+      await load();
     } catch (e: any) {
       toast.error(e?.error?.message ?? "Chyba při provádění převodu");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
+  const total = transferItems.reduce((sum, item) => sum + item.qty, 0);
+  const from = warehouses.find((warehouse) => warehouse.id === fromWh);
+  const to = warehouses.find((warehouse) => warehouse.id === toWh);
+  const suggestions = useMemo(() => {
+    if (tab !== "suggestions") return [];
+    return items.flatMap((item) => {
+      const options = warehouses.map((warehouse) => ({
+        ...warehouse,
+        stock: stockForWarehouse(item.itemId, warehouse.id),
+      }));
+      const source = options.reduce<(typeof options)[number] | null>(
+        (best, option) => (option.stock > (best?.stock ?? 0) ? option : best),
+        null
+      );
+      if (!source) return [];
+      return options
+        .filter((option) => option.stock < 0)
+        .map((destination) => ({
+          item,
+          source,
+          destination,
+          qty: Math.min(source.stock, -destination.stock),
+        }));
+    });
+  }, [items, warehouses, stockForWarehouse, tab]);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex justify-between items-center mb-6">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Převody mezi sklady</h1>
-          <p className="text-gray-500 text-sm">Manuální přesuny zásob a přehled rozmístění</p>
+          <h1 className="page-title">Přesuny</h1>
+          <p className="page-description">Převody zásob mezi sklady</p>
         </div>
+        <SegmentedControl label="Přesuny mezi sklady" value={tab} onChange={setTab} options={TABS} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Item list — large left column */}
-        <div className="lg:col-span-2 space-y-4">
-          <Card className="shadow-sm">
-            <CardHeader className="p-4 border-b border-gray-100">
-              <div className="space-y-3">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                    <Icons.Search className="w-4 h-4" />
-                  </div>
-                  <Input
-                    className="pl-10"
-                    placeholder="Hledat položku, SKU, kategorii..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+      {tab === "new" && (
+        <>
+          <Card className="grid items-center gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4 sm:p-4">
+            <WarehouseSelect
+              label="Z (odkud)"
+              value={fromWh}
+              onChange={setFromWh}
+              warehouses={warehouses}
+              disabled={submitting}
+            />
+            <button
+              type="button"
+              aria-label="Prohodit sklady"
+              title="Prohodit sklady"
+              disabled={submitting}
+              onClick={() => {
+                setFromWh(toWh);
+                setToWh(fromWh);
+              }}
+              className="mx-auto grid size-10 shrink-0 place-items-center rounded-full border border-line bg-canvas hover:bg-indigo-50 disabled:opacity-40"
+            >
+              <ArrowLeftRight size={17} />
+            </button>
+            <WarehouseSelect
+              label="Do (kam)"
+              value={toWh}
+              onChange={setToWh}
+              warehouses={warehouses}
+              disabled={submitting}
+            />
+          </Card>
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(305px,3fr)]">
+            <Card className="min-w-0 overflow-hidden">
+              <CardHeader className="flex flex-wrap items-center gap-2">
+                <label className="relative min-w-40 flex-1">
+                  <Search
+                    size={16}
+                    className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted"
                   />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Select value={filterWarehouseId} onChange={(e) => setFilterWarehouseId(e.target.value)}>
-                    <option value="">Všechny sklady</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        Jen sklad: {w.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <Button size="sm" variant="secondary" onClick={addFilteredItemsToTransfer} disabled={!fromWh || loading}>
-                    Přidat vyfiltrované
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="p-8 text-center text-gray-400">Načítám...</div>
-              ) : filteredItems.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">Nebylo nic nalezeno</div>
+                  <Input
+                    aria-label="Hledat položky pro převod"
+                    className="bg-canvas pl-9"
+                    placeholder={
+                      from ? `Hledat položku pro převod z: ${from.name}…` : "Hledat položku, SKU, kategorii…"
+                    }
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </label>
+                <Select
+                  className="w-auto max-w-52"
+                  aria-label="Filtrovat podle skladu"
+                  value={filterWarehouseId}
+                  onChange={(event) => setFilterWarehouseId(event.target.value)}
+                >
+                  <option value="">Všechny sklady</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={addFilteredItemsToTransfer}
+                  disabled={!fromWh || loading || submitting}
+                >
+                  Přidat vyfiltrované
+                </Button>
+              </CardHeader>
+              {loading || !filteredItems.length ? (
+                <p className="p-5 text-sm text-muted">{loading ? "Načítám…" : "Žádné položky neodpovídají filtrům."}</p>
               ) : (
-                <div className="divide-y divide-gray-100 max-h-[calc(100vh-220px)] overflow-y-auto">
-                  {filteredItems.map((i) => {
-                    const alreadyAdded = transferItems.some((x) => x.itemId === i.itemId);
-                    const filteredWarehouseStock = filterWarehouseId ? stockForWarehouse(i.itemId, filterWarehouseId) : null;
-                    const sourceWarehouseStock = fromWh ? sourceStock(i.itemId) : null;
-                    return (
-                      <div
-                        key={i.itemId}
-                        className="flex items-center gap-3 p-3 hover:bg-gray-50 transition-colors group"
-                      >
-                        <button
-                          onClick={() => setDetailItem(i)}
-                          className="flex items-center gap-3 flex-1 min-w-0 text-left"
-                          title="Zobrazit detail"
-                        >
-                          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-gray-100 flex items-center justify-center border border-gray-200">
-                            {i.imageUrl ? (
-                              <img
-                                className="h-full w-full object-contain p-0.5"
-                                src={apiUrl(i.imageUrl)}
-                                alt={i.name}
-                              />
-                            ) : (
-                              <div className="text-gray-400">
-                                <Icons.Image />
-                              </div>
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-gray-900 truncate group-hover:text-indigo-700">
-                              {i.name}
-                            </div>
-                            <div className="text-[11px] text-gray-500 truncate">
-                              {formatCategoryParentLabel(i.category.parent?.name, i.category.sub?.name)}
-                              {i.sku ? ` · ${i.sku}` : ""}
-                            </div>
-                            {filterWarehouseId ? (
-                              <div className="mt-1 text-[11px] font-medium text-indigo-700">
-                                Ve filtru skladu: {filteredWarehouseStock} {i.unit}
-                              </div>
-                            ) : null}
-                            {fromWh ? (
-                              <div className="mt-1 text-[11px] text-slate-600">
-                                Na zdrojovém skladu: <span className="font-semibold text-slate-900">{sourceWarehouseStock}</span> {i.unit}
-                              </div>
-                            ) : null}
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {warehouses.map((w) => {
-                                const s = stocks[i.itemId]?.[w.id] ?? 0;
-                                if (s === 0) return null;
-                                return (
-                                  <span
-                                    key={w.id}
-                                    className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded"
-                                  >
-                                    {w.name}:{" "}
-                                    <span className="font-semibold text-gray-900">{s}</span>
+                <div className="max-h-[min(68vh,800px)] overflow-auto">
+                  <table className="w-full min-w-[390px] text-sm">
+                    <thead className="table-header sticky top-0">
+                      <tr>
+                        <th scope="col">Položka</th>
+                        <th scope="col" className="text-right">
+                          {from?.name ?? "Celkem"}
+                        </th>
+                        {to && (
+                          <th scope="col" className="text-right">
+                            {to.name}
+                          </th>
+                        )}
+                        <th scope="col" aria-label="Akce" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line border-t border-line">
+                      {filteredItems.map((item) => {
+                        const selected = transferItems.find((row) => row.itemId === item.itemId);
+                        const available = sourceStock(item.itemId);
+                        const target = toWh ? stockForWarehouse(item.itemId, toWh) : 0;
+                        return (
+                          <tr key={item.itemId} className={selected ? "bg-indigo-50/60" : "hover:bg-table"}>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2.5 text-left hover:text-indigo-700"
+                                onClick={() => setDetailItem(item)}
+                              >
+                                <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-[#eceff2] text-slate-400">
+                                  {item.imageUrl ? (
+                                    <img
+                                      className="size-full object-cover"
+                                      src={apiUrl(item.imageUrl)}
+                                      loading="lazy"
+                                      alt=""
+                                    />
+                                  ) : (
+                                    <Icons.Image className="size-4" />
+                                  )}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block text-[13px] font-medium">{item.name}</span>
+                                  <span className="block text-xs text-muted">
+                                    {item.sku ||
+                                      formatCategoryParentLabel(item.category.parent?.name, item.category.sub?.name)}
                                   </span>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </button>
-                        <div className="shrink-0 flex items-center gap-2">
-                          <div className="text-xs text-gray-500 text-right">
-                            <div className="font-semibold text-gray-900">
-                              {fromWh ? sourceStock(i.itemId) : totalStock(i.itemId)}
-                            </div>
-                            <div className="text-[10px]">{i.unit}</div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={alreadyAdded ? "secondary" : "primary"}
-                            onClick={() => addItemToTransfer(i)}
-                            disabled={alreadyAdded}
-                            title={alreadyAdded ? "Již přidáno" : "Přidat do převodu"}
-                          >
-                            {alreadyAdded ? <Icons.Check className="w-4 h-4" /> : <Icons.Plus />}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                                </span>
+                              </button>
+                            </td>
+                            <td
+                              className={cn(
+                                "px-4 py-2 text-right whitespace-nowrap tabular-nums",
+                                available < 0 && "text-red-700"
+                              )}
+                            >
+                              {available === 0 ? "–" : `${available} ${item.unit}`}
+                            </td>
+                            {to && (
+                              <td
+                                className={cn(
+                                  "px-4 py-2 text-right whitespace-nowrap tabular-nums",
+                                  target < 0 && "text-red-700"
+                                )}
+                              >
+                                {target === 0 ? "–" : `${target} ${item.unit}`}
+                              </td>
+                            )}
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              {selected ? (
+                                <Badge className="gap-1 bg-indigo-50 text-indigo-700">
+                                  <Check size={12} /> {selected.qty} v převodu
+                                </Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={submitting || (!!from && available <= 0)}
+                                  onClick={() => addItemToTransfer(item)}
+                                >
+                                  <Icons.Plus className="size-3.5" /> Přidat
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Transfer form — compact right sidebar */}
-        <div className="space-y-4">
-          <Card className="shadow-premium lg:sticky lg:top-20">
-            <CardHeader className="bg-indigo-600 text-white rounded-t-xl py-3 px-4">
-              <div className="flex items-center gap-2">
-                <Icons.History />
-                <h2 className="font-semibold text-sm">Nový převod</h2>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4">
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    Z (Odkud)
-                  </label>
-                  <Select value={fromWh} onChange={(e) => setFromWh(e.target.value)}>
-                    <option value="">Vyberte</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    DO (Kam)
-                  </label>
-                  <Select value={toWh} onChange={(e) => setToWh(e.target.value)}>
-                    <option value="">Vyberte</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-
-              <div className="mb-4">
-                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                  <Icons.Box className="w-3 h-3" />
-                  Položky ({transferItems.length})
-                </div>
-                {invalidTransferItems.length > 0 ? (
-                  <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
+            </Card>
+            <Card className="min-w-0 lg:sticky lg:top-20">
+              <CardHeader className="p-4">
+                <h2 className="text-base font-bold">
+                  {from && to ? `Převod ${from.name} → ${to.name}` : "Nový převod"}
+                </h2>
+                <p className="mt-1 text-xs text-muted">
+                  {transferItems.length} položek · {total} j.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {invalidTransferItems.length > 0 && (
+                  <div className="rounded-lg bg-amber-100 p-2.5 text-xs text-amber-800">
                     Některé položky nemají na zdrojovém skladu dost kusů. Upravte množství nebo změňte sklad.
                   </div>
-                ) : null}
-                {transferItems.length === 0 ? (
-                  <div className="py-4 text-center text-xs text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
+                )}
+                {!transferItems.length ? (
+                  <div className="rounded-lg border border-dashed border-line p-4 text-center text-xs text-muted">
                     Vyberte položky v seznamu
                   </div>
                 ) : (
-                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                    {transferItems.map((ti) => (
-                      <div
-                        key={ti.itemId}
-                        className={`flex items-center gap-2 p-2 rounded border ${
-                          fromWh && (sourceStock(ti.itemId) <= 0 || ti.qty > sourceStock(ti.itemId))
-                            ? "border-amber-300 bg-amber-50"
-                            : "border-gray-200 bg-gray-50"
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-gray-900 truncate" title={ti.name}>
-                            {ti.name}
-                          </div>
-                          {fromWh ? (
-                            <div className="text-[10px] text-gray-500">
-                              Na zdroji: {sourceStock(ti.itemId)} {itemById.get(ti.itemId)?.unit ?? "ks"}
+                  <ul className="max-h-64 divide-y divide-line overflow-auto">
+                    {transferItems.map((item) => (
+                      <li key={item.itemId} className="flex items-center gap-2 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13px] font-medium wrap-break-word">{item.name}</div>
+                          {from && (
+                            <div className="text-xs text-muted">
+                              Max. {sourceStock(item.itemId)} {itemById.get(item.itemId)?.unit ?? "ks"}
                             </div>
-                          ) : null}
+                          )}
                         </div>
-                        <Input
-                          type="number"
-                          min="1"
-                          value={ti.qty}
-                          onChange={(e) => updateQty(ti.itemId, parseInt(e.target.value))}
-                          className="bg-white py-1 w-14 text-xs"
+                        <QuantityStepper
+                          label={item.name}
+                          decreaseDisabled={submitting || item.qty <= 1}
+                          increaseDisabled={submitting || (!!from && item.qty >= sourceStock(item.itemId))}
+                          onDecrease={() => updateQty(item.itemId, item.qty - 1)}
+                          onIncrease={() => updateQty(item.itemId, item.qty + 1)}
+                          value={
+                            <Input
+                              type="number"
+                              aria-label={`Množství — ${item.name}`}
+                              value={item.qty}
+                              min={1}
+                              disabled={submitting}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onChange={(event) => updateQty(item.itemId, Number.parseInt(event.target.value, 10))}
+                              className="h-8 w-11 appearance-none rounded-none border-0 px-0 text-center [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          }
                         />
                         <button
-                          onClick={() => removeTransferItem(ti.itemId)}
-                          className="text-gray-400 hover:text-red-500 p-0.5 rounded"
+                          type="button"
+                          aria-label={`Odebrat ${item.name}`}
+                          onClick={() => removeTransferItem(item.itemId)}
+                          disabled={submitting}
+                          className="rounded-md p-1 text-muted hover:bg-red-100 hover:text-red-700"
                         >
-                          <Icons.Trash className="w-3.5 h-3.5" />
+                          <X size={16} />
                         </button>
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
-              </div>
-
-              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">
-                  Hromadné nastavení
-                </div>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <Input
-                    type="number"
-                    min="1"
-                    value={bulkQty}
-                    onChange={(e) => setBulkQty(e.target.value)}
-                    placeholder="Množství pro všechny"
-                  />
-                  <Button size="sm" variant="secondary" onClick={() => applyBulkQty("fixed")} disabled={transferItems.length === 0}>
-                    Nastavit všem
-                  </Button>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => applyBulkQty("max")} disabled={transferItems.length === 0}>
-                    Vyplnit maximum
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setTransferItems([])}
-                    disabled={transferItems.length === 0}
-                  >
-                    Vyčistit
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                  Poznámka
-                </label>
-                <textarea
-                  className="w-full rounded-lg border border-gray-200 p-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                {transferItems.length > 0 && (
+                  <details className="rounded-lg border border-line bg-table p-2.5 text-sm">
+                    <summary className="cursor-pointer font-medium">Hromadné nastavení</summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        aria-label="Množství pro všechny položky"
+                        value={bulkQty}
+                        onChange={(event) => setBulkQty(event.target.value)}
+                        className="h-9 w-20"
+                      />
+                      <Button size="sm" variant="secondary" disabled={submitting} onClick={() => applyBulkQty("fixed")}>
+                        Nastavit všem
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={submitting} onClick={() => applyBulkQty("max")}>
+                        Vyplnit maximum
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={submitting} onClick={() => setTransferItems([])}>
+                        Vyčistit
+                      </Button>
+                    </div>
+                  </details>
+                )}
+                <Textarea
                   rows={2}
+                  aria-label="Důvod převodu"
+                  placeholder="Důvod převodu…"
                   value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Důvod převodu..."
+                  disabled={submitting}
+                  onChange={(event) => setNote(event.target.value)}
                 />
-              </div>
+                <Button
+                  full
+                  disabled={
+                    submitting ||
+                    !from ||
+                    !to ||
+                    fromWh === toWh ||
+                    !transferItems.length ||
+                    invalidTransferItems.length > 0
+                  }
+                  onClick={handleTransfer}
+                >
+                  <Truck size={16} />
+                  {submitting ? "Provádím…" : `Potvrdit převod${total ? ` (${total})` : ""}`}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
 
-              <Button
-                variant="primary"
-                full
-                onClick={handleTransfer}
-                disabled={submitting || transferItems.length === 0 || invalidTransferItems.length > 0}
-              >
-                {submitting ? "Provádím..." : "Potvrdit převod"}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
+      {tab === "history" && (
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <h2 className="font-bold">Historie převodů</h2>
+            <p className="text-xs text-muted">Posledních 100 převedených položek</p>
+          </CardHeader>
+          {historyError || !history?.length ? (
+            <p className="p-4 text-sm text-muted">
+              {historyError || (history === null ? "Načítám historii…" : "Zatím neproběhl žádný převod.")}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="table-header">
+                  <tr>
+                    <th scope="col">Termín</th>
+                    <th scope="col">Položka</th>
+                    <th scope="col">Ze skladu</th>
+                    <th scope="col">Do skladu</th>
+                    <th scope="col">Množství</th>
+                    <th scope="col">Důvod</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line border-t border-line">
+                  {history.map((row) => (
+                    <tr key={row.id}>
+                      <td className="px-4 py-2 text-muted">{new Date(row.transferredAt).toLocaleString("cs-CZ")}</td>
+                      <td className="px-4 py-2 font-medium">{row.item?.name ?? "Položka byla odstraněna"}</td>
+                      <td className="px-4 py-2">{row.fromWarehouse.name}</td>
+                      <td className="px-4 py-2">{row.toWarehouse.name}</td>
+                      <td className="px-4 py-2">
+                        {row.quantity} {row.item?.unit}
+                      </td>
+                      <td className="px-4 py-2 text-muted">{row.note || "–"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+      {tab === "suggestions" && (
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <h2 className="font-bold">Návrhy k vyrovnání</h2>
+            <p className="text-xs text-muted">
+              Položky se záporným evidovaným stavem a kladnou zásobou na jiném skladu.
+            </p>
+          </CardHeader>
+          {loading || !suggestions.length ? (
+            <p className="p-4 text-sm text-muted">{loading ? "Načítám…" : "Žádné návrhy k vyrovnání."}</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {suggestions.map(({ item, source, destination, qty }) => (
+                <li
+                  key={`${item.itemId}/${destination.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm"
+                >
+                  <div>
+                    <div className="font-semibold">{item.name}</div>
+                    <div className="text-xs text-muted">
+                      {source.name} → {destination.name} · {qty} {item.unit}
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={transferItems.length > 0 || submitting}
+                    onClick={() => {
+                      setFromWh(source.id);
+                      setToWh(destination.id);
+                      setTransferItems([{ itemId: item.itemId, name: item.name, qty }]);
+                      setTab("new");
+                    }}
+                  >
+                    Připravit převod
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {transferItems.length > 0 && (
+            <p className="border-t border-line p-4 text-xs text-muted">
+              Nejdřív dokončete nebo vyčistěte rozpracovaný převod.
+            </p>
+          )}
+        </Card>
+      )}
       <ItemDetailModal
         item={detailItem}
         warehouses={warehouses}
@@ -524,12 +690,50 @@ export default function WarehouseTransfersPage() {
         onClose={() => setDetailItem(null)}
         primaryText="Přidat do převodu"
         onPrimary={() => {
-          if (detailItem) {
+          if (detailItem && !submitting) {
             addItemToTransfer(detailItem);
             setDetailItem(null);
           }
         }}
       />
     </div>
+  );
+}
+
+function WarehouseSelect({
+  label,
+  value,
+  onChange,
+  warehouses,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  warehouses: Warehouse[];
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex min-w-0 items-center gap-3 rounded-xl border border-line p-2.5">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-700">
+        <Warehouse size={18} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[11px] font-semibold tracking-wide text-muted uppercase">{label}</span>
+        <Select
+          className="h-7 border-0 px-0 font-semibold"
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">Vyberte sklad</option>
+          {warehouses.map((warehouse) => (
+            <option key={warehouse.id} value={warehouse.id}>
+              {warehouse.name}
+            </option>
+          ))}
+        </Select>
+      </span>
+    </label>
   );
 }

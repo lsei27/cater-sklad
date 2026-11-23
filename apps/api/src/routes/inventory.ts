@@ -161,10 +161,14 @@ async function createWarehouseTransfersTx(
 
 export async function inventoryRoutes(app: FastifyInstance) {
   app.get("/categories/tree", { preHandler: [app.authenticate] }, async () => {
+    const activeItems = { select: { items: { where: { active: true } } } };
     const parents = await app.prisma.category.findMany({
       where: { parentId: null },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      include: { children: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }] } }
+      include: {
+        _count: activeItems,
+        children: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { _count: activeItems } }
+      }
     });
     return { parents };
   });
@@ -185,7 +189,16 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const where: Prisma.InventoryItemWhereInput = {};
     if (query.active !== undefined) where.active = query.active;
     if (query.category_id) where.categoryId = query.category_id;
-    if (query.search) where.name = { contains: query.search, mode: "insensitive" };
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      const contains = { contains: search, mode: "insensitive" } as const;
+      where.OR = [
+        { name: contains },
+        { sku: contains },
+        { qrCode: contains },
+        ...(z.uuid().safeParse(search).success ? [{ id: search }] : [])
+      ];
+    }
     const items = await app.prisma.inventoryItem.findMany({
       where,
       orderBy: [
@@ -397,6 +410,32 @@ export async function inventoryRoutes(app: FastifyInstance) {
     }
 
     return { stocks: result };
+  });
+
+  app.get("/inventory/transfers", { preHandler: [app.authenticate] }, async (request) => {
+    requireStockAccess(request.user!);
+    const transfers = await app.prisma.warehouseTransfer.findMany({
+      take: 100,
+      orderBy: [{ transferredAt: "desc" }, { id: "desc" }],
+      select: {
+        id: true,
+        inventoryItemId: true,
+        fromWarehouse: { select: { name: true } },
+        toWarehouse: { select: { name: true } },
+        quantity: true,
+        note: true,
+        transferredAt: true
+      }
+    });
+    const inventory = await app.prisma.inventoryItem.findMany({
+      where: { id: { in: [...new Set(transfers.map((transfer) => transfer.inventoryItemId))] } },
+      select: { id: true, name: true, sku: true, unit: true }
+    });
+    const items = new Map(inventory.map(({ id, ...item }) => [id, item]));
+    return { transfers: transfers.map(({ inventoryItemId, ...transfer }) => ({
+      ...transfer,
+      item: items.get(inventoryItemId) ?? null
+    })) };
   });
 
   app.post("/inventory/transfers", { preHandler: [app.authenticate] }, async (request, reply) => {

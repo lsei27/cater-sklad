@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { EventStatus, LedgerReason, Role, type Prisma } from "../generated/prisma/client.js";
 import { createTestPrisma } from "./testPrisma.js";
@@ -7,6 +9,8 @@ import { getPhysicalTotal } from "../src/services/availability.js";
 import { getIssuedDaysTx, issueDayTx } from "../src/services/issueDay.js";
 import { issueAdditionalTx } from "../src/services/issueAdditional.js";
 import { returnCloseTx } from "../src/services/returnClose.js";
+import authPlugin from "../src/plugins/auth.js";
+import { eventRoutes } from "../src/routes/events.js";
 
 type TestPrisma = ReturnType<typeof createTestPrisma>["prisma"];
 
@@ -65,6 +69,62 @@ describe("výdej po dnech (integration)", () => {
   const url = process.env.DATABASE_URL;
   const run = !!url && process.env.RUN_DB_TESTS === "1";
   const maybe = run ? it : it.skip;
+
+  maybe("digitální balení ukládá skutečné množství včetně nuly a nepřepíše vydaný den", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const app = Fastify();
+    app.decorate("prisma", prisma);
+    app.register(authPlugin, { jwtSecret: randomBytes(32).toString("hex") });
+    app.register(eventRoutes);
+
+    try {
+      const f = await setup(prisma, { days: 1 });
+      await app.ready();
+      const headers = { authorization: `Bearer ${app.jwt.sign({ sub: f.user.id })}` };
+      const url = `/events/${f.event.id}/packing`;
+      const update = (state: "armed" | "confirmed", packed_quantity?: number) => app.inject({
+        url, headers, method: "PUT", payload: { inventory_item_id: f.item.id, state, packed_quantity }
+      });
+      const read = async () => (await app.inject({ url, headers })).json<{ packing: Array<{ state: string; packedQuantity: number | null }> }>().packing;
+      const progress = async () => {
+        const response = await app.inject({ url: "/events?view=warehouse", headers });
+        expect(response.statusCode).toBe(200);
+        return response.json<{ events: Array<{ id: string; packingProgress?: unknown }> }>().events
+          .find((event) => event.id === f.event.id)?.packingProgress;
+      };
+
+      expect(await progress()).toEqual({ total: 1, confirmed: 0, started: false, missing: 0 });
+      const startPacking = () => app.inject({ method: "POST", url: `${url}/start`, headers });
+      const started = await startPacking();
+      expect(started.statusCode).toBe(200);
+      expect((await startPacking()).json()).toEqual(started.json());
+      expect(await progress()).toEqual({ total: 1, confirmed: 0, started: true, missing: 0 });
+
+      expect((await update("armed")).statusCode).toBe(200);
+      expect(await read()).toMatchObject([{ state: "armed", packedQuantity: null }]);
+      expect((await update("armed", 0)).statusCode).toBe(200);
+      expect(await read()).toMatchObject([{ state: "armed", packedQuantity: 0 }]);
+      expect((await update("confirmed", 51)).statusCode).toBe(400);
+      expect(await read()).toMatchObject([{ state: "armed", packedQuantity: 0 }]);
+      expect((await update("confirmed", 24)).statusCode).toBe(200);
+      expect(await read()).toMatchObject([{ state: "confirmed", packedQuantity: 24 }]);
+      expect(await progress()).toEqual({ total: 1, confirmed: 1, started: true, missing: 1 });
+
+      const issue = await app.inject({
+        method: "POST", url: `/events/${f.event.id}/issue`, headers,
+        payload: { items: [{ inventory_item_id: f.item.id, issued_quantity: 24 }] }
+      });
+      expect(issue.statusCode).toBe(200);
+      expect(await getPhysicalTotal(prisma, f.item.id)).toBe(176);
+      expect((await update("confirmed", 24)).statusCode).toBe(409);
+      expect(await read()).toEqual([]);
+      expect((await startPacking()).statusCode).toBe(409);
+      expect(await progress()).toBeUndefined();
+    } finally {
+      await app.close();
+      await disconnect();
+    }
+  });
 
   maybe("den 1 vydá jen řádky začínající dnem 1 a přepne akci na Vydáno", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);

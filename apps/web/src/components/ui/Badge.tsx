@@ -8,8 +8,8 @@ export default function Badge(
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-        tone === "neutral" && "bg-slate-100 text-slate-700",
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
+        tone === "neutral" && "bg-canvas text-muted",
         tone === "ok" && "bg-emerald-100 text-emerald-700",
         tone === "warn" && "bg-amber-100 text-amber-800",
         tone === "danger" && "bg-red-100 text-red-700",

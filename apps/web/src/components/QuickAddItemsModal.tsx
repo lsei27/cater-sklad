@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import toast from "react-hot-toast";
-import { Search } from "lucide-react";
+import { ChevronRight, Plus, Search } from "lucide-react";
 import { api, getCurrentUser } from "../lib/api";
 import { humanError } from "../lib/viewModel";
 import { cn } from "../lib/ui";
-import type { DayRange } from "../lib/eventDays";
+import { dayRangeLabel, eventDayDateLabel, type DayRange } from "../lib/eventDays";
+import { FavoriteButton, FavoriteFilter, useInventoryFavorites } from "./InventoryFavorites";
 import Input from "./ui/Input";
 import Modal from "./ui/Modal";
 import Skeleton from "./ui/Skeleton";
@@ -18,6 +19,7 @@ type CategoryRef = {
 type QuickInventoryItem = {
   itemId: string;
   name: string;
+  sku?: string | null;
   unit: string | null;
   masterPackageQty: number | null;
   category: {
@@ -65,6 +67,8 @@ type ItemGroup = {
   items: QuickInventoryItem[];
 };
 
+const MAX_ROWS_PER_CARD = 16;
+
 function normalizeSearchText(value: string) {
   return value
     .normalize("NFD")
@@ -107,20 +111,32 @@ export default function QuickAddItemsModal(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   eventId: string;
+  eventName: string;
+  eventDate: string | null;
+  dayCount: number;
+  warehouseName?: string;
   role: string;
   existingItems: QuickAddExistingItem[];
   range: DayRange;
+  initialFavoritesOnly: boolean;
   onDone: () => Promise<void> | void;
 }) {
   const [items, setItems] = useState<QuickInventoryItem[]>([]);
   const [availability, setAvailability] = useState<Map<string, AvailabilityRow>>(new Map());
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
+  const [parentId, setParentId] = useState("");
+  const [filledOnly, setFilledOnly] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const favorites = useInventoryFavorites();
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitErrorItemId, setSubmitErrorItemId] = useState<string | null>(null);
   const loadSequence = useRef(0);
+  const searchContainer = useRef<HTMLLabelElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const currentUserId = getCurrentUser()?.id;
 
@@ -128,6 +144,10 @@ export default function QuickAddItemsModal(props: {
     () => new Map(props.existingItems.map((item) => [item.inventoryItemId, item])),
     [props.existingItems]
   );
+
+  useEffect(() => {
+    if (props.open) setFavoritesOnly(props.initialFavoritesOnly);
+  }, [props.open, props.initialFavoritesOnly]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -142,6 +162,9 @@ export default function QuickAddItemsModal(props: {
 
     setQuantities(initialQuantities);
     setSearch("");
+    setParentId("");
+    setFilledOnly(false);
+    setActiveItemId(null);
     setSubmitErrorItemId(null);
     setLoadError(null);
     setLoading(true);
@@ -155,20 +178,21 @@ export default function QuickAddItemsModal(props: {
           return;
         }
 
-        const availabilityResponse = await api<{ rows: AvailabilityRow[] }>(
-          `/events/${props.eventId}/availability`,
-          {
+        const ids = inventoryResponse.items.map((item) => item.itemId);
+        const batches = Array.from({ length: Math.ceil(ids.length / 1000) }, (_, index) =>
+          api<{ rows: AvailabilityRow[] }>(`/events/${props.eventId}/availability`, {
             method: "POST",
             body: JSON.stringify({
-              inventory_item_ids: inventoryResponse.items.map((item) => item.itemId),
+              inventory_item_ids: ids.slice(index * 1000, (index + 1) * 1000),
               day_from: props.range.dayFrom,
               day_to: props.range.dayTo
             })
-          }
+          })
         );
+        const responses = await Promise.all(batches);
         if (sequence !== loadSequence.current) return;
         setAvailability(
-          new Map(availabilityResponse.rows.map((row) => [row.inventoryItemId, row]))
+          new Map(responses.flatMap(({ rows }) => rows.map((row) => [row.inventoryItemId, row] as const)))
         );
       })
       .catch((error: unknown) => {
@@ -178,18 +202,32 @@ export default function QuickAddItemsModal(props: {
       .finally(() => {
         if (sequence === loadSequence.current) setLoading(false);
       });
+    return () => { ++loadSequence.current; };
   }, [props.open, props.eventId, props.existingItems, props.range.dayFrom, props.range.dayTo]);
 
+  const parentCategories = useMemo(() => {
+    const categories = new Map<string, { ref: CategoryRef; count: number }>();
+    for (const { category: { parent } } of items) {
+      const category = categories.get(parent.id) ?? { ref: parent, count: 0 };
+      category.count += 1;
+      categories.set(parent.id, category);
+    }
+    return [...categories.values()].sort((a, b) =>
+      (a.ref.sortOrder ?? 0) - (b.ref.sortOrder ?? 0) || a.ref.name.localeCompare(b.ref.name, "cs"));
+  }, [items]);
+
   const visibleItems = useMemo(() => {
-    const query = normalizeSearchText(search.trim());
-    if (!query) return items;
-    const tokens = query.split(/\s+/).filter(Boolean);
+    const tokens = normalizeSearchText(search.trim()).split(/\s+/).filter(Boolean);
     return items.filter((item) => {
+      if (favoritesOnly && !favorites?.ids?.has(item.itemId)) return false;
+      if (parentId && item.category.parent.id !== parentId) return false;
+      if (filledOnly && !quantities[item.itemId]?.trim() && activeItemId !== item.itemId) return false;
+      if (tokens.length === 0) return true;
       const categoryLabel = `${item.category.parent.name} ${item.category.sub?.name ?? ""}`;
-      const haystack = normalizeSearchText(`${item.name} ${categoryLabel}`);
+      const haystack = normalizeSearchText(`${item.name} ${categoryLabel} ${item.sku ?? ""}`);
       return tokens.every((token) => haystack.includes(token));
     });
-  }, [items, search]);
+  }, [items, search, parentId, filledOnly, favoritesOnly, favorites?.ids, quantities, activeItemId]);
 
   const groups = useMemo(() => {
     const groupsByKey = new Map<string, ItemGroup>();
@@ -202,8 +240,15 @@ export default function QuickAddItemsModal(props: {
       group.items.push(item);
       groupsByKey.set(key, group);
     }
-    return Array.from(groupsByKey.values());
+    return [...groupsByKey.values()].flatMap((group) =>
+      Array.from({ length: Math.ceil(group.items.length / MAX_ROWS_PER_CARD) }, (_, index) => ({
+        key: `${group.key}:${index}`,
+        title: group.title,
+        items: group.items.slice(index * MAX_ROWS_PER_CARD, (index + 1) * MAX_ROWS_PER_CARD)
+      }))
+    );
   }, [visibleItems]);
+  const inputOrder = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 
   const changes = useMemo(() => {
     return items.flatMap((item) => {
@@ -214,36 +259,43 @@ export default function QuickAddItemsModal(props: {
       const originalQuantity = existing?.reservedQuantity ?? 0;
       if (requestedQuantity === null || requestedQuantity === originalQuantity) return [];
 
-      const available = availability.get(item.itemId)?.available ?? 0;
-      const effective = effectiveQuantity(item, requestedQuantity);
-      return [{ item, requestedQuantity, effective, available }];
+      return [{ item, requestedQuantity }];
     });
-  }, [availability, currentUserId, existingByItemId, items, props.role, quantities]);
+  }, [currentUserId, existingByItemId, items, props.role, quantities]);
 
   const invalidItemIds = useMemo(() => {
-    return items.flatMap((item) => {
+    return new Set(items.flatMap((item) => {
       const existing = existingByItemId.get(item.itemId);
       if (!canModifyExistingItem(props.role, currentUserId, existing)) return [];
 
       const requestedQuantity = parseQuantity(quantities[item.itemId] ?? "");
       if (requestedQuantity === null) return [item.itemId];
-      if (requestedQuantity === (existing?.reservedQuantity ?? 0)) return [];
+      if (requestedQuantity === 0 || requestedQuantity === (existing?.reservedQuantity ?? 0)) return [];
 
       const available = availability.get(item.itemId)?.available ?? 0;
       return effectiveQuantity(item, requestedQuantity) > available ? [item.itemId] : [];
-    });
+    }));
   }, [availability, currentUserId, existingByItemId, items, props.role, quantities]);
-  const filledCount = items.filter((item) => (parseQuantity(quantities[item.itemId] ?? "") ?? 0) > 0).length;
+
+  const totals = new Map<string, number>();
+  let filledCount = 0;
+  for (const item of items) {
+    const quantity = parseQuantity(quantities[item.itemId] ?? "") ?? 0;
+    if (quantity === 0) continue;
+    filledCount += 1;
+    const unit = item.unit ?? "ks";
+    totals.set(unit, (totals.get(unit) ?? 0) + quantity);
+  }
 
   const focusAdjacentInput = (itemId: string, direction: 1 | -1) => {
-    const currentIndex = visibleItems.findIndex((item) => item.itemId === itemId);
+    const currentIndex = inputOrder.findIndex((item) => item.itemId === itemId);
     if (currentIndex < 0) return;
     for (
       let index = currentIndex + direction;
-      index >= 0 && index < visibleItems.length;
+      index >= 0 && index < inputOrder.length;
       index += direction
     ) {
-      const input = inputRefs.current.get(visibleItems[index].itemId);
+      const input = inputRefs.current.get(inputOrder[index].itemId);
       if (input && !input.disabled) {
         input.focus();
         input.select();
@@ -263,7 +315,7 @@ export default function QuickAddItemsModal(props: {
   };
 
   const submit = async () => {
-    if (changes.length === 0 || invalidItemIds.length > 0) return;
+    if (saving || loading || loadError || changes.length === 0 || invalidItemIds.size > 0) return;
     setSaving(true);
     setSubmitErrorItemId(null);
     try {
@@ -307,6 +359,9 @@ export default function QuickAddItemsModal(props: {
           });
         }
         setSearch("");
+        setParentId("");
+        setFilledOnly(false);
+        setFavoritesOnly(false);
         window.requestAnimationFrame(() => inputRefs.current.get(itemId)?.focus());
       }
       toast.error(humanError(error));
@@ -315,186 +370,240 @@ export default function QuickAddItemsModal(props: {
     }
   };
 
+  const description = [
+    `Přidáváte do akce ${props.eventName}`,
+    props.eventDate ? eventDayDateLabel(props.eventDate, props.range.dayFrom) : null,
+    props.dayCount > 1 ? dayRangeLabel(props.range, props.dayCount) : null,
+    props.warehouseName,
+    "dostupnost pro termín akce"
+  ].filter(Boolean).join(" · ");
+
   return (
     <Modal
       open={props.open}
-      onOpenChange={props.onOpenChange}
-      title="Zjednodušené přidání položek"
-      description="Vyplňte požadované množství jako v tabulce. Prázdné pole znamená 0."
-      contentClassName="w-[96vw] max-w-[96vw]"
-      bodyClassName="h-[76vh] overflow-hidden px-0 py-0"
+      onOpenChange={(open) => { if (!saving) props.onOpenChange(open); }}
+      fullScreen
+      title="Rychlé zadání položek"
+      description={description}
+      contentClassName="border-0 md:top-0"
+      headerClassName="items-center border-b-0 px-4 pb-2 pt-4 sm:px-6 [&_h2]:text-xl [&_h2]:font-bold [&_button]:border [&_button]:border-line"
+      headerAside={
+        <span className="hidden text-xs text-muted sm:inline">
+          <kbd className="mr-1 rounded-md border border-line bg-canvas px-1.5 py-0.5">Enter</kbd> další řádek
+        </span>
+      }
+      onOpenAutoFocus={(event) => {
+        opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const input = searchContainer.current?.querySelector("input");
+        if (!input || !window.matchMedia("(pointer: fine)").matches) return;
+        event.preventDefault();
+        input.focus();
+      }}
+      onCloseAutoFocus={(event) => {
+        if (!opener.current?.isConnected) return;
+        event.preventDefault();
+        opener.current.focus();
+      }}
+      bodyClassName="flex flex-col overflow-hidden"
       footer={
-        <div className="text-xs text-slate-600">
-          Vyplněno <span className="font-semibold text-slate-900">{filledCount}</span>
-          <span className="mx-2 text-slate-300">•</span>
-          Změny <span className="font-semibold text-indigo-700">{changes.length}</span>
-          {invalidItemIds.length > 0 ? (
-            <span className="ml-2 font-semibold text-red-700">· Opravte {invalidItemIds.length}</span>
-          ) : null}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-0 text-sm">
+          <strong>Vyplněno {filledCount} položek</strong>
+          {totals.size > 0 && (
+            <span className="text-muted">
+              {[...totals].map(([unit, total]) => `${total.toLocaleString("cs-CZ")} ${unit}`).join(" · ")} celkem
+            </span>
+          )}
+          {filledCount > 0 && !filledOnly && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 font-medium text-indigo-700 hover:underline"
+              onClick={() => {
+                setSearch("");
+                setParentId("");
+                setFilledOnly(true);
+                setFavoritesOnly(false);
+              }}
+            >
+              Zobrazit vyplněné <ChevronRight size={14} />
+            </button>
+          )}
+          {invalidItemIds.size > 0 && (
+            <span role="status" className="font-semibold text-red-700">K opravě {invalidItemIds.size}</span>
+          )}
         </div>
       }
       secondaryText="Zrušit"
-      onSecondary={() => props.onOpenChange(false)}
-      primaryText={saving ? "Vkládám…" : "Vložit do akce"}
+      onSecondary={() => { if (!saving) props.onOpenChange(false); }}
+      primaryText={saving ? "Vkládám…" : <><Plus size={16} /> Vložit do akce ({changes.length})</>}
       onPrimary={submit}
-      primaryDisabled={saving || loading || changes.length === 0 || invalidItemIds.length > 0}
+      primaryDisabled={saving || loading || !!loadError || changes.length === 0 || invalidItemIds.size > 0}
     >
-      <div className="flex h-full min-h-0 flex-col bg-slate-50/70">
-        <div className="border-b border-slate-100 bg-white px-3 py-3 sm:px-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <label className="relative block w-full sm:max-w-sm">
-              <span className="sr-only">Hledat položku</span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                className="pl-9"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Hledat název nebo kategorii…"
-              />
-            </label>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-              <span><strong className="text-slate-900">{items.length}</strong> položek</span>
-              <span><kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5">Enter</kbd> další řádek</span>
-              <span className="hidden md:inline">Dostupnost platí pro termín akce</span>
-            </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-4 pb-3 pt-1 sm:px-6">
+        <label ref={searchContainer} className="relative w-full min-w-52 flex-1 xl:max-w-[30.5%]">
+          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <Input
+            type="search"
+            aria-label="Hledat položku"
+            className="pl-9"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Hledat název nebo kategorii…"
+          />
+        </label>
+        <FavoriteFilter selected={favoritesOnly} onChange={setFavoritesOnly} />
+        <div role="group" aria-label="Kategorie položek" className="order-last flex min-w-0 basis-full gap-1.5 overflow-x-auto py-0.5 xl:order-none xl:flex-1">
+          {[{ ref: { id: "", name: "Vše" }, count: items.length }, ...parentCategories].map(({ ref, count }) => (
+            <button
+              type="button"
+              key={ref.id}
+              aria-pressed={parentId === ref.id}
+              onClick={() => setParentId(ref.id)}
+              className={cn(
+                "shrink-0 rounded-full border border-line px-3 py-1 text-[13px] font-medium whitespace-nowrap focus-visible:outline-offset-[-2px]",
+                parentId === ref.id ? "border-ink bg-ink text-white" : "bg-white hover:bg-canvas"
+              )}
+            >
+              {ref.name} {count}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={filledOnly}
+          className="group inline-flex min-h-9 shrink-0 items-center gap-2 rounded-lg text-[13px]"
+          onClick={() => setFilledOnly((current) => !current)}
+        >
+          <span aria-hidden="true" className="relative h-[18px] w-8 rounded-full bg-line after:absolute after:top-0.5 after:left-0.5 after:size-3.5 after:rounded-full after:bg-white after:transition-transform group-aria-checked:bg-indigo-600 group-aria-checked:after:translate-x-3.5" />
+          Jen vyplněné
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto bg-canvas px-4 py-5 sm:px-6">
+        {loading ? (
+          <div className="columns-1 gap-4 md:columns-2 xl:columns-4" role="status" aria-label="Načítám položky">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} className="mb-4 break-inside-avoid rounded-xl border border-line bg-white p-3">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="mt-3 h-24 w-full" />
+              </div>
+            ))}
           </div>
-        </div>
+        ) : loadError ? (
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            Položky se nepodařilo načíst. {loadError}
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="rounded-xl border border-line bg-white p-6 text-center text-sm text-muted">
+            {favoritesOnly && favorites?.ids?.size === 0 ? "Zatím nemáte žádné oblíbené položky." : "Žádné položky pro vybrané filtry."}
+          </div>
+        ) : (
+          <div className="columns-1 gap-4 md:columns-2 lg:columns-3 xl:columns-4">
+            {groups.map((group) => (
+              <section key={group.key} className="mb-4 break-inside-avoid overflow-hidden rounded-xl border border-line bg-white">
+                <table aria-label={group.title} className="w-full table-fixed border-collapse text-sm">
+                  <colgroup>
+                    <col />
+                    <col className="w-[5.25rem]" />
+                    <col className="w-[5.25rem]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-line bg-table">
+                      <th scope="col" className="px-3 py-2 text-left text-[13px] font-bold leading-tight">{group.title}</th>
+                      <th scope="col" className="px-1 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-muted">Dostupné</th>
+                      <th scope="col" className="px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-muted">Chci</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.items.map((item) => {
+                      const existing = existingByItemId.get(item.itemId);
+                      const editable = canModifyExistingItem(props.role, currentUserId, existing);
+                      const available = availability.get(item.itemId)?.available ?? 0;
+                      const rawQuantity = quantities[item.itemId] ?? "";
+                      const requested = parseQuantity(rawQuantity);
+                      const effective = requested === null ? null : effectiveQuantity(item, requested);
+                      const filled = requested !== null && requested > 0;
+                      const invalid = invalidItemIds.has(item.itemId) || submitErrorItemId === item.itemId;
+                      const unavailable = available <= 0 && !existing?.reservedQuantity && !rawQuantity;
+                      const packageAdjusted = filled && effective !== requested;
+                      const unit = item.unit ?? "ks";
 
-        <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
-          {loading ? (
-            <div className="columns-1 gap-3 md:columns-2 xl:columns-4">
-              {Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} className="mb-3 break-inside-avoid rounded-xl border border-slate-200 bg-white p-3">
-                  <Skeleton className="h-4 w-2/3" />
-                  <Skeleton className="mt-3 h-24 w-full" />
-                </div>
-              ))}
-            </div>
-          ) : loadError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-              Položky se nepodařilo načíst: {loadError}
-            </div>
-          ) : groups.length === 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
-              Pro hledaný výraz nejsou žádné položky.
-            </div>
-          ) : (
-            <div className="columns-1 gap-3 md:columns-2 lg:columns-3 xl:columns-4">
-              {groups.map((group) => (
-                <section
-                  key={group.key}
-                  className="mb-3 break-inside-avoid overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100"
-                >
-                  <div className="border-b border-slate-200 bg-slate-100/80 px-2.5 py-2">
-                    <h3 className="truncate text-xs font-bold text-slate-800" title={group.title}>
-                      {group.title}
-                    </h3>
-                  </div>
-                  <table className="w-full table-fixed border-collapse text-xs">
-                    <colgroup>
-                      <col />
-                      <col className="w-16" />
-                      <col className="w-20" />
-                    </colgroup>
-                    <thead>
-                      <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="px-2.5 py-1.5 text-left font-semibold">Položka</th>
-                        <th className="px-1 py-1.5 text-right font-semibold">Volné</th>
-                        <th className="px-2 py-1.5 text-right font-semibold">Chci</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.items.map((item) => {
-                        const existing = existingByItemId.get(item.itemId);
-                        const editable = canModifyExistingItem(props.role, currentUserId, existing);
-                        const available = availability.get(item.itemId)?.available ?? 0;
-                        const rawQuantity = quantities[item.itemId] ?? "";
-                        const requestedQuantity = parseQuantity(rawQuantity);
-                        const effective = requestedQuantity === null ? null : effectiveQuantity(item, requestedQuantity);
-                        const originalQuantity = existing?.reservedQuantity ?? 0;
-                        const changed = requestedQuantity !== null && requestedQuantity !== originalQuantity;
-                        const invalid = invalidItemIds.includes(item.itemId);
-                        const unavailable = available <= 0 && originalQuantity <= 0;
-                        const packageAdjusted =
-                          requestedQuantity !== null && requestedQuantity > 0 && effective !== requestedQuantity;
-
-                        return (
-                          <tr
-                            key={item.itemId}
-                            className={cn(
-                              "border-b border-slate-100 last:border-b-0",
-                              changed && !invalid && "bg-indigo-50/70",
-                              invalid && "bg-red-50",
-                              submitErrorItemId === item.itemId && "ring-2 ring-inset ring-red-400"
-                            )}
-                          >
-                            <td className="px-2.5 py-1.5 align-middle">
-                              <div className="truncate font-medium text-slate-800" title={item.name}>{item.name}</div>
-                              {packageAdjusted ? (
-                                <div className="truncate text-[10px] font-semibold text-blue-700">
-                                  celé balení → {effective} {item.unit ?? "ks"}
-                                </div>
-                              ) : !editable ? (
-                                <div className="truncate text-[10px] text-slate-500">spravuje jiná role</div>
-                              ) : null}
-                            </td>
-                            <td
+                      return (
+                        <tr
+                          key={item.itemId}
+                          className={cn(
+                            "border-b border-line last:border-b-0",
+                            filled && "bg-indigo-50",
+                            invalid && "bg-red-50"
+                          )}
+                        >
+                          <th scope="row" className={cn(
+                            "px-3 py-1.5 text-left align-middle font-normal leading-tight wrap-break-word",
+                            filled && "font-semibold",
+                            unavailable && "text-muted"
+                          )}>
+                            <div className="flex items-center gap-1">
+                              <div className="min-w-0 flex-1">
+                                {item.name}
+                                {packageAdjusted ? (
+                                  <span className="mt-0.5 block text-[11px] font-medium text-indigo-700">Celé balení {effective} {unit}</span>
+                                ) : !editable ? (
+                                  <span className="mt-0.5 block text-[11px] text-muted">Spravuje jiný uživatel</span>
+                                ) : null}
+                              </div>
+                              <FavoriteButton itemId={item.itemId} itemName={item.name} className="-mr-1 size-8" />
+                            </div>
+                          </th>
+                          <td className={cn(
+                            "px-1 py-1.5 text-right align-middle text-[13px] font-semibold tabular-nums",
+                            available <= 0 ? "text-red-700" : available <= 20 ? "text-amber-800" : "text-emerald-700"
+                          )}>
+                            {available.toLocaleString("cs-CZ")} {unit}
+                          </td>
+                          <td className="px-2.5 py-1 align-middle">
+                            <input
+                              ref={(element) => {
+                                if (element) inputRefs.current.set(item.itemId, element);
+                                else inputRefs.current.delete(item.itemId);
+                              }}
+                              aria-label={`Požadované množství: ${item.name}`}
+                              aria-invalid={invalid}
                               className={cn(
-                                "px-1 py-1.5 text-right align-middle font-semibold tabular-nums",
-                                available > 3 && "text-emerald-700",
-                                available > 0 && available <= 3 && "text-amber-700",
-                                available <= 0 && "text-red-600"
+                                "h-8 w-full rounded-lg border border-line bg-white px-1 text-center text-sm font-semibold tabular-nums outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 [&::-webkit-inner-spin-button]:appearance-none [appearance:textfield]",
+                                filled && "border-indigo-600 text-indigo-700 ring-1 ring-inset ring-indigo-600",
+                                (unavailable || !editable) && "bg-canvas text-muted",
+                                invalid && "border-red-600 text-red-700 ring-1 ring-inset ring-red-600"
                               )}
-                            >
-                              {available}
-                              <span className="ml-0.5 text-[9px] font-normal text-slate-400">{item.unit ?? "ks"}</span>
-                            </td>
-                            <td className="px-2 py-1 align-middle">
-                              <label className="sr-only" htmlFor={`quick-qty-${item.itemId}`}>
-                                Požadované množství: {item.name}
-                              </label>
-                              <input
-                                ref={(element) => {
-                                  if (element) inputRefs.current.set(item.itemId, element);
-                                  else inputRefs.current.delete(item.itemId);
-                                }}
-                                id={`quick-qty-${item.itemId}`}
-                                name={`quantity-${item.itemId}`}
-                                className={cn(
-                                  "h-8 w-full rounded-lg border bg-white px-1.5 text-right text-sm font-semibold tabular-nums outline-none transition focus:ring-2",
-                                  invalid
-                                    ? "border-red-400 text-red-800 ring-red-300"
-                                    : "border-slate-200 text-slate-900 focus:border-indigo-400 focus:ring-indigo-200",
-                                  (unavailable || !editable) && "bg-slate-100 text-slate-400"
-                                )}
-                                type="number"
-                                inputMode="numeric"
-                                min={0}
-                                step={1}
-                                max={available}
-                                value={rawQuantity}
-                                placeholder="0"
-                                disabled={unavailable || !editable || saving}
-                                onFocus={(event) => event.target.select()}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  setQuantities((current) => ({ ...current, [item.itemId]: value }));
-                                  setSubmitErrorItemId((current) => current === item.itemId ? null : current);
-                                }}
-                                onKeyDown={(event) => handleQuantityKeyDown(event, item.itemId)}
-                                aria-invalid={invalid}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </section>
-              ))}
-            </div>
-          )}
-        </div>
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              step={1}
+                              max={Math.max(0, available)}
+                              value={rawQuantity}
+                              placeholder={unavailable ? "–" : undefined}
+                              disabled={unavailable || !editable || saving}
+                              onFocus={(event) => {
+                                setActiveItemId(item.itemId);
+                                event.currentTarget.select();
+                              }}
+                              onBlur={() => setActiveItemId((current) => current === item.itemId ? null : current)}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setQuantities((current) => ({ ...current, [item.itemId]: value }));
+                                setSubmitErrorItemId((current) => current === item.itemId ? null : current);
+                              }}
+                              onKeyDown={(event) => handleQuantityKeyDown(event, item.itemId)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            ))}
+          </div>
+        )}
       </div>
     </Modal>
   );
