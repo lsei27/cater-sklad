@@ -65,6 +65,94 @@ type ReservationRow = { inventoryItemId: string; reservedQuantity: number; state
 
 type StockRow = { inventoryItemId: string; physicalTotal: number; blockedTotal: number; available: number };
 
+function parseReservationQuantity(raw: string) {
+  const quantity = Number(raw);
+  return raw.trim() !== "" && Number.isSafeInteger(quantity) ? quantity : null;
+}
+
+function ReservationQuantity({
+  label, quantity, step, min, max, unit, disabled, onSave,
+}: {
+  label: string;
+  quantity: number;
+  step: number;
+  min: number;
+  max?: number;
+  unit?: string;
+  disabled?: boolean;
+  onSave: (quantity: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const parsed = draft === null ? null : parseReservationQuantity(draft);
+  const valid = parsed !== null && parsed >= min && (max === undefined || parsed <= max);
+  const current = valid ? parsed : quantity;
+
+  const save = (next: number) => {
+    setDraft(null);
+    if (next !== quantity && !disabled) onSave(next);
+  };
+  const commit = () => {
+    if (disabled || draft === null) return;
+    if (valid) {
+      save(current);
+    } else {
+      setDraft(null);
+      if (draft !== "") toast.error(max !== undefined && parsed !== null && parsed > max
+        ? `Dostupné množství v termínu: ${max}.`
+        : `Zadejte celé množství alespoň ${min}.`);
+    }
+  };
+
+  return (
+    <div
+      className="inline-flex max-w-full"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) commit();
+      }}
+      onMouseDown={(event) => {
+        // Keep the draft when a step button is clicked, including in browsers that don't focus buttons.
+        if (draft !== null && event.target instanceof Element && event.target.closest("button")) event.preventDefault();
+      }}
+    >
+      <QuantityStepper
+        label={label}
+        className={cn("max-w-full [&>span]:min-w-0 [&>button]:w-7 sm:[&>button]:w-8", unit && "border-indigo-100 bg-indigo-50 text-indigo-700")}
+        value={
+          <span className="flex items-center gap-0.5">
+            <input
+              type="number"
+              inputMode="numeric"
+              aria-label={`Množství — ${label}`}
+              min={min}
+              max={max}
+              step={1}
+              disabled={disabled}
+              className="h-8 w-11 min-w-0 rounded-sm bg-transparent text-center [appearance:textfield] focus-visible:outline-offset-[-2px] [&::-webkit-inner-spin-button]:appearance-none"
+              value={draft ?? String(quantity)}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commit();
+                } else if (event.key === "Escape" && draft !== null) {
+                  event.preventDefault();
+                  setDraft(null);
+                }
+              }}
+            />
+            {unit && <span className="text-xs">{unit}</span>}
+          </span>
+        }
+        onDecrease={() => save(Math.max(min, current - step))}
+        onIncrease={() => save(current + step)}
+        decreaseDisabled={disabled || (min > 0 && current <= step)}
+        increaseDisabled={disabled || (max !== undefined && current + step > max)}
+      />
+    </div>
+  );
+}
+
 export default function EventDetailPage() {
   const currentUserId = getCurrentUser()?.id;
   const role = getCurrentUser()?.role ?? "";
@@ -528,7 +616,15 @@ export default function EventDetailPage() {
                           </div></td>
                           <td className="px-4 py-2 text-xs text-muted">{group.sub}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{canChange ?
-                            <QuantityStepper label={label} value={row.reservedQuantity} onDecrease={() => void updateReservation(row, Math.max(1, row.reservedQuantity - step))} onIncrease={() => void updateReservation(row, row.reservedQuantity + step)} decreaseDisabled={saving || row.reservedQuantity <= step} increaseDisabled={saving || !!stock && row.reservedQuantity + step > stock.available} /> :
+                            <ReservationQuantity
+                              label={label}
+                              quantity={row.reservedQuantity}
+                              step={step}
+                              min={1}
+                              max={stock && Math.max(0, stock.available)}
+                              disabled={saving}
+                              onSave={(quantity) => void updateReservation(row, quantity)}
+                            /> :
                             <strong>{row.reservedQuantity} {row.item?.unit}</strong>}
                           </td>
                           <td className="px-4 py-2 whitespace-nowrap">{canEditEvent ?
@@ -797,7 +893,7 @@ function AddItemsPanel(props: {
   const [categoryId, setCategoryId] = useState("");
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [qty, setQty] = useState<Record<string, number>>({});
+  const [qty, setQty] = useState<Record<string, string>>({});
   const [currentItems, setCurrentItems] = useState<Array<{ inventoryItemId: string; reservedQuantity: number; item: any; createdById?: string; dayFrom: number; dayTo: number | null }>>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [crossSells, setCrossSells] = useState<{ sourceItem: any, items: any[] } | null>(null);
@@ -859,13 +955,6 @@ function AddItemsPanel(props: {
       (r) => Number(r.reservedQuantity) > 0 && sameDayRange({ dayFrom: r.dayFrom, dayTo: r.dayTo }, range)
     );
     setCurrentItems(nextItems);
-    setQty((prev) => {
-      const next = { ...prev };
-      for (const item of nextItems) {
-        next[item.inventoryItemId] = Number(item.reservedQuantity);
-      }
-      return next;
-    });
   }, [props.open, props.existingItems, rangeKey]);
 
   useEffect(() => {
@@ -958,13 +1047,10 @@ function AddItemsPanel(props: {
     if (!a) return;
     const available = a.available ?? 0;
     prefillRef.current = true;
-    if (available <= 0) return;
-    setQty((prev) => {
-      const existing = prev[props.focusItemId as string] ?? 0;
-      const desired = existing > 0 ? existing : 1;
-      return { ...prev, [props.focusItemId as string]: Math.min(available, desired) };
-    });
-  }, [props.open, props.focusItemId, availability]);
+    const itemId = props.focusItemId;
+    if (available <= 0 || currentItems.some((item) => item.inventoryItemId === itemId)) return;
+    setQty((prev) => prev[itemId] === undefined ? { ...prev, [itemId]: "1" } : prev);
+  }, [props.open, props.focusItemId, availability, currentItems]);
 
   const applyReservation = async (params: { inventoryItemId: string; qty: number; item?: any; createdById?: string }) => {
     const normalizedQty = Math.max(0, Math.floor(Number(params.qty) || 0));
@@ -1007,7 +1093,11 @@ function AddItemsPanel(props: {
         }
         return [...prev, nextItem];
       });
-      setQty((prev) => ({ ...prev, [params.inventoryItemId]: finalQty }));
+      setQty((prev) => {
+        const next = { ...prev };
+        delete next[params.inventoryItemId];
+        return next;
+      });
       }
 
       void props.onDone();
@@ -1186,19 +1276,31 @@ function AddItemsPanel(props: {
                     <div><h4 className="text-sm font-semibold wrap-break-word">{item.name}</h4><p className="text-xs text-muted">{formatCategoryParentLabel(item.category?.parent?.name, item.category?.sub?.name)}{stock ? ` · celkem ${stock.physicalTotal}` : ""}</p></div>
                     {view === "list" && <Badge tone={stockTone(available)}>{available > 0 ? `Skladem ${available} ${unit}` : "Nedostupné"}</Badge>}
                     {reserved > 0 ? (
-                      <QuantityStepper label={item.name} value={<span className="text-indigo-700">{reserved} {unit}</span>} className="border-indigo-100 bg-indigo-50"
-                        onDecrease={() => void applyReservation({ inventoryItemId: itemId, qty: Math.max(0, reserved - step), item, createdById: existing?.createdById })}
-                        onIncrease={() => void applyReservation({ inventoryItemId: itemId, qty: reserved + step, item, createdById: existing?.createdById })}
-                        decreaseDisabled={locked || saving[itemId]} increaseDisabled={locked || saving[itemId] || reserved + step > available} />
-                    ) : <div className="flex flex-wrap items-center gap-2">
-                      {view === "list" && <Input type="number" min={1} max={available} aria-label={"Počet k přidání — " + item.name}
-                        className="h-9 w-20" value={qty[itemId] || ""} placeholder="Počet" disabled={available <= 0 || saving[itemId]}
-                        onChange={(event) => setQty((previous) => ({ ...previous, [itemId]: Math.min(available, Math.max(0, Number(event.target.value))) }))} />}
-                      <Button variant="dark" size="sm" className={cn("px-2", view === "grid" && "w-full")} disabled={available <= 0 || saving[itemId]} onClick={() => {
-                      const initial = Math.max(step, Number(qty[itemId] || 0));
-                      void applyReservation({ inventoryItemId: itemId, qty: Math.min(initial, available), item, createdById: userId });
-                      }}><Icons.Plus className="size-3.5 shrink-0" /> Přidat do akce</Button>
-                    </div>}
+                      <ReservationQuantity
+                        key={rangeKey}
+                        label={item.name}
+                        quantity={reserved}
+                        unit={unit}
+                        step={step}
+                        min={0}
+                        max={Math.max(0, available)}
+                        disabled={locked || saving[itemId]}
+                        onSave={(quantity) => void applyReservation({ inventoryItemId: itemId, qty: quantity, item, createdById: existing?.createdById })}
+                      />
+                    ) : <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => {
+                      event.preventDefault();
+                      const requested = qty[itemId] ? parseReservationQuantity(qty[itemId]) : Math.min(step, available);
+                      if (saving[itemId] || requested === null || requested < 1 || requested > available) return;
+                      void applyReservation({ inventoryItemId: itemId, qty: requested, item, createdById: userId });
+                    }}>
+                      <Input type="number" inputMode="numeric" min={1} max={available} step={1} aria-label={`Počet k přidání — ${item.name}`}
+                        className={cn("h-9 w-20", view === "grid" && "w-full")} value={qty[itemId] ?? ""} placeholder="Počet" disabled={available <= 0 || saving[itemId]}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setQty((previous) => ({ ...previous, [itemId]: value }));
+                        }} />
+                      <Button type="submit" variant="dark" size="sm" className={cn("px-2", view === "grid" && "w-full")} disabled={available <= 0 || saving[itemId]}><Icons.Plus className="size-3.5 shrink-0" /> Přidat do akce</Button>
+                    </form>}
                     <FavoriteButton itemId={itemId} itemName={item.name} showLabel className={view === "grid" ? "w-full" : undefined} />
                     {view === "list" && <WarehouseBreakdown stocks={warehouseStocks[itemId]} warehouses={warehouses} />}
                   </div>
@@ -1223,9 +1325,14 @@ function AddItemsPanel(props: {
                       const name = row.item?.name ?? "Položka";
                       const current = Number(row.reservedQuantity);
                       const available = availability.get(row.inventoryItemId)?.available;
-                      const value = qty[row.inventoryItemId] ?? current;
+                      const max = available === undefined ? undefined : Math.max(0, available);
+                      const value = qty[row.inventoryItemId] ?? String(current);
+                      const requested = parseReservationQuantity(value);
                       const savingItem = saving[row.inventoryItemId];
-                      const save = () => applyReservation({ inventoryItemId: row.inventoryItemId, qty: value, item: row.item, createdById: row.createdById });
+                      const save = () => {
+                        if (savingItem || requested === null || requested < 0 || requested === current || (max !== undefined && requested > max)) return;
+                        void applyReservation({ inventoryItemId: row.inventoryItemId, qty: requested, item: row.item, createdById: row.createdById });
+                      };
                       return <li key={row.inventoryItemId} className="py-2.5">
                         <div className="flex min-w-0 items-center gap-2">
                           <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-[#eceff2] text-slate-400">{row.item?.imageUrl ? <img className="size-full object-cover" loading="lazy" src={apiUrl(row.item.imageUrl)} alt="" /> : <Icons.Image className="size-4" />}</span>
@@ -1233,14 +1340,14 @@ function AddItemsPanel(props: {
                             <div className="text-[13px] font-medium wrap-break-word">{name}</div>
                             {available !== undefined && current > available && <div className="text-xs text-red-700">Chybí {current - Math.max(available, 0)} {row.item?.unit}</div>}
                           </div>
-                          {canModifyReservation(row) ? <div className="flex items-center gap-1">
-                            <Input type="number" aria-label={`Množství — ${name}`} min={0} max={available} className="h-8 w-16 px-1 text-center" value={value} onFocus={(event) => event.currentTarget.select()} onChange={(event) => {
-                              const number = Math.max(0, Number(event.target.value));
-                              setQty((previous) => ({ ...previous, [row.inventoryItemId]: available === undefined ? number : Math.min(number, Math.max(0, available)) }));
-                            }} onKeyDown={(event) => { if (event.key === "Enter") void save(); }} disabled={savingItem} />
-                            <button type="button" aria-label={`Uložit množství — ${name}`} title="Uložit množství" className="rounded-md p-1.5 text-indigo-700 hover:bg-indigo-50 disabled:opacity-40" disabled={savingItem || value === current} onClick={() => void save()}><Check size={15} /></button>
+                          {canModifyReservation(row) ? <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); save(); }}>
+                            <Input type="number" inputMode="numeric" aria-label={`Množství — ${name}`} min={0} max={max} className="h-8 w-16 px-1 text-center" value={value} onFocus={(event) => event.currentTarget.select()} onChange={(event) => {
+                              const draft = event.currentTarget.value;
+                              setQty((previous) => ({ ...previous, [row.inventoryItemId]: draft }));
+                            }} disabled={savingItem} />
+                            <button type="submit" aria-label={`Uložit množství — ${name}`} title="Uložit množství" className="rounded-md p-1.5 text-indigo-700 hover:bg-indigo-50 disabled:opacity-40" disabled={savingItem || requested === null || requested === current}><Check size={15} /></button>
                             <button type="button" title="Odebrat" aria-label={`Odebrat ${name}`} className="rounded-md p-1.5 text-muted hover:bg-red-100 hover:text-red-700" disabled={savingItem} onClick={() => void applyReservation({ inventoryItemId: row.inventoryItemId, qty: 0, item: row.item, createdById: row.createdById })}><Icons.Trash /></button>
-                          </div> : <Badge>{current} {row.item?.unit ?? "ks"}</Badge>}
+                          </form> : <Badge>{current} {row.item?.unit ?? "ks"}</Badge>}
                         </div>
                       </li>;
                     })}
