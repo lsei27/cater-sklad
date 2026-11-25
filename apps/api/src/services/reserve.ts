@@ -1,6 +1,6 @@
 import type { Role, Prisma } from "../../generated/prisma/client.js";
 import { getAvailabilityForEventItemsTx } from "./availability.js";
-import { dayRangeKey, normalizeDayRange } from "../lib/eventDays.js";
+import { dayRangeKey, normalizeDayRange, type DayRange } from "../lib/eventDays.js";
 
 export class InsufficientStockError extends Error {
   constructor(
@@ -118,6 +118,30 @@ export async function reserveItemsTx(params: {
   const expiresAt = isDraftHold ? new Date(now.getTime() + 30 * 60 * 1000) : null;
   const state = isDraftHold ? "draft" : "confirmed";
 
+  // Položka, která je v požadavku jen jednou, nezávisí na zápisech ostatních
+  // řádků (výpočet vynechá jen její vlastní řádek). Její dostupnost se proto
+  // spočítá předem jedním dotazem za každý rozsah. Dotaz po položkách dělal
+  // z rychlého zadání desítky dotazů a transakce přetekla časový limit.
+  const rowsPerItem = new Map<string, number>();
+  for (const row of adjustedRows) {
+    rowsPerItem.set(row.inventoryItemId, (rowsPerItem.get(row.inventoryItemId) ?? 0) + 1);
+  }
+  const prefetchByRange = new Map<string, { range: DayRange; itemIds: string[] }>();
+  for (const row of adjustedRows) {
+    if (row.qty <= 0 || rowsPerItem.get(row.inventoryItemId) !== 1) continue;
+    const rangeKey = dayRangeKey(row.range);
+    const group = prefetchByRange.get(rangeKey) ?? { range: row.range, itemIds: [] };
+    group.itemIds.push(row.inventoryItemId);
+    prefetchByRange.set(rangeKey, group);
+  }
+  const prefetchedAvailable = new Map<string, number>();
+  for (const { range, itemIds: ids } of prefetchByRange.values()) {
+    const rangeKey = dayRangeKey(range);
+    for (const a of await getAvailabilityForEventItemsTx(tx, eventId, ids, { range })) {
+      prefetchedAvailable.set(`${a.inventoryItemId}|${rangeKey}`, a.available);
+    }
+  }
+
   // Řádky se kontrolují a zapisují postupně, aby druhý řádek téže položky
   // v jednom požadavku viděl první a dohromady nepřekročily sklad.
   for (const row of adjustedRows) {
@@ -128,8 +152,11 @@ export async function reserveItemsTx(params: {
       continue;
     }
 
-    const [availability] = await getAvailabilityForEventItemsTx(tx, eventId, [row.inventoryItemId], { range: row.range });
-    const available = availability?.available ?? 0;
+    let available = prefetchedAvailable.get(row.key);
+    if (available === undefined) {
+      const [availability] = await getAvailabilityForEventItemsTx(tx, eventId, [row.inventoryItemId], { range: row.range });
+      available = availability?.available ?? 0;
+    }
     if (row.qty > available) throw new InsufficientStockError(row.inventoryItemId, available);
 
     if (existing) {
