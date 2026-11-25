@@ -962,7 +962,9 @@ export async function eventRoutes(app: FastifyInstance) {
         });
 
         return { exportResult, masterPackageAdjustments: reserveResult.masterPackageAdjustments };
-      });
+      // Rychlé zadání posílá desítky položek najednou a každá se zapisuje
+      // zvlášť; výchozích 5 s Prismy na to nestačí.
+      }, { timeout: 30000 });
 
       sseBus.emit({ type: "reservation_changed", eventId: params.id });
       if (result.exportResult) {

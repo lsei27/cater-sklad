@@ -94,6 +94,63 @@ describe("rezervace po dnech (integration)", () => {
     await disconnect();
   });
 
+  maybe("víc různých položek v jednom požadavku se zkontroluje každá zvlášť", async () => {
+    const { prisma, disconnect } = createTestPrisma(url!);
+    const stamp = fixtureStamp();
+    const user = await prisma.user.create({
+      data: { email: `resmulti-${stamp}@local`, passwordHash: "x", role: Role.admin }
+    });
+    const category = await prisma.category.create({ data: { name: `Multi-${stamp}` } });
+    const items = await Promise.all(
+      [10, 5, 3].map(async (stock, index) => {
+        const item = await prisma.inventoryItem.create({
+          data: { name: `Multi-${index}-${stamp}`, categoryId: category.id, unit: "ks" }
+        });
+        await prisma.inventoryLedger.create({
+          data: { inventoryItemId: item.id, deltaQuantity: stock, reason: LedgerReason.audit_adjustment, createdById: user.id }
+        });
+        return item;
+      })
+    );
+    const event = await prisma.event.create({
+      data: {
+        name: `Multi-${stamp}`,
+        location: "L",
+        eventDate: new Date("2030-09-01T00:00:00Z"),
+        deliveryDatetime: new Date("2030-09-01T06:00:00Z"),
+        pickupDatetime: new Date("2030-09-01T18:00:00Z"),
+        status: EventStatus.READY_FOR_WAREHOUSE,
+        createdById: user.id
+      }
+    });
+    const reserve = (qtys: number[]) =>
+      prisma.$transaction((tx) =>
+        reserveItemsTx({
+          tx,
+          actor: { id: user.id, role: Role.admin },
+          eventId: event.id,
+          items: qtys.map((qty, index) => ({ inventoryItemId: items[index].id, qty }))
+        })
+      );
+
+    // Druhá položka má jen 5 kusů: chyba musí ukázat právě ji a nic se neuloží.
+    const err = await reserve([10, 6, 3]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InsufficientStockError);
+    expect((err as InsufficientStockError).inventoryItemId).toBe(items[1].id);
+    expect((err as InsufficientStockError).available).toBe(5);
+    expect(await prisma.eventReservation.count({ where: { eventId: event.id } })).toBe(0);
+
+    await reserve([10, 5, 3]);
+    const saved = await prisma.eventReservation.findMany({
+      where: { eventId: event.id },
+      select: { inventoryItemId: true, reservedQuantity: true }
+    });
+    expect(new Map(saved.map((r) => [r.inventoryItemId, r.reservedQuantity]))).toEqual(
+      new Map([[items[0].id, 10], [items[1].id, 5], [items[2].id, 3]])
+    );
+    await disconnect();
+  });
+
   maybe("qty 0 smaže jen řádek daného rozsahu", async () => {
     const { prisma, disconnect } = createTestPrisma(url!);
     const f = await setup(prisma, 150);
